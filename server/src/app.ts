@@ -19,6 +19,7 @@ import { evidenceRoutes } from "./routes/evidence.js";
 import { qualityRoutes } from "./routes/quality.js";
 import { regenerationRoutes } from "./routes/regeneration.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
+import { reportRoutes } from "./routes/reports.js";
 
 export async function buildApp() {
   const fastify = Fastify({
@@ -82,6 +83,7 @@ export async function buildApp() {
   await fastify.register(qualityRoutes, { prefix: "/api/v1" });
   await fastify.register(regenerationRoutes, { prefix: "/api/v1" });
   await fastify.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
+  await fastify.register(reportRoutes, { prefix: "/api/v1/reports" });
 
   // The App Platform runs one web process. Serve the Vite production artifact
   // from the existing Fastify process while preserving all API routes above.
