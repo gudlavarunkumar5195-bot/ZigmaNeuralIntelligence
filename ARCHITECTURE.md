@@ -192,7 +192,7 @@ Limitations: Phase 3E represents and validates evidence requirements but does no
 | Demo mode isolation | **IMPLEMENTED** | `IS_DEMO` flag; `IntegrationRequired` thrown; banner shown |
 | Env config validation | **IMPLEMENTED** | Zod schema; `process.exit(1)` on invalid config |
 | Dev proxy (`VITE_API_PROXY=1`) | **IMPLEMENTED** | `vite.config.ts` server.proxy |
-| Website ownership verification | **STUB** | Returns 501 NOT_IMPLEMENTED |
+| Website ownership verification | **IMPLEMENTED** | HTML meta, DNS TXT, and verification-file checks |
 | OX Alpha / model execution | **STUB** | Pipeline architecture present; no real model calls |
 | Lighthouse / Core Web Vitals | **NOT_MEASURED** | Info finding added; requires Lighthouse integration |
 | Browser QA (Playwright) | **NOT RUN** | No runner configured |
@@ -1041,16 +1041,12 @@ success results were created to bypass these requirements.
 
 ### Critical (blocks production deployment)
 
-1. **Website ownership verification** (`verifyOwnership` in `website.service.ts`) — returns
-   501 NOT_IMPLEMENTED. Without it, any authenticated user can claim any URL without proof
-   of ownership, enabling scan-based reconnaissance against third-party sites.
-
-2. **OX Alpha / model execution** — The scan orchestrator has the architecture (job lifecycle,
+1. **OX Alpha / model execution** — The scan orchestrator has the architecture (job lifecycle,
    agent_executions table, quality gate logic) but `runAgentAnalysis()` in `scan.service.ts`
    is not connected to OpenRouter or any real model. AI analysis sections will show no results.
 
-3. **Integration test suite not run** — The tenancy and auth integration tests require a real
-   PostgreSQL database. They have not been executed. Run with:
+2. **Integration test suite** — The complete backend suite has now been run against the
+  configured Supabase database. Repeat in the deployment environment with:
    ```sh
    RUN_INTEGRATION=1 DATABASE_URL=postgres://... pnpm test
    ```
@@ -1080,10 +1076,9 @@ Authentication, backend API, server-side SSRF protection, real scan engine,
 multi-tenancy isolation, and production mode isolation are all **IMPLEMENTED** as of Phase 2.
 The platform now has a real backend foundation.
 
-However, production deployment is blocked by:
-- Website ownership verification not implemented (security gap)
-- OX Alpha model execution not connected (core feature non-functional)
-- Integration tests not yet run against a real database (unverified correctness)
+However, production deployment still requires:
+- OX Alpha model execution to be enabled with a production provider credential
+- deployment-platform E2E acceptance, including CORS, RLS, and authenticated workflows
 
-Once these three blockers are resolved and integration tests pass, the platform
-can be re-evaluated for a production readiness upgrade.
+Ownership verification and Supabase-backed integration tests are now implemented and
+verified locally. The remaining items are deployment/provider acceptance checks.

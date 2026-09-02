@@ -16,6 +16,14 @@ services:
       timeout_seconds: 10
       failure_threshold: 5
     envs:
+      # ── Frontend build config: embedded into the Vite artifact ────────────
+      # The API is served by this same Fastify process in production.
+      - key: VITE_APP_MODE
+        scope: BUILD_TIME
+        value: "production"
+      - key: VITE_API_BASE_URL
+        scope: BUILD_TIME
+        value: "/api/v1"
       # ── Runtime: set these in the DigitalOcean dashboard ──────────────────
       - key: DATABASE_URL
         scope: RUN_TIME

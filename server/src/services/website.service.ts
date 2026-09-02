@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { promises as dns } from "node:dns";
+import * as cheerio from "cheerio";
 import { query, withTransaction } from "../db/client.js";
 import { checkUrlSafety } from "../scanner/ssrf.js";
+import { safeFetch } from "../scanner/fetch.js";
 import type { WebsiteRow } from "../types.js";
 
 // ─── Add Website ──────────────────────────────────────────────────────────────
@@ -83,18 +86,41 @@ export async function verifyOwnership(websiteId: string, orgId: string): Promise
   }
   if (website.verified) return true;
 
-  // In production: perform actual HTTP/DNS check against verification_token.
-  // The implementation depends on the verification_method:
-  //   html: GET ${website.url} and look for <meta name="zignaneural-site-verification" content="${token}">
-  //   dns:  TXT lookup for _zignaneural-verify.${domain}
-  //   file: GET ${website.url}/zignaneural-verify.txt
-  //
-  // This is intentionally left as TODO — the scaffold accepts the verification_method
-  // but the actual HTTP check requires network access from the server.
-  throw Object.assign(
-    new Error("Ownership verification backend not yet implemented. Connect real HTTP verification logic."),
-    { statusCode: 501, code: "NOT_IMPLEMENTED" }
-  );
+  const token = website.verification_token;
+  if (!token) {
+    throw Object.assign(new Error("Verification token is missing"), { statusCode: 422, code: "VERIFICATION_UNAVAILABLE" });
+  }
+
+  let verified = false;
+  if (website.verification_method === "dns") {
+    try {
+      const records = await dns.resolveTxt(`_zignaneural-verify.${website.domain}`);
+      verified = records.some((record) => record.join("").trim() === token);
+    } catch {
+      verified = false;
+    }
+  } else {
+    const target = website.verification_method === "file"
+      ? `${new URL(website.url).origin}/zignaneural-verify.txt`
+      : website.url;
+    const response = await safeFetch(target);
+    if (response.ok) {
+      if (website.verification_method === "file") {
+        verified = response.body.trim() === token;
+      } else {
+        const document = cheerio.load(response.body);
+        verified = document('meta[name="zignaneural-site-verification"]').toArray()
+          .some((element) => document(element).attr("content")?.trim() === token);
+      }
+    }
+  }
+
+  if (!verified) {
+    throw Object.assign(new Error("Ownership verification token was not found"), { statusCode: 422, code: "VERIFICATION_FAILED" });
+  }
+
+  await markVerified(websiteId);
+  return true;
 }
 
 export async function markVerified(websiteId: string): Promise<void> {

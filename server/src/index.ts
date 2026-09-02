@@ -28,4 +28,19 @@ async function start() {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-start();
+process.on("uncaughtException", (error) => {
+  console.error(JSON.stringify({ event: "uncaught_exception", error: error.message, stack: error.stack }));
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  console.error(JSON.stringify({ event: "unhandled_rejection", error: error.message, stack: error.stack }));
+  process.exit(1);
+});
+
+start().catch((error: unknown) => {
+  const cause = error instanceof Error ? error : new Error(String(error));
+  console.error(JSON.stringify({ event: "startup_failure", error: cause.message, stack: cause.stack }));
+  process.exit(1);
+});

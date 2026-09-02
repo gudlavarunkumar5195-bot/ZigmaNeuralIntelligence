@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate, requireOrgMember, requireRole } from "../middleware/auth.js";
-import { addWebsite, listWebsites, getWebsite } from "../services/website.service.js";
+import { addWebsite, listWebsites, getWebsite, verifyOwnership } from "../services/website.service.js";
 import { audit } from "../services/audit.service.js";
 
 const addWebsiteSchema = z.object({
@@ -69,9 +69,20 @@ export async function websiteRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Website not found" } });
     }
 
-    // Ownership verification backend implementation is a TODO — see website.service.ts
-    return reply.status(501).send({
-      error: { code: "NOT_IMPLEMENTED", message: "Ownership verification requires backend HTTP/DNS check integration." },
-    });
+    try {
+      await verifyOwnership(id, request.orgId);
+      await audit({
+        userId: request.authUser.id,
+        orgId: request.orgId,
+        action: "website_verified",
+        resourceType: "website",
+        resourceId: id,
+        result: "success",
+      });
+      return reply.send({ data: { verified: true } });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; code?: string; message: string };
+      return reply.status(e.statusCode ?? 422).send({ error: { code: e.code, message: e.message } });
+    }
   });
 }

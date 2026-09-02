@@ -38,24 +38,88 @@ export class ApiCallError extends Error {
 
 let _token: string | null = null;
 
+function getSessionStorage(): Storage | null {
+  if (typeof window !== "undefined" && window.sessionStorage) return window.sessionStorage;
+  if (typeof globalThis !== "undefined" && "sessionStorage" in globalThis && globalThis.sessionStorage) {
+    return globalThis.sessionStorage;
+  }
+  return null;
+}
+
 function getToken(): string | null {
   if (_token) return _token;
-  _token = sessionStorage.getItem("zn_token");
+  const storage = getSessionStorage();
+  _token = storage?.getItem("zn_token") ?? null;
   return _token;
+}
+
+function readTokenOrgId(token: string): string | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = JSON.parse(atob(normalized));
+    const orgIds = Array.isArray(json?.orgIds) ? json.orgIds : [];
+    return orgIds[0] ? String(orgIds[0]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getActiveOrgId(): string | null {
+  const storage = getSessionStorage();
+  const activeOrgId = storage?.getItem("zn_active_org_id");
+  if (activeOrgId) return activeOrgId;
+
+  const token = getToken();
+  if (!token) return null;
+
+  const orgId = readTokenOrgId(token);
+  if (orgId) {
+    storage?.setItem("zn_active_org_id", orgId);
+  }
+  return orgId;
+}
+
+export function setActiveOrgId(orgId?: string | null): void {
+  const storage = getSessionStorage();
+  if (!storage) return;
+  if (orgId) {
+    storage.setItem("zn_active_org_id", orgId);
+    return;
+  }
+  storage.removeItem("zn_active_org_id");
 }
 
 export function setToken(token: string): void {
   _token = token;
-  sessionStorage.setItem("zn_token", token);
+  const storage = getSessionStorage();
+  storage?.setItem("zn_token", token);
+
+  const orgId = readTokenOrgId(token);
+  if (orgId) {
+    storage?.setItem("zn_active_org_id", orgId);
+  }
 }
 
 export function clearToken(): void {
   _token = null;
-  sessionStorage.removeItem("zn_token");
+  const storage = getSessionStorage();
+  storage?.removeItem("zn_token");
+  storage?.removeItem("zn_active_org_id");
 }
 
 export function isAuthenticated(): boolean {
   return !!getToken();
+}
+
+export function buildRequestHeaders(baseHeaders: HeadersInit = {}): Headers {
+  const headers = new Headers(baseHeaders);
+  const orgId = getActiveOrgId();
+  if (orgId) {
+    headers.set("x-org-id", orgId);
+  }
+  return headers;
 }
 
 // ─── Base Fetch ───────────────────────────────────────────────────────────────
@@ -73,14 +137,16 @@ async function apiFetch<T>(
 
   let res: Response;
   try {
+    const requestHeaders = buildRequestHeaders({
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    });
+
     res = await fetch(url, {
       ...options,
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
-      },
+      headers: requestHeaders,
     });
   } catch (err: unknown) {
     throw new ApiCallError(0, "NETWORK_ERROR", (err as Error).message);
@@ -94,11 +160,11 @@ async function apiFetch<T>(
       const retried = await fetch(url, {
         ...options,
         credentials: "include",
-        headers: {
+        headers: buildRequestHeaders({
           "Content-Type": "application/json",
           ...(newToken ? { Authorization: `Bearer ${newToken}` } : {}),
           ...options.headers,
-        },
+        }),
       });
       if (retried.ok) {
         const body: { data: T } = await retried.json();
