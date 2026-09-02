@@ -193,7 +193,7 @@ Limitations: Phase 3E represents and validates evidence requirements but does no
 | Env config validation | **IMPLEMENTED** | Zod schema; `process.exit(1)` on invalid config |
 | Dev proxy (`VITE_API_PROXY=1`) | **IMPLEMENTED** | `vite.config.ts` server.proxy |
 | Website ownership verification | **IMPLEMENTED** | HTML meta, DNS TXT, and verification-file checks |
-| OX Alpha / model execution | **STUB** | Pipeline architecture present; no real model calls |
+| OX Alpha / model execution | **IMPLEMENTED** | OpenRouter execution with retries, fallbacks, JSON validation, audit, and quality assessment |
 | Lighthouse / Core Web Vitals | **NOT_MEASURED** | Info finding added; requires Lighthouse integration |
 | Browser QA (Playwright) | **NOT RUN** | No runner configured |
 | Report PDF export | **STUB** | Button renders; no generation logic |
@@ -1041,11 +1041,7 @@ success results were created to bypass these requirements.
 
 ### Critical (blocks production deployment)
 
-1. **OX Alpha / model execution** — The scan orchestrator has the architecture (job lifecycle,
-   agent_executions table, quality gate logic) but `runAgentAnalysis()` in `scan.service.ts`
-   is not connected to OpenRouter or any real model. AI analysis sections will show no results.
-
-2. **Integration test suite** — The complete backend suite has now been run against the
+1. **Integration test suite** — The complete backend suite has now been run against the
   configured Supabase database. Repeat in the deployment environment with:
    ```sh
    RUN_INTEGRATION=1 DATABASE_URL=postgres://... pnpm test
@@ -1053,18 +1049,18 @@ success results were created to bypass these requirements.
 
 ### High (should fix before production)
 
-4. **Lighthouse / Core Web Vitals** — LCP, CLS, INP are explicitly marked `NOT_MEASURED`.
+2. **Lighthouse / Core Web Vitals** — LCP, CLS, INP are explicitly marked `NOT_MEASURED`.
    Performance scores will be incomplete until a headless browser runner is integrated.
 
-5. **Bundle size** — Frontend JS is ~860KB uncompressed. Needs `dynamic import()` code splitting.
+3. **Bundle size** — Frontend JS is ~860KB uncompressed. Needs `dynamic import()` code splitting.
 
-6. **No E2E tests** — No Playwright config. Critical flows (register → add website → scan → view
+4. **No E2E tests** — No Playwright config. Critical flows (register → add website → scan → view
    results) have no automated browser coverage.
 
-7. **Monitoring scheduler** — No cron or scheduled trigger. Monitoring history is only populated
+5. **Monitoring scheduler** — No cron or scheduled trigger. Monitoring history is only populated
    when a manual scan completes.
 
-8. **Alert delivery** — Alert rules exist in the UI but no email/webhook sender is implemented.
+6. **Alert delivery** — Alert rules exist in the UI but no email/webhook sender is implemented.
 
 ---
 
@@ -1077,8 +1073,9 @@ multi-tenancy isolation, and production mode isolation are all **IMPLEMENTED** a
 The platform now has a real backend foundation.
 
 However, production deployment still requires:
-- OX Alpha model execution to be enabled with a production provider credential
 - deployment-platform E2E acceptance, including CORS, RLS, and authenticated workflows
+- production monitoring, alert delivery, and report export if those product promises are required
 
 Ownership verification and Supabase-backed integration tests are now implemented and
-verified locally. The remaining items are deployment/provider acceptance checks.
+verified locally. OpenRouter access was also verified with the configured server-side
+credential; the remaining items are deployment acceptance and unfinished product modules.
