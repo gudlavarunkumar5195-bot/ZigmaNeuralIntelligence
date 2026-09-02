@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "prebuild": "pnpm install --no-frozen-lockfile && pnpm --dir server install --no-frozen-lockfile",
     "build": "vite build && pnpm --dir server run build",
-    "start": "pnpm --dir server run migrate && pnpm --dir server start",
+    "start": "pnpm --dir server start",
     "preview": "vite preview",
     "format": "oxfmt",
     "test": "vitest run",

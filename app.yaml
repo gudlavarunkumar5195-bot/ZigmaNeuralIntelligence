@@ -6,7 +6,7 @@ services:
       branch: main
       deploy_on_push: true
     build_command: pnpm build
-    run_command: pnpm start
+    run_command: pnpm --dir server start
     instance_count: 1
     instance_size_slug: basic-xxs
     health_check:
