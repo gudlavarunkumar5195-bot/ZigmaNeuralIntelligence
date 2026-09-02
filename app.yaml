@@ -1,0 +1,51 @@
+name: zigma-neural-intelligence
+services:
+  - name: web
+    github:
+      repo: gudlavarunkumar5195-bot/ZigmaNeuralIntelligence
+      branch: main
+      deploy_on_push: true
+    build_command: pnpm build
+    run_command: pnpm start
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 30
+      period_seconds: 15
+      timeout_seconds: 10
+      failure_threshold: 5
+    envs:
+      # ── Runtime: set these in the DigitalOcean dashboard ──────────────────
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: COOKIE_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      # ── Optional AI features ───────────────────────────────────────────────
+      - key: OPENROUTER_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      # ── Non-secret runtime config ─────────────────────────────────────────
+      - key: NODE_ENV
+        scope: RUN_TIME
+        value: "production"
+      - key: PORT
+        scope: RUN_TIME
+        value: "8080"
+      - key: HOST
+        scope: RUN_TIME
+        value: "0.0.0.0"
+      - key: CORS_ORIGIN
+        scope: RUN_TIME
+        value: "${APP_URL}"
+      - key: JWT_ACCESS_EXPIRES_IN
+        scope: RUN_TIME
+        value: "15m"
+      - key: JWT_REFRESH_EXPIRES_IN
+        scope: RUN_TIME
+        value: "7d"

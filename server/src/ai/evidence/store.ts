@@ -1,0 +1,17 @@
+import { randomUUID } from "node:crypto";
+import { query } from "../../db/client.js";
+import { freshnessFor, redactEvidence, stableEvidenceHash, validateEvidenceInput } from "./validator.js";
+import type { EvidenceInput, EvidenceRecord } from "./types.js";
+
+export async function collectEvidence(input: EvidenceInput): Promise<EvidenceRecord> {
+  const violations = validateEvidenceInput(input); if (violations.length) throw new Error(`Invalid evidence: ${violations.join(" ")}`);
+  const contentHash = stableEvidenceHash(input.content); const evidenceId = randomUUID(); const now = new Date().toISOString();
+  const record: EvidenceRecord = { ...input, evidenceId, contentHash, status: "ACTIVE", freshnessStatus: freshnessFor(input.observedAt, input.expiresAt), collectedAt: now, createdAt: now, confidence: input.confidence ?? 100, kind: input.kind ?? "RAW_EVIDENCE", metadata: { ...(input.metadata ?? {}), redactedContent: redactEvidence(input.content) }, quality: {} };
+  await query(`INSERT INTO evidence (id, org_id, task_id, execution_id, agent_id, agent_version, evidence_type, source_type, source_reference, resource_reference, observed_at, collected_at, content_hash, status, confidence, metadata, evidence_kind, expires_at, freshness_policy, freshness_status, retention_class, storage_reference) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`, [record.evidenceId, record.tenantId, record.taskId, record.executionId ?? null, record.agentId ?? null, record.agentVersion ?? null, record.evidenceType, record.sourceType, record.sourceReference, record.resourceReference ?? null, record.observedAt, record.collectedAt, record.contentHash, record.status, record.confidence, JSON.stringify(record.metadata), record.kind, record.expiresAt ?? null, record.freshnessPolicy ?? null, record.freshnessStatus, record.retentionClass ?? "STANDARD", record.storageReference ?? null]);
+  for (const parentId of input.parentEvidenceIds ?? []) await query(`INSERT INTO evidence_relationships (parent_evidence_id, child_evidence_id, relationship_type) VALUES ($1,$2,'DERIVED_FROM')`, [parentId, record.evidenceId]);
+  return record;
+}
+export async function findEvidence(ids: string[], tenantId: string, taskId: string): Promise<EvidenceRecord[]> {
+  if (!ids.length) return []; const { rows } = await query(`SELECT id AS "evidenceId", org_id AS "tenantId", task_id AS "taskId", execution_id AS "executionId", agent_id AS "agentId", agent_version AS "agentVersion", evidence_type AS "evidenceType", source_type AS "sourceType", source_reference AS "sourceReference", resource_reference AS "resourceReference", observed_at AS "observedAt", collected_at AS "collectedAt", content_hash AS "contentHash", status, confidence, metadata, evidence_kind AS kind, expires_at AS "expiresAt", freshness_policy AS "freshnessPolicy", freshness_status AS "freshnessStatus", created_at AS "createdAt" FROM evidence WHERE id = ANY($1::uuid[]) AND org_id=$2 AND task_id=$3`, [ids, tenantId, taskId]);
+  return rows as EvidenceRecord[];
+}

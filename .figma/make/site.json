@@ -1,0 +1,11 @@
+{
+  "title": "ZigmaNeural Website Intelligence Platform",
+  "description": "Streamline project management with a user-friendly interface that enhances collaboration, task tracking, and productivity for teams of all sizes.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

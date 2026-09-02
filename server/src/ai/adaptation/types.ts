@@ -1,0 +1,5 @@
+import type { AgentType } from "../agents/types.js";
+import type { QualityReason } from "../quality/types.js";
+export type AdaptationStrategy = "SAME_MODEL_NEW_INSTRUCTIONS" | "NEW_MODEL" | "NEW_AGENT" | "NEW_MODEL_AND_AGENT" | "MORE_EVIDENCE" | "PARALLEL_SPECIALISTS" | "INDEPENDENT_VERIFICATION" | "HUMAN_REVIEW" | "STOP";
+export type RootCause = "EVIDENCE_PROBLEM" | "INSTRUCTION_PROBLEM" | "MODEL_CAPABILITY_PROBLEM" | "AGENT_CAPABILITY_PROBLEM" | "COVERAGE_PROBLEM" | "TOOL_PROBLEM" | "WORKFLOW_PROBLEM" | "QUALITY_PROBLEM" | "SECURITY_PROBLEM" | "AMBIGUITY" | "EXTERNAL_DEPENDENCY";
+export interface AdaptationDecision { adaptationId: string; regenerationRunId?: string; qualityAssessmentId: string; diagnosisId?: string; strategy: AdaptationStrategy; selectedModels: string[]; selectedAgents: AgentType[]; instructionChanges: string[]; evidenceRequests: string[]; parallelTasks: AgentType[]; reasonCodes: QualityReason[]; rootCauses: RootCause[]; confidence: number; qualityBefore: number; expectedQualityAfter?: number; createdAt: string; }

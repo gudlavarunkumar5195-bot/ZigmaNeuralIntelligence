@@ -1,0 +1,4 @@
+import { describe, expect, it } from "vitest";
+import { planAdaptation } from "../ai/adaptation/planner.js";
+const assessment = (status: string, codes: string[]) => ({ qualityAssessmentId: "q", status, reasonCodes: codes, improvementTargets: [{ target: "Collect canonical evidence for 48 URLs" }], qualityConfidence: 90, overallScore: 70 }) as any;
+describe("Adaptive intelligence", () => { it("uses evidence first", () => expect(planAdaptation(assessment("NEEDS_IMPROVEMENT", ["EVIDENCE_MISSING"]), { currentAgent: "SEO_ANALYSIS" }).strategy).toBe("MORE_EVIDENCE")); it("improves instructions before changing a model", () => expect(planAdaptation(assessment("NEEDS_IMPROVEMENT", ["INSTRUCTION_VIOLATION"]), { currentAgent: "SEO_ANALYSIS" }).strategy).toBe("SAME_MODEL_NEW_INSTRUCTIONS")); it("never adapts around a block", () => expect(planAdaptation(assessment("BLOCK", ["SECURITY_VIOLATION"]), { currentAgent: "SECURITY_ANALYSIS" }).strategy).toBe("STOP")); });

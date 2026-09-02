@@ -1,0 +1,185 @@
+Sep 01 08:53:17  [34m│[0m ✓ built in 1.32s
+Sep 01 08:53:17  [34m│[0m [plugin builtin:vite-reporter] 
+Sep 01 08:53:17  [34m│[0m (!) Some chunks are larger than 500 kB after minification. Consider:
+Sep 01 08:53:17  [34m│[0m - Using dynamic import() to code-split the application
+Sep 01 08:53:17  [34m│[0m - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+Sep 01 08:53:17  [34m│[0m - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+Sep 01 08:53:17  [34m│[0m $ tsc
+Sep 01 08:53:18  [34m│[0m src/ai/registry.service.ts(326,20): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/ai/router/index.ts(445,35): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/ai/router/index.ts(515,20): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(1,21): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/app.ts(2,20): error TS2307: Cannot find module '@fastify/cookie' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/app.ts(3,17): error TS2307: Cannot find module '@fastify/jwt' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/app.ts(4,23): error TS2307: Cannot find module '@fastify/rate-limit' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/app.ts(5,18): error TS2307: Cannot find module '@fastify/cors' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/app.ts(6,27): error TS2307: Cannot find module '@fastify/static' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/app.ts(37,48): error TS7006: Parameter 's' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(56,20): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(62,36): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(62,45): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(93,28): error TS7006: Parameter '_request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(93,38): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(96,39): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/app.ts(96,48): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/config.ts(1,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/config.ts(48,45): error TS7006: Parameter 'i' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/db/client.ts(1,16): error TS2307: Cannot find module 'pg' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/db/client.ts(13,19): error TS7006: Parameter 'err' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/db/migrate.ts(4,16): error TS2307: Cannot find module 'pg' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/middleware/auth.ts(1,51): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/middleware/auth.ts(5,16): error TS2664: Invalid module name in augmentation, module 'fastify' cannot be found.
+Sep 01 08:53:18  [34m│[0m src/middleware/error.ts(1,65): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(6,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(7,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(44,61): error TS7006: Parameter '_req' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(44,67): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(54,66): error TS7006: Parameter '_req' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(54,72): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(59,71): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(59,80): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(79,80): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(79,89): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(90,82): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(90,91): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(110,78): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(110,87): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(121,79): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(121,88): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(137,69): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(137,78): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(180,65): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/agents.ts(180,74): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(33,36): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(33,45): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(53,33): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(53,42): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(83,35): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(83,44): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(109,66): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(109,75): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(120,61): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/auth.ts(120,70): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/dashboard.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/dashboard.ts(10,77): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/dashboard.ts(10,86): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(12,66): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(12,75): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(13,72): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(13,81): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(14,75): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(14,84): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(15,74): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(15,83): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(16,71): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/evidence.ts(16,80): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/health.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/health.ts(5,33): error TS7006: Parameter '_req' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/health.ts(5,39): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/health.ts(9,32): error TS7006: Parameter '_req' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/health.ts(9,38): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(21,66): error TS7006: Parameter '_request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(21,76): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(22,77): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(22,86): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(28,86): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(28,95): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(34,75): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(34,84): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(44,75): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/instructions.ts(44,84): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(29,59): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(29,68): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(47,67): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(47,76): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(54,73): error TS7006: Parameter '_request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(54,83): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(60,76): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(60,85): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(86,62): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(86,71): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(96,71): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(96,80): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(106,72): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(106,81): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(120,77): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(120,86): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(130,78): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/models.ts(130,87): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(11,71): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(11,80): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(12,76): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(12,85): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(13,65): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(13,74): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(14,70): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/quality.ts(14,79): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(11,76): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(11,85): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(12,70): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(12,79): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(13,75): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/regeneration.ts(13,84): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(8,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(9,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(77,69): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(77,78): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(110,69): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(110,78): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(126,73): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(126,82): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(146,66): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(146,75): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(160,67): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(160,76): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(184,70): error TS7006: Parameter '_request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/routing.ts(184,80): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(1,68): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(18,119): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(18,128): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(49,46): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(49,55): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(66,55): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(66,64): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(91,129): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/scans.ts(91,138): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(1,38): error TS2307: Cannot find module 'fastify' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(2,19): error TS2307: Cannot find module 'zod' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(17,43): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(17,52): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(23,46): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(23,55): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(33,119): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(33,128): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(65,129): error TS7006: Parameter 'request' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/routes/websites.ts(65,138): error TS7006: Parameter 'reply' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/scanner/performance.ts(1,26): error TS2307: Cannot find module 'cheerio' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/scanner/performance.ts(70,32): error TS7006: Parameter '_' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/scanner/performance.ts(70,35): error TS7006: Parameter 'el' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/scanner/seo.ts(1,26): error TS2307: Cannot find module 'cheerio' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/services/auth.service.ts(1,20): error TS2307: Cannot find module 'bcryptjs' or its corresponding type declarations.
+Sep 01 08:53:18  [34m│[0m src/services/auth.service.ts(105,34): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/services/auth.service.ts(169,29): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Sep 01 08:53:18  [34m│[0m src/services/scan.service.ts(248,52): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Sep 01 08:53:19  [34m│[0m [ELIFECYCLE] Command failed with exit code 2.
+Sep 01 08:53:19  [34m│[0m [WARN]  Local package.json exists, but node_modules missing, did you mean to install?
+Sep 01 08:53:19  [34m│[0m [ELIFECYCLE] Command failed with exit code 2.
+Sep 01 08:53:19  [34m│[0m building: exit status 2
+Sep 01 08:53:19  [34m│[0m Timer: Builder ran for 19.149172422s and ended at 2026-09-01T08:53:19Z
+Sep 01 08:53:19  [34m│[0m [31;1mERROR: [0mfailed to build: exit status 1
+Sep 01 08:53:19  [34m│[0m 
+Sep 01 08:53:19  [34m│[0m 
+Sep 01 08:53:19  [34m│[0m [31m ✘ build failed[0m
