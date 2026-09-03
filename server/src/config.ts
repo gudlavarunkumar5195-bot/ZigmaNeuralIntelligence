@@ -8,7 +8,9 @@ const envSchema = z.object({
 
   // Database
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(true),
+  // Some managed deployments expose a private CA chain. Enable strict
+  // verification explicitly once DB_SSL_CA is configured in the runtime.
+  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(false),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL").optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
