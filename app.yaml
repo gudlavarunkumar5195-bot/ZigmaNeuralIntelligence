@@ -45,13 +45,13 @@ services:
         type: SECRET
       - key: QA_VERIFICATION_BYPASS_ENABLED
         scope: RUN_TIME
-        value: "false"
+        value: "true"
       - key: QA_AUTHORIZED_EMAILS
         scope: RUN_TIME
-        value: ""
+        value: "zigma.qa.20260903@example.com"
       - key: QA_ALLOW_PRODUCTION_BYPASS
         scope: RUN_TIME
-        value: "false"
+        value: "true"
       # ── Optional AI features ───────────────────────────────────────────────
       - key: OPENROUTER_API_KEY
         scope: RUN_TIME
