@@ -8,7 +8,7 @@ const { Pool } = pg;
 // if not, we enforce it explicitly so the pool never connects in plaintext.
 const sslConfig =
   config.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
+    ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED }
     : undefined;
 
 export const pool = new Pool({
@@ -59,6 +59,10 @@ export async function healthCheck(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function closePool(): Promise<void> {
+  await pool.end();
 }
 
 /** Create a dedicated client for LISTEN/NOTIFY (must not be pooled). */

@@ -135,23 +135,18 @@ export async function consumeRefreshToken(rawToken: string): Promise<RefreshResu
   const { rows } = await query<{
     id: string; user_id: string; expires_at: string; revoked_at: string | null;
   }>(
-    "SELECT id, user_id, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = $1",
-    [hash]
+    `UPDATE refresh_tokens
+       SET revoked_at = NOW()
+     WHERE token_hash = $1
+       AND revoked_at IS NULL
+       AND expires_at > NOW()
+     RETURNING id, user_id, expires_at, revoked_at`,
+    [hash],
   );
 
-  if (rows.length === 0 || rows[0].revoked_at !== null) {
+  if (rows.length === 0) {
     throw Object.assign(new Error("Refresh token is invalid or revoked"), { statusCode: 401, code: "INVALID_REFRESH_TOKEN" });
   }
-
-  if (new Date(rows[0].expires_at) < new Date()) {
-    throw Object.assign(new Error("Refresh token has expired"), { statusCode: 401, code: "REFRESH_TOKEN_EXPIRED" });
-  }
-
-  // Rotate: revoke the current token
-  await query(
-    "UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1",
-    [rows[0].id]
-  );
 
   const userId = rows[0].user_id;
   const { rows: userRows } = await query<{ email: string }>(

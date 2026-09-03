@@ -85,7 +85,8 @@ export async function routingRoutes(fastify: FastifyInstance): Promise<void> {
     const startMs = Date.now();
     try {
       const decision = await resolveRouting({
-        requirements: parsed.data as never,
+        requirements: { ...parsed.data, orgId: request.orgId } as never,
+        orgId: request.orgId,
         simulate: true,
         correlationId: crypto.randomUUID(),
       });
@@ -108,11 +109,11 @@ export async function routingRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ── GET /decisions ──────────────────────────────────────────────────────────
   fastify.get("/decisions", { preHandler: adminPreHandler }, async (request, reply) => {
-    const { limit, orgId } = request.query as { limit?: string; orgId?: string };
+    const { limit } = request.query as { limit?: string };
     const parsedLimit = Math.min(parseInt(limit ?? "50", 10) || 50, 200);
 
     try {
-      const decisions = await listRoutingDecisions(parsedLimit, orgId);
+      const decisions = await listRoutingDecisions(parsedLimit, request.orgId);
       return reply.send({ data: decisions });
     } catch (err) {
       fastify.log.error({ err }, "Failed to list routing decisions");
@@ -127,7 +128,7 @@ export async function routingRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
 
     try {
-      const decision = await getRoutingDecision(id);
+      const decision = await getRoutingDecision(id, request.orgId);
       if (!decision) {
         return reply.status(404).send({
           error: { code: "NOT_FOUND", message: "Routing decision not found" },
@@ -144,9 +145,8 @@ export async function routingRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ── GET /policy ─────────────────────────────────────────────────────────────
   fastify.get("/policy", { preHandler: adminPreHandler }, async (request, reply) => {
-    const { orgId } = request.query as { orgId?: string };
     try {
-      const policy = await getActivePolicy(orgId);
+      const policy = await getActivePolicy(request.orgId);
       return reply.send({ data: policy });
     } catch (err) {
       fastify.log.error({ err }, "Failed to fetch routing policy");
@@ -165,11 +165,10 @@ export async function routingRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    const actorId = (request as unknown as { user?: { id?: string } }).user?.id ?? "unknown";
-    const { orgId } = request.query as { orgId?: string };
+    const actorId = request.authUser.id;
 
     try {
-      const policy = await updateActivePolicy(parsed.data, actorId, orgId);
+      const policy = await updateActivePolicy(parsed.data, actorId, request.orgId);
       return reply.status(200).send({ data: policy });
     } catch (err) {
       fastify.log.error({ err }, "Failed to update routing policy");

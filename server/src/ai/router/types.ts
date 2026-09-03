@@ -147,6 +147,7 @@ export type RoutingStatus = "RESOLVED" | "NO_CANDIDATES" | "ERROR";
 
 export interface RoutingDecision {
   id: string;                        // UUID
+  orgId?: string;
   correlationId?: string;
   taskType: TaskType;
   complexity: TaskComplexity;

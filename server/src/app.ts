@@ -54,14 +54,21 @@ export async function buildApp() {
     global: true,
     max: 200,
     timeWindow: "1 minute",
-    keyGenerator: (request) =>
-      (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
-      request.ip,
+    // Fastify does not trust proxy headers unless explicitly configured.
+    // Using request.ip prevents clients from spoofing a fresh rate-limit key.
+    keyGenerator: (request) => request.ip,
   });
 
   // Attach requestId to every response
   fastify.addHook("onSend", async (request, reply) => {
     reply.header("x-request-id", request.id);
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (config.NODE_ENV === "production") {
+      reply.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
   });
 
   // ─── Error handler ────────────────────────────────────────────────────────────

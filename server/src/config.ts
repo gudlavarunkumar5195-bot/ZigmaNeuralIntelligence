@@ -8,6 +8,7 @@ const envSchema = z.object({
 
   // Database
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(true),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL").optional(),
   SUPABASE_ANON_KEY: z.string().min(1, "SUPABASE_ANON_KEY is required in production").optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required in production").optional(),

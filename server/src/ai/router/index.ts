@@ -274,6 +274,7 @@ function buildDecision(input: BuildDecisionInput): RoutingDecision {
     complexity: input.requirements.complexity,
     riskLevel: input.requirements.riskLevel,
     status: input.status,
+    orgId: input.requirements.orgId,
     selectedModel: input.selected,
     fallbackModels: input.fallbacks,
     allCandidates: input.all,
@@ -313,7 +314,7 @@ async function persistDecision(decision: RoutingDecision): Promise<void> {
   try {
     const { rows } = await query<{ id: string }>(
       `INSERT INTO routing_decisions (
-         id, correlation_id, task_type, complexity, risk_level,
+         id, correlation_id, task_type, complexity, risk_level, org_id,
          selected_model_id, selected_openrouter_id,
          fallback_model_ids, fallback_openrouter_ids,
          decision_reason, decision_confidence, decision_source,
@@ -321,7 +322,7 @@ async function persistDecision(decision: RoutingDecision): Promise<void> {
          policy_id, policy_version,
          decision_duration_ms, status, error_message
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
        ) RETURNING id`,
       [
         decision.id,
@@ -329,6 +330,7 @@ async function persistDecision(decision: RoutingDecision): Promise<void> {
         decision.taskType,
         decision.complexity,
         decision.riskLevel,
+        decision.orgId ?? null,
         decision.selectedModel?.modelId ?? null,
         decision.selectedModel?.openrouterId ?? null,
         decision.fallbackModels.map((f) => f.modelId),
@@ -476,19 +478,9 @@ export interface StoredDecisionSummary {
 
 export async function listRoutingDecisions(
   limit = 50,
-  orgId?: string
+  orgId: string
 ): Promise<StoredDecisionSummary[]> {
-  const conditions: string[] = [];
-  const values: unknown[] = [];
-  let idx = 1;
-
-  if (orgId) {
-    conditions.push(`org_id = $${idx++}`);
-    values.push(orgId);
-  }
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  values.push(limit);
+  const values: unknown[] = [orgId, limit];
 
   const { rows } = await query<{
     id: string;
@@ -506,9 +498,9 @@ export async function listRoutingDecisions(
     `SELECT id, task_type, complexity, risk_level, selected_openrouter_id,
             decision_confidence, decision_source, candidate_count, excluded_count,
             status, created_at
-     FROM routing_decisions ${where}
+    FROM routing_decisions WHERE org_id = $1
      ORDER BY created_at DESC
-     LIMIT $${idx}`,
+    LIMIT $2`,
     values
   );
 
@@ -528,7 +520,8 @@ export async function listRoutingDecisions(
 }
 
 export async function getRoutingDecision(
-  id: string
+  id: string,
+  orgId: string
 ): Promise<(StoredDecisionSummary & { candidates: unknown[] }) | null> {
   const { rows } = await query<{
     id: string;
@@ -544,8 +537,8 @@ export async function getRoutingDecision(
     status: string;
     created_at: string;
   }>(
-    "SELECT * FROM routing_decisions WHERE id=$1",
-    [id]
+    "SELECT * FROM routing_decisions WHERE id=$1 AND org_id=$2",
+    [id, orgId]
   );
 
   if (rows.length === 0) return null;

@@ -1,6 +1,7 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
 import { startScanWorker } from "./services/scan.service.js";
+import { closePool } from "./db/client.js";
 
 async function start() {
   const app = await buildApp();
@@ -21,6 +22,7 @@ async function start() {
     console.log(`[server] ${signal} received, shutting down...`);
     clearInterval(workerTimer);
     await app.close();
+    await closePool();
     process.exit(0);
   };
 
