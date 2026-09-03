@@ -335,6 +335,7 @@ function TopBar() {
           live platform
         </div>
         <h1 className="app-topbar-title font-800 text-slate-900 text-base truncate">{getTitle()}</h1>
+        <span className="hidden sm:inline font-mono text-[10px] font-600 tracking-[0.12em] text-slate-400">v{__APP_VERSION__}</span>
       </div>
 
       <label className="hidden md:flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 px-2.5 py-2 shadow-sm">

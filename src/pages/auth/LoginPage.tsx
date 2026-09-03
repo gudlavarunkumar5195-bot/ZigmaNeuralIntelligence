@@ -210,7 +210,7 @@ export function LoginPage() {
           </div>
 
           <p className="text-xs text-slate-400 text-center mt-4">
-            Secure Website Intelligence Platform
+            Secure Website Intelligence Platform · v{__APP_VERSION__}
           </p>
         </div>
       </div>
