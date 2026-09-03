@@ -231,11 +231,11 @@ export function ModelRegistry() {
     setRefreshMsg("");
     try {
       const r = await apiRefreshCatalog();
-      if (r.error) setRefreshMsg(`Refresh failed: ${r.error.message}`);
+      if (r.error) setRefreshMsg(`Refresh failed: ${r.error.message || r.error.code || "The model catalog is currently unavailable."}`);
       else setRefreshMsg("Catalog refreshed.");
       load();
     } catch (e: unknown) {
-      setRefreshMsg((e as Error).message);
+      setRefreshMsg((e as Error).message || "The model catalog is currently unavailable.");
     } finally {
       setRefreshing(false);
     }
