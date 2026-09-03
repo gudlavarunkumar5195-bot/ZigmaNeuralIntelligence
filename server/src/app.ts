@@ -5,6 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import { join } from "node:path";
+import { readdir } from "node:fs/promises";
 import { config } from "./config.js";
 import { errorHandler } from "./middleware/error.js";
 import { healthRoutes } from "./routes/health.js";
@@ -109,7 +110,14 @@ export async function buildApp() {
     prefix: "/",
     wildcard: false,
   });
-  fastify.get("/assets/*", async (_request, reply) => {
+  fastify.get("/assets/*", async (request, reply) => {
+    const requestedAsset = (request.params as { "*"?: string })["*"] ?? "";
+    const match = /^(LoginPage|ModelRegistry|Overview)-[A-Za-z0-9_-]+\.js$/.exec(requestedAsset);
+    if (match) {
+      const assetDirectory = join(process.cwd(), "..", "dist", "assets");
+      const currentAsset = (await readdir(assetDirectory)).find((asset) => asset.startsWith(`${match[1]}-`) && asset.endsWith(".js"));
+      if (currentAsset) return reply.sendFile(`assets/${currentAsset}`);
+    }
     return reply.status(404).send({
       error: { code: "ASSET_NOT_FOUND", message: "Static asset not found" },
     });
