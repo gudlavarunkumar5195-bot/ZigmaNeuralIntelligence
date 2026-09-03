@@ -111,7 +111,7 @@ export async function buildApp() {
     wildcard: false,
   });
   fastify.get("/assets/*", async (request, reply) => {
-    const requestedAsset = (request.params as { "*"?: string })["*"] ?? "";
+    const requestedAsset = ((request.params as { "*"?: string })["*"] ?? "").split("/").pop() ?? "";
     const match = /^(LoginPage|ModelRegistry|Overview)-[A-Za-z0-9_-]+\.js$/.exec(requestedAsset);
     if (match) {
       const assetDirectory = join(process.cwd(), "..", "dist", "assets");
