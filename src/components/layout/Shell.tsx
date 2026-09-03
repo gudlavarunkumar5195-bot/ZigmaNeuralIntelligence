@@ -250,6 +250,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
               <div className="text-[10px] truncate" style={{ color: "var(--sidebar-text)" }}>Account context is managed securely</div>
             </div>
           </div>
+          <div className="mt-2 px-1 text-[10px] font-600 tracking-[0.12em] text-slate-500">VERSION {__APP_VERSION__}</div>
         </div>
       )}
 
