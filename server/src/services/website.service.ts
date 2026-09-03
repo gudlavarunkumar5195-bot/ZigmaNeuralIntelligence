@@ -4,6 +4,7 @@ import * as cheerio from "cheerio";
 import { query, withTransaction } from "../db/client.js";
 import { checkUrlSafety } from "../scanner/ssrf.js";
 import { safeFetch } from "../scanner/fetch.js";
+import { config } from "../config.js";
 import type { WebsiteRow } from "../types.js";
 
 // ─── Add Website ──────────────────────────────────────────────────────────────
@@ -12,11 +13,36 @@ export interface AddWebsiteInput {
   orgId: string;
   userId: string;
   url: string;
-  verificationMethod?: "html" | "dns" | "file";
+  verificationMethod?: "html" | "dns" | "file" | "qa_bypass";
+}
+
+export const QA_CANONICAL_DOMAIN = "www.zigmaneural.com";
+
+export function canonicalizeQaDomain(value: string): string | null {
+  try {
+    const parsed = new URL(value.includes("://") ? value : `https://${value}`);
+    const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    return hostname === "zigmaneural.com" ? QA_CANONICAL_DOMAIN : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isQaBypassAuthorized(email: string, role?: string): boolean {
+  if (!config.QA_VERIFICATION_BYPASS_ENABLED) return false;
+  if (config.NODE_ENV === "production" && !config.QA_ALLOW_PRODUCTION_BYPASS) return false;
+  if (role !== "owner" && role !== "admin") return false;
+  const authorizedEmails = config.QA_AUTHORIZED_EMAILS.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  return authorizedEmails.includes(email.trim().toLowerCase());
 }
 
 export async function addWebsite(input: AddWebsiteInput): Promise<WebsiteRow> {
   // Server-side SSRF check (mirrors client validation + DNS resolution)
+  const isQaBypass = input.verificationMethod === "qa_bypass";
+  if (isQaBypass && canonicalizeQaDomain(input.url) !== QA_CANONICAL_DOMAIN) {
+    throw Object.assign(new Error("QA verification is restricted to the approved test domain"), { statusCode: 422, code: "QA_DOMAIN_NOT_ALLOWED" });
+  }
+
   const safety = await checkUrlSafety(input.url);
   if (!safety.safe) {
     throw Object.assign(
@@ -50,10 +76,10 @@ export async function addWebsite(input: AddWebsiteInput): Promise<WebsiteRow> {
 
     const result = await client.query<WebsiteRow>(
       `INSERT INTO websites
-         (org_id, url, domain, verification_method, verification_token, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (org_id, url, domain, verification_method, verification_token, verification_environment, verified, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [input.orgId, normalizedUrl, domain, input.verificationMethod ?? "html", verificationToken, input.userId]
+      [input.orgId, normalizedUrl, domain, input.verificationMethod ?? "html", verificationToken, isQaBypass ? "qa" : null, isQaBypass, input.userId]
     );
     return result.rows[0];
   });

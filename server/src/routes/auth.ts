@@ -63,7 +63,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     } catch (err: unknown) {
       const e = err as { statusCode?: number; code?: string; message: string };
       await audit({ action: "login_failed", result: "failure", metadata: { email: parsed.data.email } });
-      return reply.status(e.statusCode ?? 401).send({ error: { code: e.code ?? "AUTH_ERROR", message: e.message } });
+      const message = e.code === "INVALID_CREDENTIALS" ? "Unable to sign in. Check your email and password and try again." : e.message;
+      return reply.status(e.statusCode ?? 401).send({ error: { code: e.code ?? "AUTH_ERROR", message } });
     }
 
     const { userId, email, orgIds } = loginResult;

@@ -534,11 +534,11 @@ function SimulatorTab({
         </div>
       )}
 
-      {result && (
+      {result !== null && (
         <div className="space-y-2">
           <h4 className="text-xs font-600 text-slate-400 uppercase tracking-wide">Simulation Result</h4>
           <pre className="bg-slate-900 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap">
-            {JSON.stringify(result, null, 2)}
+            {String(JSON.stringify(result, null, 2))}
           </pre>
         </div>
       )}

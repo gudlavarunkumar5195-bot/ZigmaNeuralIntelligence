@@ -23,6 +23,11 @@ const envSchema = z.object({
   // Cookie
   COOKIE_SECRET: z.string().min(32, "COOKIE_SECRET must be at least 32 characters"),
 
+  // QA verification bypass is disabled by default and requires explicit user allowlisting.
+  QA_VERIFICATION_BYPASS_ENABLED: z.coerce.boolean().default(false),
+  QA_AUTHORIZED_EMAILS: z.string().default(""),
+  QA_ALLOW_PRODUCTION_BYPASS: z.coerce.boolean().default(false),
+
   // CORS
   CORS_ORIGIN: z
     .string()

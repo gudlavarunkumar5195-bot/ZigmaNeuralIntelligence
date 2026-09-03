@@ -120,7 +120,7 @@ export function LoginPage() {
               ))}
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-3.5">
+            <form onSubmit={handleSubmit} onInvalid={() => setError("Email and password are required.")} className="space-y-3.5">
               {mode === "register" && (
                 <div>
                   <label htmlFor="full-name" className="block text-xs font-700 uppercase tracking-[0.12em] text-slate-500 mb-1.5">Full name</label>
@@ -142,7 +142,7 @@ export function LoginPage() {
                   id="email"
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); setError(""); }}
                   placeholder="you@company.com"
                   required
                   autoFocus
@@ -158,7 +158,7 @@ export function LoginPage() {
                     id="password"
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => { setPassword(e.target.value); setError(""); }}
                     placeholder={mode === "register" ? "At least 8 characters" : "••••••••"}
                     required
                     className="w-full px-3.5 py-2.5 pr-10 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"

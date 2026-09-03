@@ -74,6 +74,7 @@ export interface WebsiteRow {
   verified: boolean;
   verification_method: string | null;
   verification_token: string | null;
+  verification_environment?: string | null;
   active: boolean;
   created_by: string | null;
   created_at: string;

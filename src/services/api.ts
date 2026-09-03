@@ -138,7 +138,7 @@ async function apiFetch<T>(
   let res: Response;
   try {
     const requestHeaders = buildRequestHeaders({
-      "Content-Type": "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     });
@@ -153,7 +153,8 @@ async function apiFetch<T>(
   }
 
   // Auto-refresh on 401
-  if (res.status === 401) {
+  const isAuthRequest = path.startsWith("/auth/login") || path.startsWith("/auth/register") || path.startsWith("/auth/refresh");
+  if (res.status === 401 && !isAuthRequest) {
     const refreshed = await tryRefreshToken();
     if (refreshed) {
       const newToken = getToken();
@@ -161,7 +162,7 @@ async function apiFetch<T>(
         ...options,
         credentials: "include",
         headers: buildRequestHeaders({
-          "Content-Type": "application/json",
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
           ...(newToken ? { Authorization: `Bearer ${newToken}` } : {}),
           ...options.headers,
         }),
@@ -279,7 +280,7 @@ export async function apiVerifyOwnership(websiteId: string) {
 
 export async function apiCreateScan(websiteId: string, modules: string[]) {
   if (IS_DEMO) throw new IntegrationRequired("scans.create");
-  return apiFetch("/scans", { method: "POST", body: JSON.stringify({ websiteId, modules }) });
+  return apiFetch<{ id: string }>("/scans", { method: "POST", body: JSON.stringify({ websiteId, modules }) });
 }
 
 export async function apiGetScan(scanId: string) {

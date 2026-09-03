@@ -40,6 +40,7 @@ async function migrate() {
       { version: "009", file: "009_adaptive_regeneration.sql" },
       { version: "010", file: "010_adaptation_intelligence.sql" },
       { version: "011", file: "011_supabase_rls.sql" },
+      { version: "012", file: "012_qa_verification.sql" },
     ];
 
     for (const { version, file } of migrations) {

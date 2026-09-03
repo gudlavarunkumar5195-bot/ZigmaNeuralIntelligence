@@ -43,6 +43,15 @@ services:
       - key: COOKIE_SECRET
         scope: RUN_TIME
         type: SECRET
+      - key: QA_VERIFICATION_BYPASS_ENABLED
+        scope: RUN_TIME
+        value: "false"
+      - key: QA_AUTHORIZED_EMAILS
+        scope: RUN_TIME
+        value: ""
+      - key: QA_ALLOW_PRODUCTION_BYPASS
+        scope: RUN_TIME
+        value: "false"
       # ── Optional AI features ───────────────────────────────────────────────
       - key: OPENROUTER_API_KEY
         scope: RUN_TIME
