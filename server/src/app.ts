@@ -109,6 +109,11 @@ export async function buildApp() {
     prefix: "/",
     wildcard: false,
   });
+  fastify.get("/assets/*", async (_request, reply) => {
+    return reply.status(404).send({
+      error: { code: "ASSET_NOT_FOUND", message: "Static asset not found" },
+    });
+  });
   fastify.get("/*", async (_request, reply) => reply.sendFile("index.html"));
 
   // Tighter rate limiting for auth endpoints
