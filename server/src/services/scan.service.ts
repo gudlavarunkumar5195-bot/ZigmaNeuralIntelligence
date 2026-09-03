@@ -302,9 +302,6 @@ async function processNextQueuedScan(): Promise<void> {
   const scanId = rows[0].id;
   console.log(`[worker] Processing scan ${scanId}`);
 
-  // Reset status to queued so runScan can set it properly
-  await query("UPDATE scans SET status = 'queued' WHERE id = $1", [scanId]);
-
   try {
     await runScan(scanId);
   } catch (err: unknown) {
