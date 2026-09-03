@@ -1,5 +1,8 @@
 import { checkUrlSafety } from "./ssrf.js";
 import { config } from "../config.js";
+import http from "node:http";
+import https from "node:https";
+import type { IncomingMessage } from "node:http";
 
 export interface SafeFetchResult {
   ok: boolean;
@@ -43,18 +46,9 @@ export async function safeFetch(
       config.SCANNER_CONNECT_TIMEOUT_MS
     );
 
-    let res: Response;
+    let res: IncomingMessage;
     try {
-      res = await fetch(currentUrl, {
-        method: options.method ?? "GET",
-        redirect: "manual",
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "ZigmaNeural-Scanner/1.0 (+https://zignaneural.com/scanner)",
-          "Accept": "text/html,application/xhtml+xml,*/*",
-          "Accept-Encoding": "gzip, br",
-        },
-      });
+      res = await requestPinned(currentUrl, safety.resolvedIPs?.[0], options.method ?? "GET", controller);
     } catch (err: unknown) {
       clearTimeout(connectTimer);
       return {
@@ -66,11 +60,11 @@ export async function safeFetch(
     clearTimeout(connectTimer);
 
     // Handle redirects manually so we can re-validate each target
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get("location");
+    if ((res.statusCode ?? 0) >= 300 && (res.statusCode ?? 0) < 400) {
+      const location = res.headers.location;
       if (!location) {
         return {
-          ok: false, status: res.status, headers: headersToObject(res.headers),
+          ok: false, status: res.statusCode ?? 0, headers: headersToObject(res.headers),
           body: "", finalUrl: currentUrl, redirectCount,
           durationMs: Date.now() - start, error: "Redirect with no Location header",
         };
@@ -97,19 +91,15 @@ export async function safeFetch(
 
     let body = "";
     try {
-      const reader = res.body?.getReader();
-      if (reader) {
-        let bytesRead = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          bytesRead += value.byteLength;
-          if (bytesRead > config.SCANNER_MAX_RESPONSE_BYTES) {
-            reader.cancel();
-            break;
-          }
-          body += new TextDecoder().decode(value);
+      let bytesRead = 0;
+      for await (const chunk of res) {
+        const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytesRead += value.byteLength;
+        if (bytesRead > config.SCANNER_MAX_RESPONSE_BYTES) {
+          res.destroy();
+          break;
         }
+        body += value.toString("utf8");
       }
     } catch {
       // Partial body is still useful
@@ -120,8 +110,8 @@ export async function safeFetch(
     const headers = headersToObject(res.headers);
 
     return {
-      ok: res.ok,
-      status: res.status,
+      ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
+      status: res.statusCode ?? 0,
       headers,
       body,
       finalUrl: currentUrl,
@@ -131,8 +121,37 @@ export async function safeFetch(
   }
 }
 
-function headersToObject(headers: Headers): Record<string, string> {
+function headersToObject(headers: IncomingMessage["headers"]): Record<string, string> {
   const out: Record<string, string> = {};
-  headers.forEach((v, k) => { out[k.toLowerCase()] = v; });
+  for (const [key, value] of Object.entries(headers)) {
+    if (value !== undefined) out[key.toLowerCase()] = Array.isArray(value) ? value.join(", ") : value;
+  }
   return out;
+}
+
+function requestPinned(url: string, address: string | undefined, method: string, controller: AbortController): Promise<IncomingMessage> {
+  const parsed = new URL(url);
+  const transport = parsed.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const request = transport.request({
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port || undefined,
+      path: `${parsed.pathname}${parsed.search}`,
+      method,
+      headers: {
+        Host: parsed.host,
+        "User-Agent": "ZigmaNeural-Scanner/1.0 (+https://zignaneural.com/scanner)",
+        Accept: "text/html,application/xhtml+xml,*/*",
+        "Accept-Encoding": "identity",
+      },
+      ...(address ? { lookup: (_hostname: string, _options: unknown, callback: (error: Error | null, address?: string, family?: number) => void) => callback(null, address, address.includes(":") ? 6 : 4) } : {}),
+      ...(parsed.protocol === "https:" ? { servername: parsed.hostname } : {}),
+    } as http.RequestOptions, resolve);
+    const abort = () => request.destroy(new Error("Request aborted"));
+    controller.signal.addEventListener("abort", abort, { once: true });
+    request.setTimeout(config.SCANNER_CONNECT_TIMEOUT_MS, () => request.destroy(new Error("Request timed out")));
+    request.once("error", reject);
+    request.end();
+  });
 }

@@ -56,6 +56,7 @@ function isUnsafeIPv6(addr: string): boolean {
 export interface SSRFCheckResult {
   safe: boolean;
   reason?: string;
+  resolvedIPs?: string[];
 }
 
 /**
@@ -127,5 +128,5 @@ export async function checkUrlSafety(rawUrl: string): Promise<SSRFCheckResult> {
     }
   }
 
-  return { safe: true };
+  return { safe: true, resolvedIPs };
 }
