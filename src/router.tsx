@@ -1,6 +1,8 @@
 import { lazy } from "react";
 import { createHashRouter as createBrowserRouter } from "react-router";
 import { Shell } from "./components/layout/Shell";
+import { isAuthenticated } from "./services/api";
+import { resolveAuthRedirect } from "./services/auth";
 
 const LoginPage = lazy(() => import("./pages/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
 const Overview = lazy(() => import("./pages/Overview").then(({ Overview }) => ({ default: Overview })));
@@ -45,6 +47,14 @@ export const router = createBrowserRouter([
   {
     path: "/",
     Component: Shell,
+    loader: () => {
+      const token = typeof window !== "undefined" ? window.sessionStorage.getItem("zn_token") : null;
+      const redirect = resolveAuthRedirect("/", token);
+      if (redirect !== "/") {
+        throw new Response(null, { status: 302, headers: { Location: redirect } });
+      }
+      return null;
+    },
     children: [
       { index: true, Component: Overview },
       { path: "websites", Component: MyWebsites },
@@ -85,3 +95,7 @@ export const router = createBrowserRouter([
     ],
   },
 ]);
+
+export function getProtectedRouteTarget(pathname: string): string {
+  return resolveAuthRedirect(pathname, isAuthenticated() ? "token" : null);
+}

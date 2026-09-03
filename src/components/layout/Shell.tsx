@@ -7,7 +7,7 @@ import {
   Lock, Network, FileText, Cog, ChevronLeft,
   Sparkles,
 } from "lucide-react";
-import { apiListWebsites } from "../../services/api";
+import { apiListWebsites, apiLogout, clearToken, isAuthenticated } from "../../services/api";
 
 interface NavItem {
   label: string;
@@ -270,11 +270,27 @@ function TopBar() {
   const navigate = useNavigate();
   const [websites, setWebsites] = useState<Array<{ id: string; domain: string }>>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
   useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate("/login", { replace: true });
+      return;
+    }
     void apiListWebsites().then((result) => {
       if (result.data) { setWebsites(result.data as Array<{ id: string; domain: string }>); setSelectedId((result.data as Array<{ id: string; domain: string }>)[0]?.id ?? ""); }
     }).catch(() => {});
-  }, []);
+  }, [navigate]);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await apiLogout();
+    } finally {
+      clearToken();
+      setLoggingOut(false);
+      navigate("/login", { replace: true });
+    }
+  };
 
   const getTitle = () => {
     const path = location.pathname;
@@ -332,6 +348,14 @@ function TopBar() {
         <button className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-colors relative topbar-pill">
           <Bell size={16} />
           <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500" />
+        </button>
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-700 text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          {loggingOut ? "Logging out…" : "Logout"}
         </button>
         <button
           onClick={() => navigate("/websites/add")}

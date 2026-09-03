@@ -8,6 +8,9 @@ const envSchema = z.object({
 
   // Database
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL").optional(),
+  SUPABASE_ANON_KEY: z.string().min(1, "SUPABASE_ANON_KEY is required in production").optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required in production").optional(),
 
   // JWT
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
@@ -18,7 +21,11 @@ const envSchema = z.object({
   COOKIE_SECRET: z.string().min(32, "COOKIE_SECRET must be at least 32 characters"),
 
   // CORS
-  CORS_ORIGIN: z.string().default("http://localhost:8443"),
+  CORS_ORIGIN: z
+    .string()
+    .min(1, "CORS_ORIGIN is required")
+    .refine((value) => !value.includes("*"), "CORS_ORIGIN must not use a wildcard in production")
+    .default("http://localhost:8443"),
 
   // Scanner limits
   SCANNER_CONNECT_TIMEOUT_MS: z.coerce.number().default(10_000),
@@ -50,7 +57,27 @@ function loadConfig() {
     console.error(`[ZigmaNeural] FATAL: Invalid server configuration:\n${issues}`);
     process.exit(1);
   }
-  return result.data;
+
+  const config = result.data;
+  if (config.NODE_ENV === "production") {
+    const missing = [
+      ["SUPABASE_URL", config.SUPABASE_URL],
+      ["SUPABASE_ANON_KEY", config.SUPABASE_ANON_KEY],
+      ["SUPABASE_SERVICE_ROLE_KEY", config.SUPABASE_SERVICE_ROLE_KEY],
+    ].filter(([, value]) => !value).map(([name]) => name);
+
+    if (missing.length > 0) {
+      console.error(`[ZigmaNeural] FATAL: Production configuration is missing required Supabase variables: ${missing.join(", ")}`);
+      process.exit(1);
+    }
+
+    if (config.CORS_ORIGIN.includes("*")) {
+      console.error("[ZigmaNeural] FATAL: CORS_ORIGIN must not use '*' in production.");
+      process.exit(1);
+    }
+  }
+
+  return config;
 }
 
 export const config = loadConfig();

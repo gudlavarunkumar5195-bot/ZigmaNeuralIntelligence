@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildRequestHeaders, getActiveOrgId } from "../services/api";
+import { resolveAuthRedirect, isSessionRoute } from "../services/auth";
 
 function createSessionStorage(): Storage {
   const store = new Map<string, string>();
@@ -40,5 +41,11 @@ describe("tenant request context", () => {
     sessionStorage.setItem("zn_token", `header.${payload}.signature`);
 
     expect(getActiveOrgId()).toBe("org-1");
+  });
+
+  it("redirects unauthenticated users away from protected routes", () => {
+    expect(isSessionRoute("/login")).toBe(true);
+    expect(isSessionRoute("/")).toBe(false);
+    expect(resolveAuthRedirect("/", "" )).toBe("/login");
   });
 });

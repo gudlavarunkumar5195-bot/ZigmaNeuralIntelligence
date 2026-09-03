@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { AlertTriangle, ArrowRight, Bot, CircleDashed, Globe2, Play, ShieldCheck, Sparkles } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { apiGetDashboard, ApiCallError, DashboardData, IntegrationRequired } from "../services/api";
+import { apiCreateScan, apiGetDashboard, ApiCallError, DashboardData, IntegrationRequired, isAuthenticated } from "../services/api";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../components/ui/DataState";
 
 const dimensions: Array<[string, string, string]> = [["seo", "SEO", "/intelligence/seo"], ["ai-visibility", "AI visibility", "/intelligence/ai-visibility"], ["security", "Security", "/intelligence/security"], ["performance", "Performance", "/intelligence/performance"], ["accessibility", "Accessibility", "/intelligence/accessibility"], ["technical-health", "Technical health", "/intelligence/technical-health"], ["ssl", "SSL", "/infrastructure/ssl"], ["qa", "Quality", "/testing/results"]];
@@ -16,8 +16,8 @@ export function Overview() {
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const websiteId = searchParams.get("websiteId") ?? undefined;
-  const load = async () => { setLoading(true); setError(null); try { const result = await apiGetDashboard(websiteId); if (result.error) throw new ApiCallError(0, result.error.code, result.error.message); setData(result.data); } catch (cause) { setError(cause as Error); } finally { setLoading(false); } };
-  useEffect(() => { void load(); }, [websiteId]);
+  const load = async () => { setLoading(true); setError(null); try { if (!isAuthenticated()) { navigate("/login", { replace: true }); return; } const result = await apiGetDashboard(websiteId); if (result.error) throw new ApiCallError(0, result.error.code, result.error.message); setData(result.data); } catch (cause) { setError(cause as Error); } finally { setLoading(false); } };
+  useEffect(() => { void load(); }, [navigate, websiteId]);
   const trend = useMemo(() => data?.history.map((point) => ({ date: new Date(point.captured_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }), score: point.overall_score })) ?? [], [data]);
   if (loading) return <LoadingState label="Loading website intelligence…" />;
   if (error instanceof IntegrationRequired) return <IntegrationRequiredState feature="Dashboard" description="Connect the production API to load authenticated tenant intelligence." />;
@@ -37,7 +37,7 @@ export function Overview() {
           </h2>
           <p className="mt-2 text-sm text-slate-600">{site.completed_at ? `Last analyzed ${new Date(site.completed_at).toLocaleString()}` : "No completed analysis yet"}</p>
         </div>
-        <button onClick={() => navigate(`/websites/scan/${site.id}`)} className="primary-button inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-700 text-white"><Play size={14} />New scan</button>
+        <button onClick={async () => { if (!site.latest_scan_id) { const result = await apiCreateScan(site.id, ["seo", "security", "performance", "ssl"]); if (result.error) { setError(new ApiCallError(0, result.error.code, result.error.message)); return; } if (result.data?.id) { navigate(`/websites/scan/${result.data.id}`); return; } navigate("/websites/add"); return; } navigate(`/websites/scan/${site.latest_scan_id}`); }} className="primary-button inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-700 text-white"><Play size={14} />New scan</button>
       </div>
     </header>
 

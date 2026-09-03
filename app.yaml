@@ -28,6 +28,15 @@ services:
       - key: DATABASE_URL
         scope: RUN_TIME
         type: SECRET
+      - key: SUPABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: SUPABASE_ANON_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        scope: RUN_TIME
+        type: SECRET
       - key: JWT_SECRET
         scope: RUN_TIME
         type: SECRET
