@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { ExternalLink, Globe2, Plus, ScanLine } from "lucide-react";
 import {
   apiCreateScan,
+  apiQaVerifyWebsite,
   apiGetDashboard,
   ApiCallError,
   DashboardData,
@@ -46,6 +47,16 @@ export function MyWebsites() {
         return;
       }
       navigate("/websites/history");
+    } catch (cause) {
+      setError(cause as Error);
+    }
+  };
+
+  const qaVerify = async (siteId: string) => {
+    try {
+      const result = await apiQaVerifyWebsite(siteId);
+      if (result.error) throw new ApiCallError(0, result.error.code, result.error.message);
+      await load();
     } catch (cause) {
       setError(cause as Error);
     }
@@ -123,6 +134,14 @@ export function MyWebsites() {
                 <ScanLine size={14} />
                 {site.latest_scan_id ? "Open scan" : "Start scan"}
               </button>
+              {!site.verified && (
+                <button
+                  onClick={() => void qaVerify(site.id)}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 shadow-sm hover:bg-amber-100"
+                >
+                  QA verify
+                </button>
+              )}
             </article>
           ))}
         </div>

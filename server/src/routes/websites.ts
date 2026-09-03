@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate, requireOrgMember, requireRole } from "../middleware/auth.js";
-import { addWebsite, listWebsites, getWebsite, verifyOwnership, isQaBypassAuthorized, canonicalizeQaDomain, QA_CANONICAL_DOMAIN } from "../services/website.service.js";
+import { addWebsite, listWebsites, getWebsite, qaVerifyWebsite, verifyOwnership, isQaBypassAuthorized, canonicalizeQaDomain, QA_CANONICAL_DOMAIN } from "../services/website.service.js";
 import { audit } from "../services/audit.service.js";
 
 const addWebsiteSchema = z.object({
@@ -95,5 +95,27 @@ export async function websiteRoutes(fastify: FastifyInstance): Promise<void> {
       const e = err as { statusCode?: number; code?: string; message: string };
       return reply.status(e.statusCode ?? 422).send({ error: { code: e.code, message: e.message } });
     }
+  });
+
+  fastify.post("/:id/qa-verify", { preHandler: [authenticate, requireOrgMember, requireRole("owner", "admin")] }, async (request, reply) => {
+    if (!isQaBypassAuthorized(request.authUser.email, request.authUser.role)) {
+      return reply.status(403).send({ error: { code: "QA_BYPASS_FORBIDDEN", message: "QA verification is restricted to authorized QA administrators" } });
+    }
+    const { id } = request.params as { id: string };
+    const website = await qaVerifyWebsite(id, request.orgId);
+    if (!website) {
+      return reply.status(404).send({ error: { code: "QA_DOMAIN_NOT_ALLOWED", message: "QA verification is restricted to the approved test domain" } });
+    }
+    await audit({
+      userId: request.authUser.id,
+      orgId: request.orgId,
+      requestId: request.id,
+      action: "QA_WEBSITE_VERIFICATION_BYPASS",
+      resourceType: "website",
+      resourceId: id,
+      result: "success",
+      metadata: { domain: website.domain, verificationMethod: "qa_bypass", environment: "qa" },
+    });
+    return reply.send({ data: { verified: true, website } });
   });
 }

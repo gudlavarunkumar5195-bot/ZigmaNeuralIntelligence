@@ -103,6 +103,20 @@ export async function getWebsite(id: string, orgId: string): Promise<WebsiteRow 
   return rows[0] ?? null;
 }
 
+export async function qaVerifyWebsite(websiteId: string, orgId: string): Promise<WebsiteRow | null> {
+  const { rows } = await query<WebsiteRow>(
+    `UPDATE websites
+       SET verified = TRUE,
+           verification_method = 'qa_bypass',
+           verification_environment = 'qa',
+           updated_at = NOW()
+     WHERE id = $1 AND org_id = $2 AND domain IN ('zigmaneural.com', 'www.zigmaneural.com')
+     RETURNING *`,
+    [websiteId, orgId],
+  );
+  return rows[0] ?? null;
+}
+
 // ─── Ownership Verification ────────────────────────────────────────────────────
 
 export async function verifyOwnership(websiteId: string, orgId: string): Promise<boolean> {

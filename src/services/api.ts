@@ -276,6 +276,11 @@ export async function apiVerifyOwnership(websiteId: string) {
   return apiFetch(`/websites/${websiteId}/verify`, { method: "POST" });
 }
 
+export async function apiQaVerifyWebsite(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("websites.qaVerify");
+  return apiFetch(`/websites/${websiteId}/qa-verify`, { method: "POST" });
+}
+
 // ─── Scans ────────────────────────────────────────────────────────────────────
 
 export async function apiCreateScan(websiteId: string, modules: string[]) {
