@@ -1,9 +1,10 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
 import { startScanWorker } from "./services/scan.service.js";
-import { closePool } from "./db/client.js";
+import { closePool, ensureRuntimeSchema } from "./db/client.js";
 
 async function start() {
+  await ensureRuntimeSchema();
   const app = await buildApp();
 
   try {

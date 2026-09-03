@@ -61,6 +61,10 @@ export async function healthCheck(): Promise<boolean> {
   }
 }
 
+export async function ensureRuntimeSchema(): Promise<void> {
+  await query("ALTER TABLE websites ADD COLUMN IF NOT EXISTS verification_environment VARCHAR(20)");
+}
+
 export async function closePool(): Promise<void> {
   await pool.end();
 }
