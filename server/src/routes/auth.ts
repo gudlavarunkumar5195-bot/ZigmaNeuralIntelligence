@@ -6,11 +6,12 @@ import {
 } from "../services/auth.service.js";
 import { audit } from "../services/audit.service.js";
 import { authenticate } from "../middleware/auth.js";
+import { config } from "../config.js";
 
 const REFRESH_COOKIE = "zn_refresh";
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: config.NODE_ENV === "production",
   sameSite: "strict" as const,
   path: "/api/v1/auth",
   maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
@@ -30,7 +31,7 @@ const loginSchema = z.object({
 
 export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /api/v1/auth/register
-  fastify.post("/register", async (request, reply) => {
+  fastify.post("/register", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: { code: "VALIDATION_ERROR", message: parsed.error.message } });
@@ -50,7 +51,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /api/v1/auth/login
-  fastify.post("/login", async (request, reply) => {
+  fastify.post("/login", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: { code: "VALIDATION_ERROR", message: parsed.error.message } });

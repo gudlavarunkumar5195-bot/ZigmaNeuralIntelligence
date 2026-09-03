@@ -606,8 +606,8 @@ export async function apiGetMonitoringHistory(websiteId: string) {
 
 /**
  * Subscribe to real-time scan progress via Server-Sent Events.
- * Token is passed as a query param because EventSource doesn't support headers.
- * Server validates token and org membership before streaming.
+ * Fetch streaming is used instead of EventSource so access tokens stay in
+ * request headers and never appear in URLs or proxy logs.
  */
 export function subscribeToScanProgress(
   scanId: string,
@@ -619,23 +619,43 @@ export function subscribeToScanProgress(
     return () => {};
   }
 
+  const controller = new AbortController();
   const token = getToken();
-  const url = `${config.apiBaseUrl}/scans/${scanId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-  const es = new EventSource(url, { withCredentials: true });
+  const url = `${config.apiBaseUrl}/scans/${scanId}/events`;
 
-  const EVENT_TYPES = ["scan_started", "module_started", "module_completed", "module_skipped",
-    "scan_completed", "scan_failed", "scan_cancelled", "done", "log"];
+  void fetch(url, {
+    credentials: "include",
+    signal: controller.signal,
+    headers: buildRequestHeaders({
+      Accept: "text/event-stream",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }),
+  }).then(async (response) => {
+    if (!response.ok || !response.body) {
+      throw new ApiCallError(response.status, "SSE_ERROR", "Scan progress stream unavailable");
+    }
 
-  EVENT_TYPES.forEach((type) => {
-    es.addEventListener(type, (e: MessageEvent) => {
-      try { onEvent({ type, payload: JSON.parse(e.data) }); } catch {}
-    });
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!controller.signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const eventType = frame.match(/^event: (.+)$/m)?.[1] ?? "message";
+        const data = frame.match(/^data: (.+)$/m)?.[1];
+        if (!data) continue;
+        try { onEvent({ type: eventType, payload: JSON.parse(data) }); } catch {}
+      }
+    }
+  }).catch((err: unknown) => {
+    if (!controller.signal.aborted) {
+      onError(err instanceof ApiCallError ? err : new ApiCallError(0, "SSE_ERROR", "Scan progress stream disconnected"));
+    }
   });
 
-  es.onerror = () => {
-    onError(new ApiCallError(0, "SSE_ERROR", "Scan progress stream disconnected"));
-    es.close();
-  };
-
-  return () => es.close();
+  return () => controller.abort();
 }
