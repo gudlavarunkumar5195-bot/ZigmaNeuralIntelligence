@@ -6,7 +6,7 @@ const { Pool } = pg;
 // Supabase (and most managed Postgres providers) require SSL in production.
 // If the connection string already contains sslmode=require this is a no-op;
 // if not, we enforce it explicitly so the pool never connects in plaintext.
-const sslConfig =
+export const dbSslConfig =
   config.NODE_ENV === "production"
     ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED }
     : undefined;
@@ -16,7 +16,7 @@ export const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
-  ssl: sslConfig,
+  ssl: dbSslConfig,
 });
 
 pool.on("error", (err) => {
@@ -67,5 +67,5 @@ export async function closePool(): Promise<void> {
 
 /** Create a dedicated client for LISTEN/NOTIFY (must not be pooled). */
 export function createListenClient(): pg.Client {
-  return new pg.Client({ connectionString: config.DATABASE_URL });
+  return new pg.Client({ connectionString: config.DATABASE_URL, ssl: dbSslConfig });
 }

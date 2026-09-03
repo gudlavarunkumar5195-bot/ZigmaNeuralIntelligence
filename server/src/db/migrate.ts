@@ -12,8 +12,9 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const sslConfig =
-  process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined;
+const sslConfig = process.env.NODE_ENV === "production"
+  ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" }
+  : undefined;
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: sslConfig });
 
