@@ -15,7 +15,7 @@ describe("deployment startup configuration", () => {
     expect(appYaml).toContain("run_command: pnpm --dir server start");
   });
 
-  it("declares the required production Supabase runtime variables and rejects wildcard CORS", () => {
+  it("declares Supabase integration variables and rejects wildcard CORS", () => {
     const appYaml = readFileSync(resolve(__dirname, "../../app.yaml"), "utf-8");
     const envExample = readFileSync(resolve(__dirname, "../../server.env.example"), "utf-8");
     const configSource = readFileSync(resolve(__dirname, "../../server/src/config.ts"), "utf-8");
