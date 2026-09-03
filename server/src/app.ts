@@ -68,7 +68,7 @@ export async function buildApp() {
     reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     reply.header(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     );
     if (config.NODE_ENV === "production") {
       reply.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
