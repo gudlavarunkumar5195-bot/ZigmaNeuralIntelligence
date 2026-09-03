@@ -149,10 +149,13 @@ export async function consumeRefreshToken(rawToken: string): Promise<RefreshResu
   }
 
   const userId = rows[0].user_id;
-  const { rows: userRows } = await query<{ email: string }>(
-    "SELECT email FROM users WHERE id = $1",
+  const { rows: userRows } = await query<{ email: string; active: boolean }>(
+    "SELECT email, active FROM users WHERE id = $1",
     [userId]
   );
+  if (userRows.length === 0 || !userRows[0].active) {
+    throw Object.assign(new Error("Account is disabled"), { statusCode: 403, code: "ACCOUNT_DISABLED" });
+  }
   const { rows: memberRows } = await query<{ org_id: string }>(
     "SELECT org_id FROM memberships WHERE user_id = $1",
     [userId]

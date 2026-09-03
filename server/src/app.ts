@@ -96,6 +96,12 @@ export async function buildApp() {
   await fastify.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
   await fastify.register(reportRoutes, { prefix: "/api/v1/reports" });
 
+  fastify.all("/api/v1/*", async (_request, reply) => {
+    return reply.status(404).send({
+      error: { code: "NOT_FOUND", message: "API route not found" },
+    });
+  });
+
   // The App Platform runs one web process. Serve the Vite production artifact
   // from the existing Fastify process while preserving all API routes above.
   await fastify.register(fastifyStatic, {
