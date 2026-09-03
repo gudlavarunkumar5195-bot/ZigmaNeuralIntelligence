@@ -57,6 +57,11 @@ services:
       - key: HOST
         scope: RUN_TIME
         value: "0.0.0.0"
+      # The managed database endpoint currently presents a private CA chain.
+      # Set this to true when DB_SSL_CA is supplied for certificate validation.
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        scope: RUN_TIME
+        value: "false"
       - key: CORS_ORIGIN
         scope: RUN_TIME
         value: "${APP_URL}"

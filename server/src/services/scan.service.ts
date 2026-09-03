@@ -279,6 +279,8 @@ export function startScanWorker(intervalMs: number): NodeJS.Timeout {
     workerRunning = true;
     try {
       await processNextQueuedScan();
+    } catch (err: unknown) {
+      console.error("[worker] Queue poll failed:", (err as Error).message);
     } finally {
       workerRunning = false;
     }
