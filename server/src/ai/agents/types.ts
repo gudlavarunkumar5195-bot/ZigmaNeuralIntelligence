@@ -99,7 +99,13 @@ export interface AgentDefinition {
 
 export interface AgentInput {
   taskId: string;
+  scanId?: string;
+  websiteId?: string;
   tenantId: string;
+  target?: string;
+  userId?: string;
+  timeoutMs?: number;
+  maxRetries?: number;
   agentType: AgentType;
   agentVersion: string;
   // Only reference IDs to stored evidence — never raw website content in instructions

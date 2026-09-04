@@ -156,7 +156,11 @@ export async function executeAgent(input: AgentInput): Promise<AgentResult> {
     temperature: 0.1,
     agentType: input.agentType,
     taskDescription: `${def.name} — task ${input.taskId}`,
+    scanId: input.scanId,
     orgId: input.tenantId,
+    userId: input.userId,
+    timeoutMs: input.timeoutMs,
+    maxRetries: input.maxRetries,
   });
 
   // ── 9. Validate output ─────────────────────────────────────────────────────
@@ -286,7 +290,16 @@ function validateAgentOutput(
     ? Math.max(0, Math.min(100, Math.round(obj["confidence"])))
     : 0;
 
-  const findings = validateFindings(obj["findings"], input.evidenceReferences);
+  const rawFindings = obj["findings"];
+  if (Array.isArray(rawFindings)) {
+    const hasInvalidEvidence = rawFindings.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const evidenceIds = (item as Record<string, unknown>)["evidenceIds"];
+      return Array.isArray(evidenceIds) && evidenceIds.some((id) => typeof id !== "string" || !input.evidenceReferences.includes(id));
+    });
+    if (hasInvalidEvidence) return buildFailedResult("Agent output referenced evidence outside the supplied evidence set");
+  }
+  const findings = validateFindings(rawFindings, input.evidenceReferences);
   const recommendations = Array.isArray(obj["recommendations"])
     ? (obj["recommendations"] as unknown[]).filter((r): r is string => typeof r === "string")
     : [];
@@ -411,7 +424,7 @@ async function persistExecution(opts: {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() - ($11 || ' milliseconds')::interval, NOW(), $11, $12)
      RETURNING id`,
     [
-      null,
+      opts.input.scanId ?? null,
       opts.input.tenantId,
       opts.input.agentType,
       opts.modelId,

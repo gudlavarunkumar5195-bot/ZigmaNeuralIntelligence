@@ -9,6 +9,7 @@ import type { ScanRow, ModuleResult, NewFinding, ScoreStatus } from "../types.js
 import { audit } from "./audit.service.js";
 import { collectEvidence } from "../ai/evidence/store.js";
 import type { EvidenceType } from "../ai/evidence/types.js";
+import { runScanIntelligence } from "../ai/agents/scan-pipeline.js";
 
 const MODULE_RUNNERS: Record<string, (url: string) => Promise<ModuleResult>> = {
   seo: runSEOScanner,
@@ -139,8 +140,8 @@ export async function emitScanEvent(
 
 export async function runScan(scanId: string): Promise<void> {
   // Fetch scan + website URL — enforce org isolation via JOIN
-  const { rows } = await query<{ scan_id: string; url: string; org_id: string; modules: string[] }>(
-    `SELECT s.id AS scan_id, w.url, s.org_id, s.modules
+  const { rows } = await query<{ scan_id: string; url: string; org_id: string; website_id: string; modules: string[] }>(
+    `SELECT s.id AS scan_id, s.website_id, w.url, s.org_id, s.modules
      FROM scans s JOIN websites w ON w.id = s.website_id
      WHERE s.id = $1`,
     [scanId]
@@ -151,7 +152,7 @@ export async function runScan(scanId: string): Promise<void> {
     return;
   }
 
-  const { url, org_id, modules } = rows[0];
+  const { url, org_id, website_id, modules } = rows[0];
 
   await query(
     "UPDATE scans SET status = 'running', started_at = NOW() WHERE id = $1",
@@ -264,6 +265,25 @@ export async function runScan(scanId: string): Promise<void> {
       findingCount: result.findings.length,
       durationMs: result.durationMs,
     });
+  }
+
+  try {
+    const intelligence = await runScanIntelligence({
+      scanId,
+      organizationId: org_id,
+      websiteId: website_id,
+      target: url,
+      deterministicFindings: allFindings,
+    });
+    await emitScanEvent(scanId, "intelligence_completed", {
+      status: intelligence.status,
+      discoveryCount: intelligence.discoveryCount,
+      seoStatus: intelligence.seoResult?.status ?? "UNAVAILABLE",
+      reportStatus: intelligence.reportResult?.status ?? "UNAVAILABLE",
+      error: intelligence.error,
+    });
+  } catch (err: unknown) {
+    await emitScanEvent(scanId, "intelligence_failed", { error: (err as Error).message });
   }
 
   // Calculate scores per category
