@@ -12,7 +12,13 @@ import type { EvidenceType } from "../ai/evidence/types.js";
 import { runScanIntelligence } from "../ai/agents/scan-pipeline.js";
 import { randomUUID } from "node:crypto";
 
-const SCAN_LEASE_MS = 120_000;
+export const SCAN_LEASE_MS = 120_000;
+export const SCAN_HEARTBEAT_MS = 40_000;
+const leaseHeartbeats = new Map<string, { lost: boolean; timer: NodeJS.Timeout; orgId: string; ownerId: string }>();
+
+export class ScanLeaseLostError extends Error {
+  constructor() { super("Scan execution lease was lost"); this.name = "ScanLeaseLostError"; }
+}
 
 export async function claimScanExecution(scanId: string, orgId: string, ownerId = randomUUID()): Promise<string | null> {
   const { rows } = await query<{ execution_owner: string }>(
@@ -24,6 +30,42 @@ export async function claimScanExecution(scanId: string, orgId: string, ownerId 
 
 export async function releaseScanExecution(scanId: string, orgId: string, ownerId: string): Promise<void> {
   await query("UPDATE scans SET execution_owner=NULL, execution_claimed_at=NULL, execution_lease_until=NULL WHERE id=$1 AND org_id=$2 AND execution_owner=$3", [scanId, orgId, ownerId]);
+}
+
+export async function renewScanExecution(scanId: string, orgId: string, ownerId: string): Promise<boolean> {
+  const { rows } = await query<{ execution_owner: string }>(
+    `UPDATE scans SET execution_lease_until=NOW() + ($4 || ' milliseconds')::interval
+     WHERE id=$1 AND org_id=$2 AND execution_owner=$3 AND status <> 'cancelled' AND execution_lease_until > NOW()
+     RETURNING execution_owner`, [scanId, orgId, ownerId, SCAN_LEASE_MS]);
+  return rows.length > 0;
+}
+
+export function startScanLeaseHeartbeat(scanId: string, orgId: string, ownerId: string): void {
+  stopScanLeaseHeartbeat(scanId);
+  const state = { lost: false, timer: undefined as unknown as NodeJS.Timeout, orgId, ownerId };
+  state.timer = setInterval(() => {
+    void renewScanExecution(scanId, orgId, ownerId).then((renewed) => {
+      if (!renewed) {
+        state.lost = true;
+        clearInterval(state.timer);
+      }
+    }).catch(() => {
+      state.lost = true;
+      clearInterval(state.timer);
+    });
+  }, SCAN_HEARTBEAT_MS);
+  state.timer.unref?.();
+  leaseHeartbeats.set(scanId, state);
+}
+
+export function stopScanLeaseHeartbeat(scanId: string): void {
+  const state = leaseHeartbeats.get(scanId);
+  if (state) clearInterval(state.timer);
+  leaseHeartbeats.delete(scanId);
+}
+
+export function hasLostScanLease(scanId: string): boolean {
+  return leaseHeartbeats.get(scanId)?.lost ?? false;
 }
 
 export async function isScanCancelled(scanId: string, orgId: string): Promise<boolean> {
@@ -159,6 +201,16 @@ export async function emitScanEvent(
 // ─── Run Scan (called by background worker) ────────────────────────────────
 
 export async function runScan(scanId: string): Promise<void> {
+  try {
+    await runScanWithLease(scanId);
+  } finally {
+    const state = leaseHeartbeats.get(scanId);
+    if (state) await releaseScanExecution(scanId, state.orgId, state.ownerId).catch(() => undefined);
+    stopScanLeaseHeartbeat(scanId);
+  }
+}
+
+async function runScanWithLease(scanId: string): Promise<void> {
   // Fetch scan + website URL — enforce org isolation via JOIN
   const { rows } = await query<{ scan_id: string; url: string; org_id: string; website_id: string; modules: string[] }>(
     `SELECT s.id AS scan_id, s.website_id, w.url, s.org_id, s.modules
@@ -175,6 +227,7 @@ export async function runScan(scanId: string): Promise<void> {
   const { url, org_id, website_id, modules } = rows[0];
   const ownerId = await claimScanExecution(scanId, org_id);
   if (!ownerId || await isScanCancelled(scanId, org_id)) return;
+  startScanLeaseHeartbeat(scanId, org_id, ownerId);
 
   await query(
     "UPDATE scans SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1 AND org_id = $2 AND status <> 'cancelled'",
@@ -210,7 +263,7 @@ export async function runScan(scanId: string): Promise<void> {
   const moduleStatuses: Record<string, "completed" | "failed" | "skipped"> = {};
 
   for (const moduleName of modules) {
-    if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
+    if (hasLostScanLease(scanId) || await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
     const runner = MODULE_RUNNERS[moduleName];
     if (!runner) {
       await query(
@@ -288,9 +341,10 @@ export async function runScan(scanId: string): Promise<void> {
       findingCount: result.findings.length,
       durationMs: result.durationMs,
     });
+    if (hasLostScanLease(scanId)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
   }
 
-  if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
+  if (hasLostScanLease(scanId) || await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
   try {
     const intelligence = await runScanIntelligence({
       scanId,
@@ -312,7 +366,7 @@ export async function runScan(scanId: string): Promise<void> {
     await emitScanEvent(scanId, "intelligence_failed", { error: (err as Error).message });
   }
 
-  if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
+  if (hasLostScanLease(scanId) || await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
   // Calculate scores per category
   const categories = ["seo", "security", "ssl", "performance", "accessibility", "aiVisibility", "technicalHealth", "qa"];
   const categoryRows: ScanScoreSummary[] = [];
@@ -349,8 +403,8 @@ export async function runScan(scanId: string): Promise<void> {
   const incompleteModules = Object.values(moduleStatuses).filter((s) => s !== "completed").length;
   const finalStatus = incompleteModules === 0 ? "completed" : incompleteModules === modules.length ? "failed" : "partial";
 
-  if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
-  await query("UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1 AND org_id = $3 AND execution_owner = $4 AND status <> 'cancelled'", [scanId, finalStatus, org_id, ownerId]);
+  if (hasLostScanLease(scanId) || await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
+  await query("UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1 AND org_id = $3 AND execution_owner = $4 AND execution_lease_until > NOW() AND status <> 'cancelled'", [scanId, finalStatus, org_id, ownerId]);
 
   // Snapshot for monitoring
   if (!(await isScanCancelled(scanId, org_id))) await snapshotMonitoring(scanId, org_id, url);
