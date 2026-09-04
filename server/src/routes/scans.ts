@@ -55,8 +55,8 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Attach scores
     const { rows: scores } = await query(
-      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 ORDER BY category",
-      [id]
+      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category",
+      [id, request.orgId]
     );
 
     return reply.send({ data: { ...scan, scores } });
@@ -98,8 +98,8 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const { rows: scores } = await query(
-      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 ORDER BY category",
-      [id]
+      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category",
+      [id, request.orgId]
     );
     const { rows: findings } = await query(
       `SELECT id, category, severity, title, description, recommendation, module_name, affected_urls, confidence, provenance, created_at
@@ -140,12 +140,12 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
       `SELECT f.*, json_agg(e.*) FILTER (WHERE e.id IS NOT NULL) AS evidence
        FROM findings f
        LEFT JOIN evidence e ON e.finding_id = f.id
-       WHERE f.scan_id = $1
+      WHERE f.scan_id = $1 AND f.org_id = $2
        GROUP BY f.id
        ORDER BY
          CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
          f.created_at`,
-      [id]
+      [id, request.orgId]
     );
 
     return reply.send({ data: findings });

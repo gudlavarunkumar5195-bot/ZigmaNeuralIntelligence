@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { query, withTransaction, createListenClient } from "../db/client.js";
 import { runSEOScanner } from "../scanner/seo.js";
 import { runSecurityScanner } from "../scanner/security.js";
@@ -15,6 +16,69 @@ const MODULE_RUNNERS: Record<string, (url: string) => Promise<ModuleResult>> = {
   ssl: runSSLScanner,
   performance: runPerformanceScanner,
 };
+
+export function logicalKey(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+export function isRecoverableModuleFailure(error: string | undefined): boolean {
+  if (!error) return false;
+  if (/SSRF|Invalid URL|Too many redirects|Redirect with no Location/i.test(error)) return false;
+  return /timed out|timeout|aborted|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|network|socket/i.test(error);
+}
+
+function retryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 250 * (2 ** Math.max(0, attempt - 1))));
+}
+
+export interface ScanScoreSummary {
+  category: string;
+  score: number | null;
+  status: ScoreStatus;
+  finding_count: number;
+  critical_count: number;
+}
+
+export function summarizeOverallScore(scoreRows: ScanScoreSummary[]): {
+  score: number | null;
+  status: ScoreStatus;
+  findingCount: number;
+  criticalCount: number;
+} {
+  const relevantRows = scoreRows.filter((row) => row.category !== "overall");
+
+  if (relevantRows.length === 0) {
+    return { score: null, status: "not_measured", findingCount: 0, criticalCount: 0 };
+  }
+
+  const measured = relevantRows.filter((row) => row.score !== null && row.status === "scored");
+  const weightedSum = measured.reduce((sum, row) => {
+    const weight = row.category === "seo" ? 0.2 : row.category === "security" ? 0.2 : row.category === "performance" ? 0.15 : row.category === "ssl" ? 0.1 : row.category === "accessibility" ? 0.1 : row.category === "aiVisibility" ? 0.1 : row.category === "technicalHealth" ? 0.1 : row.category === "qa" ? 0.05 : 0.1;
+    return sum + (row.score ?? 0) * weight;
+  }, 0);
+
+  const totalWeight = measured.reduce((sum, row) => {
+    const weight = row.category === "seo" ? 0.2 : row.category === "security" ? 0.2 : row.category === "performance" ? 0.15 : row.category === "ssl" ? 0.1 : row.category === "accessibility" ? 0.1 : row.category === "aiVisibility" ? 0.1 : row.category === "technicalHealth" ? 0.1 : row.category === "qa" ? 0.05 : 0.1;
+    return sum + weight;
+  }, 0);
+
+  const hasFailures = relevantRows.some((row) => row.status === "failed");
+  const hasIncomplete = relevantRows.some((row) => row.status !== "scored");
+  const findingCount = relevantRows.reduce((sum, row) => sum + row.finding_count, 0);
+  const criticalCount = relevantRows.reduce((sum, row) => sum + row.critical_count, 0);
+
+  if (measured.length === 0) {
+    return { score: null, status: hasFailures ? "failed" : "not_measured", findingCount, criticalCount };
+  }
+
+  const score = Math.round(weightedSum / totalWeight);
+  return {
+    score,
+    status: hasFailures ? "failed" : hasIncomplete ? "partial" : "scored",
+    findingCount,
+    criticalCount,
+  };
+}
 
 // ─── Create Scan ──────────────────────────────────────────────────────────────
 
@@ -95,7 +159,31 @@ export async function runScan(scanId: string): Promise<void> {
   );
   await emitScanEvent(scanId, "scan_started", { scanId });
 
-  const allFindings: NewFinding[] = [];
+  const { rows: persistedFindings } = await query<{
+    category: string;
+    severity: NewFinding["severity"];
+    title: string;
+    description: string;
+    recommendation: string;
+    affected_urls: string[];
+    confidence: number;
+    provenance: NewFinding["provenance"];
+  }>(
+    `SELECT category, severity, title, description, recommendation, affected_urls, confidence, provenance
+     FROM findings WHERE scan_id = $1 AND org_id = $2`,
+    [scanId, org_id]
+  );
+  const allFindings: NewFinding[] = persistedFindings.map((finding) => ({
+    category: finding.category,
+    severity: finding.severity,
+    title: finding.title,
+    description: finding.description,
+    recommendation: finding.recommendation,
+    affectedUrls: finding.affected_urls,
+    confidence: finding.confidence,
+    provenance: finding.provenance,
+    evidence: [],
+  }));
   const moduleStatuses: Record<string, "completed" | "failed" | "skipped"> = {};
 
   for (const moduleName of modules) {
@@ -110,17 +198,49 @@ export async function runScan(scanId: string): Promise<void> {
       continue;
     }
 
-    await query(
-      "UPDATE scan_modules SET status = 'running', started_at = NOW() WHERE scan_id = $1 AND module_name = $2",
+    const { rows: claimed } = await query<{ id: string; retry_count: number; max_retries: number }>(
+      `UPDATE scan_modules
+       SET status = 'running', started_at = NOW(), retry_count = retry_count + 1
+       WHERE scan_id = $1 AND module_name = $2
+         AND (status = 'pending' OR (status = 'failed' AND retry_count < max_retries + 1))
+       RETURNING id, retry_count, max_retries`,
       [scanId, moduleName]
     );
+    if (claimed.length === 0) {
+      const { rows: current } = await query<{ status: "pending" | "running" | "completed" | "failed" | "skipped" }>(
+        "SELECT status FROM scan_modules WHERE scan_id = $1 AND module_name = $2",
+        [scanId, moduleName]
+      );
+      if (current[0]?.status === "completed") {
+        moduleStatuses[moduleName] = "completed";
+        continue;
+      }
+      if (current[0]?.status === "skipped") {
+        moduleStatuses[moduleName] = "skipped";
+        continue;
+      }
+      // Another worker owns this module. It will finalize the scan.
+      return;
+    }
     await emitScanEvent(scanId, "module_started", { module: moduleName });
 
     let result: ModuleResult;
-    try {
-      result = await runner(url);
-    } catch (err: unknown) {
-      result = { moduleName, status: "failed", durationMs: 0, findings: [], error: (err as Error).message };
+    let attempt = claimed[0].retry_count;
+    const maxAttempts = claimed[0].max_retries + 1;
+    while (true) {
+      try {
+        result = await runner(url);
+      } catch (err: unknown) {
+        result = { moduleName, status: "failed", durationMs: 0, findings: [], error: (err as Error).message };
+      }
+      if (result.status !== "failed" || !isRecoverableModuleFailure(result.error) || attempt >= maxAttempts) break;
+      await retryDelay(attempt);
+      attempt += 1;
+      await query(
+        "UPDATE scan_modules SET retry_count = $3 WHERE scan_id = $1 AND module_name = $2",
+        [scanId, moduleName, attempt]
+      );
+      await emitScanEvent(scanId, "module_retry", { module: moduleName, attempt, maxAttempts });
     }
 
     await query(
@@ -148,24 +268,35 @@ export async function runScan(scanId: string): Promise<void> {
 
   // Calculate scores per category
   const categories = ["seo", "security", "ssl", "performance", "accessibility", "aiVisibility", "technicalHealth", "qa"];
+  const categoryRows: ScanScoreSummary[] = [];
+
   for (const cat of categories) {
     const catFindings = allFindings.filter((f) => f.category === cat);
     const moduleRan = modules.includes(cat) || modules.includes(cat.toLowerCase());
 
     if (!moduleRan) {
+      const row = { category: cat, score: null, status: "not_measured" as ScoreStatus, finding_count: 0, critical_count: 0 };
+      categoryRows.push(row);
       await upsertScore(scanId, org_id, cat, null, "not_measured", 0, 0);
     } else if (moduleStatuses[cat] === "failed") {
-      await upsertScore(scanId, org_id, cat, null, "failed", 0, 0);
+      const row = { category: cat, score: null, status: "failed" as ScoreStatus, finding_count: catFindings.length, critical_count: catFindings.filter((f) => f.severity === "critical").length };
+      categoryRows.push(row);
+      await upsertScore(scanId, org_id, cat, null, "failed", row.finding_count, row.critical_count);
     } else {
       const score = calculateCategoryScore(catFindings);
       const critical = catFindings.filter((f) => f.severity === "critical").length;
+      const row = { category: cat, score, status: "scored" as ScoreStatus, finding_count: catFindings.length, critical_count: critical };
+      categoryRows.push(row);
       await upsertScore(scanId, org_id, cat, score, "scored", catFindings.length, critical);
     }
   }
 
+  const overallSummary = summarizeOverallScore(categoryRows);
+  await upsertScore(scanId, org_id, "overall", overallSummary.score, overallSummary.status, overallSummary.findingCount, overallSummary.criticalCount);
+
   // Determine final scan status
-  const failedModules = Object.values(moduleStatuses).filter((s) => s === "failed").length;
-  const finalStatus = failedModules === 0 ? "completed" : failedModules === modules.length ? "failed" : "partial";
+  const incompleteModules = Object.values(moduleStatuses).filter((s) => s !== "completed").length;
+  const finalStatus = incompleteModules === 0 ? "completed" : incompleteModules === modules.length ? "failed" : "partial";
 
   await query(
     "UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1",
@@ -203,12 +334,18 @@ async function persistFinding(
 
   const { rows: findingRows } = await query<{ id: string }>(
     `INSERT INTO findings
-       (scan_id, website_id, org_id, module_name, category, severity, title,
+       (scan_id, website_id, org_id, logical_key, module_name, category, severity, title,
         description, recommendation, affected_urls, confidence, provenance)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (org_id, scan_id, logical_key) DO UPDATE
+       SET description = EXCLUDED.description,
+           recommendation = EXCLUDED.recommendation,
+           affected_urls = EXCLUDED.affected_urls,
+           confidence = EXCLUDED.confidence,
+           provenance = EXCLUDED.provenance
      RETURNING id`,
     [
-      scanId, websiteId, orgId, moduleName, f.category, f.severity, f.title,
+      scanId, websiteId, orgId, logicalKey({ moduleName, category: f.category, severity: f.severity, title: f.title, affectedUrls: f.affectedUrls ?? [] }), moduleName, f.category, f.severity, f.title,
       f.description, f.recommendation ?? "",
       f.affectedUrls ?? [], f.confidence ?? 100, f.provenance ?? "MEASURED",
     ]
@@ -218,7 +355,8 @@ async function persistFinding(
 
   for (const ev of f.evidence) {
     const evidenceType: EvidenceType = moduleName === "security" ? "SECURITY_SCANNER_RESULT" : moduleName === "performance" ? "PERFORMANCE_METRIC" : moduleName === "ssl" ? "TLS_CERTIFICATE" : ev.type === "http_status" ? "HTTP_RESPONSE" : "HTML_DOCUMENT";
-    const record = await collectEvidence({ tenantId: orgId, taskId: scanId, evidenceType, sourceType: "SCANNER", sourceReference: ev.tool ?? `${moduleName}_scanner`, resourceReference: ev.url ?? url, observedAt: new Date().toISOString(), content: { observedValue: ev.observedValue, expectedValue: ev.expectedValue, rule: ev.rule, type: ev.type }, agentId: moduleName.toUpperCase(), agentVersion: "scanner", metadata: { legacyType: ev.type, tool: ev.tool } });
+    const evidenceKey = logicalKey({ findingId: logicalKey({ moduleName, category: f.category, severity: f.severity, title: f.title, affectedUrls: f.affectedUrls ?? [] }), type: ev.type, url: ev.url ?? url, observedValue: ev.observedValue ?? null, expectedValue: ev.expectedValue ?? null, rule: ev.rule ?? null, tool: ev.tool ?? null });
+    const record = await collectEvidence({ tenantId: orgId, taskId: scanId, logicalKey: evidenceKey, evidenceType, sourceType: "SCANNER", sourceReference: ev.tool ?? `${moduleName}_scanner`, resourceReference: ev.url ?? url, observedAt: new Date().toISOString(), content: { observedValue: ev.observedValue, expectedValue: ev.expectedValue, rule: ev.rule, type: ev.type }, agentId: moduleName.toUpperCase(), agentVersion: "scanner", metadata: { legacyType: ev.type, tool: ev.tool } });
     await query(`UPDATE evidence SET finding_id=$2, type=$3, url=$4, observed_value=$5, expected_value=$6, rule=$7, tool=$8 WHERE id=$1`, [record.evidenceId, findingId, ev.type, ev.url ?? null, ev.observedValue ?? null, ev.expectedValue ?? null, ev.rule ?? null, ev.tool ?? null]);
   }
 
@@ -259,7 +397,7 @@ async function snapshotMonitoring(scanId: string, orgId: string, _url: string): 
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       scanRows[0]?.website_id, orgId, scanId,
-      null, // overall score calculated separately
+      scores["overall"] ?? null,
       scores["seo"] ?? null, scores["security"] ?? null,
       scores["performance"] ?? null, scores["accessibility"] ?? null,
       scores["ssl"] ?? null,

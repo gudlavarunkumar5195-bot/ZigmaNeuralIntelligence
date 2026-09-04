@@ -9,6 +9,7 @@ export interface EvidenceInput {
   tenantId: string; taskId: string; executionId?: string; agentId?: string; agentVersion?: string;
   evidenceType: EvidenceType; sourceType: EvidenceSource; sourceReference: string; resourceReference?: string;
   observedAt: string; content: unknown; confidence?: number; metadata?: Record<string, unknown>;
+  logicalKey?: string;
   kind?: EvidenceKind; parentEvidenceIds?: string[]; expiresAt?: string; freshnessPolicy?: string;
   retentionClass?: string; storageReference?: string;
 }

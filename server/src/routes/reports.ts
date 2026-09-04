@@ -21,7 +21,7 @@ export async function reportRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const [scores, findings] = await Promise.all([
-      query("SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 ORDER BY category", [scanId]),
+      query("SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category", [scanId, request.orgId]),
       query(
         `SELECT id, category, severity, title, description, recommendation, module_name, affected_urls, confidence, provenance, created_at
          FROM findings WHERE scan_id = $1 AND org_id = $2
