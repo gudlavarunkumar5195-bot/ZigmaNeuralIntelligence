@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { query } from "../../db/client.js";
 import { assessQuality } from "../quality/evaluator.js";
 import { runDiscovery } from "./discovery.js";
@@ -26,18 +26,45 @@ export async function runScanIntelligence(input: {
   target: string;
   deterministicFindings: NewFinding[];
 }): Promise<ScanIntelligenceResult> {
-  const discovery = await runDiscovery({
-    scanId: input.scanId,
-    organizationId: input.organizationId,
-    websiteId: input.websiteId,
-    target: input.target,
-  });
+  await query("UPDATE scans SET intelligence_status = 'RUNNING', intelligence_error = NULL WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId]);
+  await query(
+    `INSERT INTO reports (org_id, website_id, scan_id, report_version, status, summary)
+     VALUES ($1, $2, $3, 1, 'GENERATING', $4)
+     ON CONFLICT (scan_id, report_version) DO UPDATE SET status = 'GENERATING', error = NULL, updated_at = NOW()`,
+    [input.organizationId, input.websiteId, input.scanId, JSON.stringify({ deterministic: true, intelligence: "GENERATING" })]
+  );
+
+  const discoveryExecutionId = await startDiscoveryExecution(input);
+  let discovery;
+  try {
+    discovery = await runDiscovery({
+      scanId: input.scanId,
+      organizationId: input.organizationId,
+      websiteId: input.websiteId,
+      target: input.target,
+    });
+    await finishDiscoveryExecution(discoveryExecutionId, "completed");
+  } catch (error: unknown) {
+    const message = (error as Error).message;
+    await finishDiscoveryExecution(discoveryExecutionId, "failed", message);
+    await failIntelligence(input, `DISCOVERY_FAILURE: ${message}`);
+    return { discoveryCount: 0, seoResult: null, reportResult: null, status: "failed", error: message };
+  }
+
+  if (discovery.pages.length === 0 || discovery.evidence.length === 0) {
+    const message = "Discovery produced no usable evidence";
+    await failIntelligence(input, `DISCOVERY_FAILURE: ${message}`);
+    return { discoveryCount: 0, seoResult: null, reportResult: null, status: "failed", error: message };
+  }
 
   if (!getOxAlphaExecutor()) {
+    await failIntelligence(input, "MODEL_UNAVAILABLE: OPENROUTER_API_KEY is not configured");
     return { discoveryCount: discovery.pages.length, seoResult: null, reportResult: null, status: "unavailable", error: "OPENROUTER_API_KEY is not configured" };
   }
 
-  const seoResult = await agentExecutor.execute({
+  let seoResult: AgentResult;
+  try {
+    seoResult = await agentExecutor.execute({
     taskId: input.scanId,
     scanId: input.scanId,
     tenantId: input.organizationId,
@@ -54,18 +81,26 @@ export async function runScanIntelligence(input: {
       deterministicFindings: input.deterministicFindings,
       warnings: discovery.warnings,
     },
-  });
+    });
+  } catch (error: unknown) {
+    const message = (error as Error).message;
+    await failIntelligence(input, `SEO_FAILURE: ${message}`);
+    return { discoveryCount: discovery.pages.length, seoResult: null, reportResult: null, status: "failed", error: message };
+  }
 
   const quality = assessQuality({
     result: seoResult,
     evidenceValid: seoResult.findings.every((finding) => finding.evidenceIds.length > 0),
   });
   if (quality.status !== "ACCEPT") {
+    await failIntelligence(input, `QC_REJECTED: ${quality.status}`);
     return { discoveryCount: discovery.pages.length, seoResult, reportResult: null, status: "failed", error: `SEO quality gate: ${quality.status}` };
   }
 
   await persistSeoFindings(input, seoResult.findings);
-  const reportResult = await agentExecutor.execute({
+  let reportResult: AgentResult;
+  try {
+    reportResult = await agentExecutor.execute({
     taskId: input.scanId,
     scanId: input.scanId,
     tenantId: input.organizationId,
@@ -82,15 +117,46 @@ export async function runScanIntelligence(input: {
       seoFindings: seoResult.findings,
       discoveryCount: discovery.pages.length,
     },
-  });
+    });
+  } catch (error: unknown) {
+    const message = (error as Error).message;
+    await failIntelligence(input, `REPORT_SYNTHESIS_FAILURE: ${message}`);
+    return { discoveryCount: discovery.pages.length, seoResult, reportResult: null, status: "failed", error: message };
+  }
   const reportQuality = assessQuality({
     result: reportResult,
     evidenceValid: reportResult.findings.every((finding) => finding.evidenceIds.length > 0),
   });
   if (reportQuality.status !== "ACCEPT") {
+    await failIntelligence(input, `REPORT_QC_REJECTED: ${reportQuality.status}`);
     return { discoveryCount: discovery.pages.length, seoResult, reportResult, status: "failed", error: `Report quality gate: ${reportQuality.status}` };
   }
+  await query(
+    `UPDATE reports SET status = 'READY', summary = $4, updated_at = NOW()
+     WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1`,
+    [input.scanId, input.organizationId, input.websiteId, JSON.stringify({ deterministic: true, intelligence: "COMPLETED", seoStatus: seoResult.status, reportStatus: reportResult.status })]
+  );
+  await query("UPDATE scans SET intelligence_status = 'COMPLETED', intelligence_error = NULL WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId]);
   return { discoveryCount: discovery.pages.length, seoResult, reportResult, status: "completed" };
+}
+
+async function failIntelligence(input: { scanId: string; organizationId: string; websiteId: string }, error: string): Promise<void> {
+  await query("UPDATE scans SET intelligence_status = 'FAILED', intelligence_error = $3 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, error]);
+  await query("UPDATE reports SET status = 'FAILED', error = $4, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, error]);
+}
+
+async function startDiscoveryExecution(input: { scanId: string; organizationId: string }): Promise<string> {
+  const executionId = randomUUID();
+  await query(
+    `INSERT INTO agent_executions (scan_id, org_id, agent_type, task, status, attempt_number, execution_id, started_at)
+     VALUES ($1, $2, 'DISCOVERY', 'Discover authorized website resources', 'running', 1, $3, NOW())`,
+    [input.scanId, input.organizationId, executionId]
+  );
+  return executionId;
+}
+
+async function finishDiscoveryExecution(executionId: string, status: "completed" | "failed", error?: string): Promise<void> {
+  await query("UPDATE agent_executions SET status = $2, completed_at = NOW(), error = $3 WHERE execution_id = $1", [executionId, status, error ?? null]);
 }
 
 async function persistSeoFindings(input: { scanId: string; organizationId: string; websiteId: string }, findings: AgentFinding[]): Promise<void> {

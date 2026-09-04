@@ -283,6 +283,8 @@ export async function runScan(scanId: string): Promise<void> {
       error: intelligence.error,
     });
   } catch (err: unknown) {
+    await query("UPDATE scans SET intelligence_status = 'FAILED', intelligence_error = $3 WHERE id = $1 AND org_id = $2", [scanId, org_id, (err as Error).message]);
+    await query("UPDATE reports SET status = 'FAILED', error = $4, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [scanId, org_id, website_id, (err as Error).message]);
     await emitScanEvent(scanId, "intelligence_failed", { error: (err as Error).message });
   }
 
@@ -313,6 +315,10 @@ export async function runScan(scanId: string): Promise<void> {
 
   const overallSummary = summarizeOverallScore(categoryRows);
   await upsertScore(scanId, org_id, "overall", overallSummary.score, overallSummary.status, overallSummary.findingCount, overallSummary.criticalCount);
+  await query(
+    "UPDATE reports SET deterministic_score = $3, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND report_version = 1",
+    [scanId, org_id, overallSummary.score]
+  );
 
   // Determine final scan status
   const incompleteModules = Object.values(moduleStatuses).filter((s) => s !== "completed").length;

@@ -68,7 +68,7 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
     if (!scan) {
       return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Scan not found" } });
     }
-    return reply.send({ data: { id: scan.id, status: scan.status, started_at: scan.started_at, completed_at: scan.completed_at, error: scan.error } });
+    return reply.send({ data: { id: scan.id, status: scan.status, intelligence_status: scan.intelligence_status, started_at: scan.started_at, completed_at: scan.completed_at, error: scan.error, intelligence_error: scan.intelligence_error } });
   });
 
   fastify.get("/:id/evidence", { preHandler }, async (request, reply) => {
@@ -107,8 +107,12 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
        ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, created_at`,
       [id, request.orgId]
     );
+    const { rows: reports } = await query(
+      "SELECT id, report_version, status, deterministic_score, summary, error, created_at, updated_at FROM reports WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 ORDER BY report_version DESC LIMIT 1",
+      [id, request.orgId, scan.website_id]
+    );
 
-    return reply.send({ data: { scan, scores, findings } });
+    return reply.send({ data: { scan, intelligenceStatus: scan.intelligence_status, scores, findings, report: reports[0] ?? null } });
   });
 
   fastify.get("/:id/quality", { preHandler }, async (request, reply) => {

@@ -42,6 +42,7 @@ async function migrate() {
       { version: "011", file: "011_supabase_rls.sql" },
       { version: "012", file: "012_qa_verification.sql" },
       { version: "013", file: "013_scan_idempotency.sql" },
+      { version: "014", file: "014_intelligence_reports.sql" },
     ];
 
     for (const { version, file } of migrations) {

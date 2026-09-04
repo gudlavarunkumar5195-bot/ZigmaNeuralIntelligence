@@ -1,5 +1,6 @@
 export type Role = "owner" | "admin" | "member" | "viewer";
 export type ScanStatus = "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
+export type IntelligenceStatus = "NOT_STARTED" | "QUEUED" | "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED" | "CANCELLED";
 export type ModuleStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 export type Provenance = "MEASURED" | "INFERRED" | "OPPORTUNITY";
@@ -59,10 +60,12 @@ export interface ScanRow {
   org_id: string;
   triggered_by: string | null;
   status: ScanStatus;
+  intelligence_status: IntelligenceStatus;
   modules: string[];
   started_at: string | null;
   completed_at: string | null;
   error: string | null;
+  intelligence_error: string | null;
   created_at: string;
 }
 
