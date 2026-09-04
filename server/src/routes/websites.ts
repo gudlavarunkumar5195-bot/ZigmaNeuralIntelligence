@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, requireOrgMember, requireRole } from "../middleware/auth.js";
 import { addWebsite, listWebsites, getWebsite, qaVerifyWebsite, verifyOwnership, isQaBypassAuthorized, canonicalizeQaDomain, QA_CANONICAL_DOMAIN } from "../services/website.service.js";
 import { audit } from "../services/audit.service.js";
+import { query } from "../db/client.js";
 
 const addWebsiteSchema = z.object({
   url: z.string().url(),
@@ -27,6 +28,21 @@ export async function websiteRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Website not found" } });
     }
     return reply.send({ data: website });
+  });
+
+  fastify.get("/:id/scans", { preHandler }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const website = await getWebsite(id, request.orgId);
+    if (!website) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Website not found" } });
+    }
+
+    const { rows } = await query(
+      "SELECT * FROM scans WHERE website_id = $1 AND org_id = $2 ORDER BY created_at DESC",
+      [id, request.orgId]
+    );
+
+    return reply.send({ data: rows });
   });
 
   // POST /api/v1/websites

@@ -55,11 +55,75 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Attach scores
     const { rows: scores } = await query(
-      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1",
+      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 ORDER BY category",
       [id]
     );
 
     return reply.send({ data: { ...scan, scores } });
+  });
+
+  fastify.get("/:id/status", { preHandler }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const scan = await getScan(id, request.orgId);
+    if (!scan) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Scan not found" } });
+    }
+    return reply.send({ data: { id: scan.id, status: scan.status, started_at: scan.started_at, completed_at: scan.completed_at, error: scan.error } });
+  });
+
+  fastify.get("/:id/evidence", { preHandler }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const scan = await getScan(id, request.orgId);
+    if (!scan) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Scan not found" } });
+    }
+
+    const { rows } = await query(
+      `SELECT e.*, f.scan_id, f.module_name, f.category, f.severity
+       FROM evidence e
+       JOIN findings f ON f.id = e.finding_id
+       WHERE f.scan_id = $1 AND f.org_id = $2
+       ORDER BY e.collected_at DESC`,
+      [id, request.orgId]
+    );
+
+    return reply.send({ data: rows });
+  });
+
+  fastify.get("/:id/report", { preHandler }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const scan = await getScan(id, request.orgId);
+    if (!scan) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Report not found" } });
+    }
+
+    const { rows: scores } = await query(
+      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 ORDER BY category",
+      [id]
+    );
+    const { rows: findings } = await query(
+      `SELECT id, category, severity, title, description, recommendation, module_name, affected_urls, confidence, provenance, created_at
+       FROM findings WHERE scan_id = $1 AND org_id = $2
+       ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, created_at`,
+      [id, request.orgId]
+    );
+
+    return reply.send({ data: { scan, scores, findings } });
+  });
+
+  fastify.get("/:id/quality", { preHandler }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const scan = await getScan(id, request.orgId);
+    if (!scan) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Scan not found" } });
+    }
+
+    const { rows } = await query(
+      "SELECT * FROM quality_assessments WHERE task_id = $1 AND org_id = $2 ORDER BY created_at DESC",
+      [id, request.orgId]
+    );
+
+    return reply.send({ data: rows });
   });
 
   // GET /api/v1/scans/:id/findings
