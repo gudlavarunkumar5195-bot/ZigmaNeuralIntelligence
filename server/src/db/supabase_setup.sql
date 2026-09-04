@@ -1,4 +1,5 @@
--- ZigmaNeural — combined Supabase setup (all 11 migrations)
+-- LEGACY REFERENCE ONLY: the ordered files in server/src/db/migrations are
+-- authoritative. This snapshot may not include later migrations.
 -- Run this once in the Supabase SQL editor (Database > SQL Editor > New query)
 -- Idempotent: safe to re-run; migrations that are already applied are skipped.
 

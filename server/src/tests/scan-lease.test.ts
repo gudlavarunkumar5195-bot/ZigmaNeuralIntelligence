@@ -19,6 +19,8 @@ import {
   renewScanExecution,
   SCAN_HEARTBEAT_MS,
   startScanLeaseHeartbeat,
+  startScanWorker,
+  stopScanWorker,
   stopScanLeaseHeartbeat,
 } from "../services/scan.service.js";
 
@@ -58,5 +60,11 @@ describe("scan lease heartbeat", () => {
     await vi.advanceTimersByTimeAsync(SCAN_HEARTBEAT_MS);
     expect(hasLostScanLease("scan-1")).toBe(true);
     stopScanLeaseHeartbeat("scan-1");
+  });
+
+  it("stops polling without waiting forever for active work", async () => {
+    const timer = startScanWorker(1000);
+    expect(timer).toBeDefined();
+    await expect(stopScanWorker(1)).resolves.toBeUndefined();
   });
 });

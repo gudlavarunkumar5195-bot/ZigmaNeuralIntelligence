@@ -6,11 +6,11 @@ services:
       branch: main
       deploy_on_push: true
     build_command: pnpm build
-    run_command: pnpm --dir server start
+    run_command: pnpm --dir server migrate && pnpm --dir server start
     instance_count: 1
     instance_size_slug: basic-xxs
     health_check:
-      http_path: /health
+      http_path: /ready
       initial_delay_seconds: 30
       period_seconds: 15
       timeout_seconds: 10

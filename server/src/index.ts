@@ -1,6 +1,6 @@
 import { buildApp } from "./app.js";
 import { config } from "./config.js";
-import { startScanWorker } from "./services/scan.service.js";
+import { startScanWorker, stopScanWorker } from "./services/scan.service.js";
 import { closePool, ensureRuntimeSchema } from "./db/client.js";
 
 async function start() {
@@ -21,7 +21,7 @@ async function start() {
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`[server] ${signal} received, shutting down...`);
-    clearInterval(workerTimer);
+    await stopScanWorker(30_000);
     await app.close();
     await closePool();
     process.exit(0);

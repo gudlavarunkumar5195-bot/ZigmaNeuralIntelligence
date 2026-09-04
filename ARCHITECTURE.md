@@ -1013,12 +1013,37 @@ inventing results.
 
 ## Deployment
 
+### Phase 9A — Database tenancy and deployment safety
+
+The ordered migration directory is authoritative. App Platform runs the
+migration command before starting the web process; a PostgreSQL advisory lock
+serializes concurrent migration attempts, and `schema_migrations` is updated
+only after each transactional migration succeeds. A failed migration fails the
+deployment command and is not marked applied. `supabase_setup.sql` is retained
+as a legacy reference only and may not contain current schema changes.
+
+Tenant-bearing tables use membership-backed RLS policies in migration 022. The
+policy resolves the authenticated JWT subject from Supabase claim settings and
+checks membership in the target organization. The application continues to
+enforce `org_id` on every direct PostgreSQL query; the client `x-org-id` header
+is never used as an RLS trust source. Composite tenant foreign keys protect
+cross-tenant parent/child relationships. Audit records permit tenant-scoped
+insert/select only and deny ordinary authenticated update/delete access.
+
+The deployment health check uses `/ready`, which verifies database connectivity;
+`/health` remains a lightweight liveness endpoint. Shutdown stops worker polling,
+waits up to 30 seconds for active work, then closes the HTTP server and database
+pool. Unfinished leased jobs remain recoverable by the existing lease-expiry
+logic. Production PostgreSQL connections always use certificate verification;
+`DB_SSL_CA` is supplied through secure runtime configuration when needed.
+
 DigitalOcean App Platform runs this repository as one Web Service using
 `pnpm start`. The root build command (`pnpm run build`) creates the Vite
 artifact and compiles the Fastify server. The Fastify process serves `dist/`
 and the existing `/api/v1/*` routes on the platform-provided `PORT`, bound to
-`HOST=0.0.0.0`. `app.yaml` records the build/run commands and uses `/health`
-for its liveness probe; `/ready` provides the database-aware readiness probe.
+`HOST=0.0.0.0`. `app.yaml` records the build/run commands and uses `/ready`
+for its database-aware readiness probe; `/health` remains a lightweight
+liveness endpoint.
 
 The application uses the Supabase Postgres connection string as `DATABASE_URL`.
 All database schema changes are maintained in `server/src/db/migrations` and
@@ -1026,9 +1051,20 @@ are applied with `pnpm --dir server migrate`. The server `.env.example` lists
 the Supabase variables for deployment configuration; `SUPABASE_SERVICE_ROLE_KEY`
 is server-only and is not imported by frontend code.
 
-Migration `011_supabase_rls.sql` enables RLS on every application table. No
-browser Data API policies are created because the browser does not connect to
-Supabase tables directly; this is intentional deny-by-default protection.
+The migration runner is authoritative for schema changes. App Platform runs
+`pnpm --dir server migrate` before starting the web process; PostgreSQL advisory
+locking serializes concurrent deploy attempts, and each migration is recorded
+in `schema_migrations` only after its transaction commits. Failed migrations
+fail startup and are not marked applied. The combined `server/src/db/supabase_setup.sql`
+file is a legacy reference and is not authoritative; deployments must use the
+ordered migration directory.
+
+Migration `011_supabase_rls.sql` enables RLS on every application table, and
+migration `022_phase9a_tenant_security.sql` adds membership-backed policies for
+tenant tables, transaction-safe composite tenant foreign keys, and audit-log
+insert/select-only access. Direct PostgreSQL application requests continue to
+enforce organization scope in the API; Supabase JWT access uses the authenticated
+user subject and membership table, never the client-supplied organization header.
 
 ## Phase 3I — Production infrastructure integration & E2E acceptance
 
@@ -1037,9 +1073,10 @@ Supabase tables directly; this is intentional deny-by-default protection.
 - The root production build compiles the Vite artifact and Fastify server.
 - `pnpm start` launches the existing Fastify production process, which binds to
   `HOST` and `PORT`, serves `dist/`, exposes `/health`, and retains API routes.
-- The deployment manifest runs `pnpm start`, uses `/health` for liveness, and
+- The deployment manifest runs serialized migrations before `pnpm start`, uses
+  `/ready` for database-aware readiness, and
   deploys from `main`.
-- All migrations `001` through `011` are ordered in the migration runner.
+- All migrations `001` through `022` are ordered in the migration runner.
 - The application uses server-side `DATABASE_URL` for Supabase Postgres;
   browser fixture data has been removed and the service-role variable is never
   exposed to Vite client code.
@@ -1066,7 +1103,7 @@ in DigitalOcean and migrations are applied using `pnpm --dir server migrate`.
 - The DigitalOcean manifest starts the existing Fastify process with `pnpm start`;
   it serves the Vite artifact, binds to `HOST` / `PORT`, retains API routing, and
   exposes a lightweight `/health` probe.
-- Migrations `001`–`011` are present, ordered, and registered by
+- Migrations `001`–`022` are present, ordered, and registered by
   `pnpm --dir server migrate`. They create the application schema, indexes,
   foreign-key relationships, tenant-scoped records, and deny-by-default RLS.
 - Production client code contains no demo fixture store or server credential.

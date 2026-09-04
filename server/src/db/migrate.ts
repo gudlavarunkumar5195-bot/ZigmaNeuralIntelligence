@@ -24,6 +24,7 @@ const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: sslConfig });
 async function migrate() {
   const client = await pool.connect();
   try {
+    await client.query("SELECT pg_advisory_lock(hashtextextended('zignaneural:schema-migrations', 0))");
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version VARCHAR(50) PRIMARY KEY,
@@ -53,6 +54,7 @@ async function migrate() {
       { version: "019", file: "019_phase7_source_lineage_cascade.sql" },
       { version: "020", file: "020_monitoring_alerts.sql" },
       { version: "021", file: "021_phase8_completion.sql" },
+      { version: "022", file: "022_phase9a_tenant_security.sql" },
     ];
 
     for (const { version, file } of migrations) {
@@ -84,6 +86,7 @@ async function migrate() {
 
     console.log("[migrate] All migrations applied.");
   } finally {
+    await client.query("SELECT pg_advisory_unlock(hashtextextended('zignaneural:schema-migrations', 0))").catch(() => undefined);
     client.release();
     await pool.end();
   }

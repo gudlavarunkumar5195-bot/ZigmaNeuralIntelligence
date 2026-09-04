@@ -847,21 +847,30 @@ async function snapshotMonitoring(
 // ─── Background Worker ────────────────────────────────────────────────────────
 
 let workerRunning = false
+let workerTimer: NodeJS.Timeout | null = null
+let workerStopping = false
+let workerActive: Promise<void> | null = null
 
 export function startScanWorker(intervalMs: number): NodeJS.Timeout {
   console.log(`[worker] Starting scan worker (poll interval: ${intervalMs}ms)`)
 
-  return setInterval(async () => {
-    if (workerRunning) return
+  workerStopping = false
+  workerTimer = setInterval(async () => {
+    if (workerRunning || workerStopping) return
     workerRunning = true
-    try {
-      await processNextQueuedScan()
-    } catch (err: unknown) {
-      console.error("[worker] Queue poll failed:", (err as Error).message)
-    } finally {
-      workerRunning = false
-    }
+    workerActive = processNextQueuedScan()
+      .catch((err: unknown) => console.error("[worker] Queue poll failed:", (err as Error).message))
+      .finally(() => { workerRunning = false; workerActive = null })
   }, intervalMs)
+  return workerTimer
+}
+
+export async function stopScanWorker(graceMs = 30_000): Promise<void> {
+  workerStopping = true
+  if (workerTimer) clearInterval(workerTimer)
+  workerTimer = null
+  if (!workerActive) return
+  await Promise.race([workerActive, new Promise<void>((resolve) => setTimeout(resolve, graceMs))])
 }
 
 async function processNextQueuedScan(): Promise<void> {
