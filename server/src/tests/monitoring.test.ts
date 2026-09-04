@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareSnapshots, changeSignature, nextRunAt } from "../services/monitoring.service.js";
+import { compareSnapshots, changeSignature, nextRunAt, validateSnapshot } from "../services/monitoring.service.js";
 
 describe("Phase 8 deterministic monitoring", () => {
   it("calculates explicit daily, weekly, and monthly schedules", () => {
@@ -20,5 +20,12 @@ describe("Phase 8 deterministic monitoring", () => {
   it("produces stable alert signatures for duplicate changes", () => {
     const value = { changeType: "FINDING_INTRODUCED", domain: "security", affectedUrls: ["https://example.test"], findingIds: ["f1"] };
     expect(changeSignature(value)).toBe(changeSignature({ ...value }));
+  });
+
+  it("detects structural page changes and rejects incomplete baselines", () => {
+    const before = { scanId: "old", pages: [{ url: "https://example.test", redirectLocation: "/home", responseHeaders: { etag: "a" }, headings: ["Home"], structuredData: ["Article"], hreflang: ["en"] }], findings: [], scores: [{ category: "seo", score: 90 }] };
+    const after = { ...before, scanId: "new", pages: [{ url: "https://example.test", redirectLocation: "/new-home", responseHeaders: { etag: "b" }, headings: ["New home"], structuredData: ["Product"], hreflang: ["en", "fr"] }] };
+    expect(compareSnapshots(before, after).map((change) => change.changeType)).toEqual(expect.arrayContaining(["REDIRECTLOCATION_CHANGED", "RESPONSEHEADERS_CHANGED", "HEADINGS_CHANGED", "STRUCTUREDDATA_CHANGED", "HREFLANG_CHANGED"]));
+    expect(validateSnapshot({ scanId: "x", pages: [], findings: [], scores: [] }).valid).toBe(false);
   });
 });

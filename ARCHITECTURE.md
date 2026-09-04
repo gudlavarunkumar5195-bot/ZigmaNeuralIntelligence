@@ -10,19 +10,26 @@ lets the existing scan lease, Discovery, deterministic scanners, intelligence,
 and report lifecycle execute. It never crawls independently or changes a
 customer website.
 
-Only a completed, non-cancelled scan with completed intelligence becomes a valid
-baseline. Failed, partial, cancelled, or unavailable runs do not replace the
-last valid baseline and do not create regression alerts. Comparisons are
-deterministic: URL, status, redirects, metadata, page structure, findings, and
-score changes are represented as persisted before/after records with scan,
-tenant, URL, finding, and evidence references.
+The worker claims due configurations and runs with PostgreSQL row locks, leases,
+bounded retry metadata, and stale-run recovery. Every execution path is
+finalized as completed, failed, or cancelled, including worker-crash and API
+cancellation paths. Only a completed, non-cancelled scan with completed
+intelligence, matching tenant/website, valid scores, and valid finding evidence
+relationships becomes a valid baseline; non-comparable results are retained
+without replacing the latest valid baseline. Comparisons are deterministic:
+URL, status, redirects, headers, metadata, heading/structured-data/hreflang
+structure, findings, specialist domains, and score changes are represented as
+persisted before/after records with scan, tenant, URL, finding, and evidence
+references.
 
 Alerts are tenant-scoped, rule-driven, signature-deduplicated records with
 `OPEN`, `ACKNOWLEDGED`, `RESOLVED`, and `DISMISSED` states. Resolution is based
 on the persisted finding linkage; recurrence can create a new open alert after
-the previous one is resolved. Notification delivery is currently an internal
-durable attempt abstraction only: attempts are unique per alert/channel and no
-external provider or secret-bearing webhook is configured. Retention is bounded
+the previous one is resolved. Notification delivery uses a durable claimed
+attempt abstraction with bounded failure reporting; no external provider is
+falsely reported as configured. Supabase authenticated clients receive
+org-claim RLS policies, while the backend continues enforcing org scope on
+every query. Retention is bounded
 by the monitoring tables' tenant/scan relationships; automated deletion is not
 enabled, and future retention jobs must preserve the latest valid baseline.
 

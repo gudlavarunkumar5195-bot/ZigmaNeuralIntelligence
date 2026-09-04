@@ -49,6 +49,7 @@ async function migrate() {
       { version: "018", file: "018_phase7_lineage_cascade.sql" },
       { version: "019", file: "019_phase7_source_lineage_cascade.sql" },
       { version: "020", file: "020_monitoring_alerts.sql" },
+      { version: "021", file: "021_phase8_completion.sql" },
     ];
 
     for (const { version, file } of migrations) {
