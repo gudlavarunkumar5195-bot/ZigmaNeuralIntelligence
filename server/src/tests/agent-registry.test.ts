@@ -79,6 +79,7 @@ import { AGENT_TYPES } from "../ai/agents/types.js";
 import type { AgentType, AgentInput } from "../ai/agents/types.js";
 import { executeAgent, planWorkflow, AgentExecutionError } from "../ai/agents/orchestrator.js";
 import { resolveRouting } from "../ai/router/index.js";
+import { TASK_TYPES } from "../ai/router/types.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,12 @@ describe("Agent registry — definitions", () => {
   it("every AGENT_TYPES entry has a definition", () => {
     for (const type of AGENT_TYPES) {
       expect(getAgentDefinition(type)).not.toBeNull();
+    }
+  });
+
+  it("every implemented specialist is routable", () => {
+    for (const type of ["SEO_ANALYSIS", "AEO_ANALYSIS", "SECURITY_ANALYSIS", "PERFORMANCE_ANALYSIS", "ACCESSIBILITY_ANALYSIS", "TECHNICAL_HEALTH_ANALYSIS"] as const) {
+      expect(TASK_TYPES).toContain(type);
     }
   });
 
