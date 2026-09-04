@@ -6,6 +6,7 @@ import { agentExecutor } from "./executor.js";
 import { getOxAlphaExecutor } from "../ox-alpha.js";
 import { getAgentDefinition } from "./registry.js";
 import { findScanEvidence } from "../evidence/store.js";
+import { buildCrossDomainFinding, buildProposal, persistCrossDomainFinding, persistRemediationProposal } from "../../services/cross-domain.service.js";
 import type { AgentFinding, AgentResult, AgentType } from "./types.js";
 import type { NewFinding } from "../../types.js";
 
@@ -110,6 +111,7 @@ export async function runScanIntelligence(input: {
   const successfulResults = settled.filter(([, result]) => result.status !== "FAILED");
   const failedResults = settled.filter(([, result]) => result.status === "FAILED");
   const seoResult = agentResults.SEO_ANALYSIS ?? null;
+  const crossDomainResult = await runCrossDomainStage(input);
   let reportResult: AgentResult | null = null;
   if (successfulResults.length > 0) {
     try {
@@ -118,7 +120,7 @@ export async function runScanIntelligence(input: {
         return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult: null, status: "failed", error: "Scan was cancelled before report synthesis" };
       }
       const definition = getAgentDefinition("REPORT_SYNTHESIS")!;
-      reportResult = await agentExecutor.execute({ taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: "REPORT_SYNTHESIS", agentVersion: definition.version, evidenceReferences: allEvidenceReferences, riskLevel: "MEDIUM", satisfiedDependencies: ["DISCOVERY"], allowedTools: ["FINDING_AGGREGATOR"], context: { ...sharedContext, agentStatuses: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), agentFindings: Object.fromEntries(successfulResults.map(([type, result]) => [type, result.findings])) } });
+      reportResult = await agentExecutor.execute({ taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: "REPORT_SYNTHESIS", agentVersion: definition.version, evidenceReferences: allEvidenceReferences, riskLevel: "MEDIUM", satisfiedDependencies: ["DISCOVERY"], allowedTools: ["FINDING_AGGREGATOR"], context: { ...sharedContext, agentStatuses: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), agentFindings: Object.fromEntries(successfulResults.map(([type, result]) => [type, result.findings])), crossDomainFindings: crossDomainResult.findings, remediationProposals: crossDomainResult.proposals } });
       const quality = assessQuality({ result: reportResult, evidenceValid: reportResult.findings.every((finding) => finding.evidenceIds.length > 0) });
       if (quality.status !== "ACCEPT") throw new Error(`QC_REJECTED: ${quality.status}`);
     } catch (error: unknown) {
@@ -128,9 +130,24 @@ export async function runScanIntelligence(input: {
   const status = failedResults.length === 0 && reportResult?.status !== "FAILED" ? "completed" : successfulResults.length > 0 ? "partial" : "failed";
   const error = failedResults.length > 0 ? `${failedResults.length} specialist agent(s) failed` : reportResult?.status === "FAILED" ? "Report synthesis failed" : undefined;
   const reportStatus = status === "completed" && reportResult?.status !== "FAILED" ? "READY" : "FAILED";
-  await query("UPDATE reports SET status = $4, summary = $5, synthesis_artifact = $6, synthesis_execution_id = $7, synthesis_quality_status = $8, error = $9, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportStatus, JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), reportResult, reportResult?.executionId ?? null, reportResult?.status === "FAILED" ? "REJECTED" : "ACCEPTED", error]);
+  const reportArtifact = { synthesis: reportResult, crossDomainFindings: crossDomainResult.findings, remediationProposals: crossDomainResult.proposals };
+  await query("UPDATE reports SET status = $4, summary = $5, synthesis_artifact = $6, synthesis_execution_id = $7, synthesis_quality_status = $8, error = $9, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportStatus, JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), JSON.stringify(reportArtifact), reportResult?.executionId ?? null, reportResult?.status === "FAILED" ? "REJECTED" : "ACCEPTED", error]);
   await query("UPDATE scans SET intelligence_status = $3, intelligence_error = $4 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, status === "completed" ? "COMPLETED" : status === "partial" ? "PARTIAL" : "FAILED", error]);
   return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult, status, error };
+}
+
+async function runCrossDomainStage(input: { scanId: string; organizationId: string; websiteId: string }): Promise<{ findings: unknown[]; proposals: unknown[] }> {
+  const { rows } = await query<{ id: string; category: string; module_name: string; severity: string; title: string; description: string; recommendation: string; affected_urls: string[]; evidence_ids: string[] }>(`SELECT f.id, f.category, f.module_name, f.severity, f.title, f.description, f.recommendation, f.affected_urls, COALESCE(array_agg(fe.evidence_id) FILTER (WHERE fe.evidence_id IS NOT NULL), '{}') AS evidence_ids
+    FROM findings f LEFT JOIN finding_evidence fe ON fe.finding_id=f.id AND fe.org_id=f.org_id
+    WHERE f.scan_id=$1 AND f.org_id=$2 AND f.website_id=$3 AND f.module_name IN ('SEO_ANALYSIS','AEO_ANALYSIS','SECURITY_ANALYSIS','PERFORMANCE_ANALYSIS','ACCESSIBILITY_ANALYSIS','TECHNICAL_HEALTH_ANALYSIS')
+    GROUP BY f.id`, [input.scanId, input.organizationId, input.websiteId]);
+  const source = rows.filter((finding) => Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0);
+  const finding = buildCrossDomainFinding(source);
+  if (!finding) return { findings: [], proposals: [] };
+  await persistCrossDomainFinding({ orgId: input.organizationId, websiteId: input.websiteId, scanId: input.scanId, finding });
+  const proposal = buildProposal(finding, source.map((item) => item.recommendation));
+  await persistRemediationProposal({ orgId: input.organizationId, websiteId: input.websiteId, scanId: input.scanId, proposal });
+  return { findings: [finding], proposals: [proposal] };
 }
 
 async function failIntelligence(input: { scanId: string; organizationId: string; websiteId: string }, error: string): Promise<void> {

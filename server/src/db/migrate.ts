@@ -44,6 +44,10 @@ async function migrate() {
       { version: "013", file: "013_scan_idempotency.sql" },
       { version: "014", file: "014_intelligence_reports.sql" },
       { version: "015", file: "015_multi_agent_reliability.sql" },
+      { version: "016", file: "016_cross_domain_remediation.sql" },
+      { version: "017", file: "017_phase7_fk_cleanup.sql" },
+      { version: "018", file: "018_phase7_lineage_cascade.sql" },
+      { version: "019", file: "019_phase7_source_lineage_cascade.sql" },
     ];
 
     for (const { version, file } of migrations) {

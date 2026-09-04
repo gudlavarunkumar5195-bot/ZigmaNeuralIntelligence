@@ -2,6 +2,28 @@
 
 _Last updated: Phase 3I — Adaptive Intelligence complete._
 
+## Phase 7 — Cross-Domain Intelligence and Proposal-Only Remediation
+
+Validated specialist findings are correlated after the Phase 6.5 evidence and
+quality gates. Cross-domain findings retain source finding and evidence IDs,
+tenant/website/scan ownership, deterministic business-impact signals, and an
+explainable priority breakdown. No cross-domain stage crawls a website or
+creates unsupported measurements.
+
+Remediation proposals are derived from persisted findings and recommendations.
+They distinguish symptoms, proposed changes, validation plans, and uncertain
+root causes. Every proposal is `PROPOSED` and requires explicit owner/admin
+approval. Phase 7 does not execute shell commands, modify websites, deploy
+code, change DNS, or run after-validation against customer infrastructure.
+
+The priority score combines severity (40%), confidence (20%), affected scope
+(15%), number of domains (15%), and security signal (10%). The stored reason
+object makes each score auditable. Cross-domain and remediation lineage tables
+use tenant-safe foreign keys and idempotent `(org_id, scan_id, logical_key)`
+constraints. Retrieval and approval APIs remain behind existing authentication,
+organization membership, and role checks. Future execution requires a separate
+policy gate and is outside Phase 7.
+
 ---
 
 ## Phase 3I — Adaptive Multi-Agent / Multi-Model Intelligence

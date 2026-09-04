@@ -26,8 +26,8 @@ describe.skipIf(!INTEGRATION)("Phase 6.5 PostgreSQL reliability constraints", ()
 
   afterAll(async () => {
     if (query) {
-      await query("DELETE FROM evidence WHERE org_id IN ($1,$2)", [orgId, otherOrgId]);
       await query("DELETE FROM scans WHERE id=$1", [scanId]);
+      await query("DELETE FROM evidence WHERE org_id IN ($1,$2)", [orgId, otherOrgId]);
       await query("DELETE FROM organizations WHERE id IN ($1,$2)", [orgId, otherOrgId]);
     }
   });
@@ -48,5 +48,25 @@ describe.skipIf(!INTEGRATION)("Phase 6.5 PostgreSQL reliability constraints", ()
     expect([ownerA, ownerB].filter(Boolean)).toHaveLength(1);
     const stageRows = await query("INSERT INTO agent_stage_claims (scan_id, org_id, stage_name, owner_id) VALUES ($1,$2,'SEO_ANALYSIS','00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING RETURNING stage_name", [scanId, orgId]);
     expect(stageRows.rows).toHaveLength(1);
+  });
+
+  it("persists idempotent cross-domain and proposal lineage", async () => {
+    const { buildCrossDomainFinding, buildProposal, persistCrossDomainFinding, persistRemediationProposal } = await import("../services/cross-domain.service.js");
+    const finding = buildCrossDomainFinding([
+      { id: findingA, category: "seo", module_name: "SEO_ANALYSIS", severity: "high", title: "A", description: "A", recommendation: "Fix A", affected_urls: [], evidence_ids: [evidenceId] },
+      { id: findingB, category: "aiVisibility", module_name: "AEO_ANALYSIS", severity: "medium", title: "B", description: "B", recommendation: "Fix B", affected_urls: [], evidence_ids: [evidenceId] },
+    ])!;
+    const proposal = buildProposal(finding, ["Fix A", "Fix B"]);
+    const evidence = await query("SELECT id FROM evidence WHERE id=$1 AND org_id=$2 AND task_id=$3", [evidenceId, orgId, scanId]);
+    expect(evidence.rows).toHaveLength(1);
+    const crossId = await persistCrossDomainFinding({ orgId, websiteId, scanId, finding });
+    await persistCrossDomainFinding({ orgId, websiteId, scanId, finding });
+    await persistRemediationProposal({ orgId, websiteId, scanId, proposal });
+    const cross = await query("SELECT id FROM cross_domain_findings WHERE scan_id=$1 AND org_id=$2", [scanId, orgId]);
+    const links = await query("SELECT * FROM cross_domain_finding_evidence WHERE cross_domain_finding_id=$1 AND org_id=$2", [crossId, orgId]);
+    const proposals = await query("SELECT requires_human_approval, approval_status FROM remediation_proposals WHERE scan_id=$1 AND org_id=$2", [scanId, orgId]);
+    expect(cross.rows).toHaveLength(1);
+    expect(links.rows).toHaveLength(1);
+    expect(proposals.rows[0]).toMatchObject({ requires_human_approval: true, approval_status: "PROPOSED" });
   });
 });
