@@ -8,7 +8,7 @@ const { Pool } = pg;
 // if not, we enforce it explicitly so the pool never connects in plaintext.
 export const dbSslConfig =
   config.NODE_ENV === "production"
-    ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED }
+    ? { rejectUnauthorized: true, ...(config.DB_SSL_CA ? { ca: config.DB_SSL_CA } : {}) }
     : undefined;
 
 export const pool = new Pool({

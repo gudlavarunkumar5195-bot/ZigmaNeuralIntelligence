@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { validateProductionSecurityConfig } from "./config-security.js";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -10,7 +11,8 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   // Some managed deployments expose a private CA chain. Enable strict
   // verification explicitly once DB_SSL_CA is configured in the runtime.
-  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(false),
+  DB_SSL_REJECT_UNAUTHORIZED: z.coerce.boolean().default(true),
+  DB_SSL_CA: z.string().optional(),
   SUPABASE_URL: z.string().url("SUPABASE_URL must be a valid URL").optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
@@ -58,19 +60,19 @@ const envSchema = z.object({
   OX_ALPHA_MAX_OUTPUT_TOKENS: z.coerce.number().default(4_096),
 });
 
-function loadConfig() {
-  const result = envSchema.safeParse(process.env);
+export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+  validateProductionSecurityConfig(env);
+  const result = envSchema.safeParse(env);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     console.error(`[ZigmaNeural] FATAL: Invalid server configuration:\n${issues}`);
-    process.exit(1);
+    throw new Error(`[ZigmaNeural] Invalid server configuration:\n${issues}`);
   }
 
   const config = result.data;
   if (config.NODE_ENV === "production") {
     if (config.CORS_ORIGIN.includes("*")) {
-      console.error("[ZigmaNeural] FATAL: CORS_ORIGIN must not use '*' in production.");
-      process.exit(1);
+      throw new Error("[ZigmaNeural] CORS_ORIGIN must not use '*' in production.");
     }
   }
 

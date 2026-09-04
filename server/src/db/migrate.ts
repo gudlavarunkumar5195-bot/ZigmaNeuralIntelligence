@@ -3,9 +3,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 import pg from "pg";
+import { validateProductionSecurityConfig } from "../config-security.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATABASE_URL = process.env.DATABASE_URL;
+
+validateProductionSecurityConfig(process.env);
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -13,7 +16,7 @@ if (!DATABASE_URL) {
 }
 
 const sslConfig = process.env.NODE_ENV === "production"
-  ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === "true" }
+  ? { rejectUnauthorized: true, ...(process.env.DB_SSL_CA ? { ca: process.env.DB_SSL_CA } : {}) }
   : undefined;
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: sslConfig });

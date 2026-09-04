@@ -45,13 +45,13 @@ services:
         type: SECRET
       - key: QA_VERIFICATION_BYPASS_ENABLED
         scope: RUN_TIME
-        value: "true"
+        value: "false"
       - key: QA_AUTHORIZED_EMAILS
         scope: RUN_TIME
         value: "zigma.qa.20260903@example.com"
       - key: QA_ALLOW_PRODUCTION_BYPASS
         scope: RUN_TIME
-        value: "true"
+        value: "false"
       # ── Optional AI features ───────────────────────────────────────────────
       - key: OPENROUTER_API_KEY
         scope: RUN_TIME
@@ -66,11 +66,11 @@ services:
       - key: HOST
         scope: RUN_TIME
         value: "0.0.0.0"
-      # The managed database endpoint currently presents a private CA chain.
-      # Set this to true when DB_SSL_CA is supplied for certificate validation.
+      # Certificate verification is mandatory in production. Supply DB_SSL_CA
+      # through secure runtime configuration when the managed CA is not trusted.
       - key: DB_SSL_REJECT_UNAUTHORIZED
         scope: RUN_TIME
-        value: "false"
+        value: "true"
       - key: CORS_ORIGIN
         scope: RUN_TIME
         value: "${APP_URL}"
