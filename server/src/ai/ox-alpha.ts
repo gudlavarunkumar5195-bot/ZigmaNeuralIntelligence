@@ -190,9 +190,9 @@ export class OxAlphaExecutor {
     try {
       const { rows } = await query<{ id: string }>(
         `INSERT INTO agent_executions
-           (scan_id, org_id, agent_type, model_id, task, status,
-            attempt_number, started_at, correlation_id, execution_id, provider)
-         VALUES ($1, $2, $3, $4, $5, 'running', $6, NOW(), $7, $8, $9)
+            (scan_id, org_id, agent_type, model_id, task, status,
+            attempt_number, execution_kind, logical_execution_id, started_at, correlation_id, execution_id, provider)
+          VALUES ($1, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
          RETURNING id`,
         [
           params.scanId, params.orgId, params.agentType, params.model,

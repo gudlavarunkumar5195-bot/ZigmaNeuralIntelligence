@@ -5,6 +5,7 @@ import { runDiscovery } from "./discovery.js";
 import { agentExecutor } from "./executor.js";
 import { getOxAlphaExecutor } from "../ox-alpha.js";
 import { getAgentDefinition } from "./registry.js";
+import { findScanEvidence } from "../evidence/store.js";
 import type { AgentFinding, AgentResult, AgentType } from "./types.js";
 import type { NewFinding } from "../../types.js";
 
@@ -41,6 +42,10 @@ export async function runScanIntelligence(input: {
   target: string;
   deterministicFindings: NewFinding[];
 }): Promise<ScanIntelligenceResult> {
+  const existing = await query<{ intelligence_status: string }>("SELECT intelligence_status FROM scans WHERE id=$1 AND org_id=$2", [input.scanId, input.organizationId]);
+  if (existing.rows[0]?.intelligence_status === "COMPLETED") {
+    return { discoveryCount: 0, seoResult: null, agentResults: {}, reportResult: null, status: "completed" };
+  }
   await query("UPDATE scans SET intelligence_status = 'RUNNING', intelligence_error = NULL WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId]);
   await query(
     `INSERT INTO reports (org_id, website_id, scan_id, report_version, status, summary)
@@ -78,16 +83,26 @@ export async function runScanIntelligence(input: {
   }
 
   const evidenceReferences = discovery.evidence.map((record) => record.evidenceId);
-  const sharedContext = { discoveryPages: discovery.pages, deterministicFindings: input.deterministicFindings, discoveryWarnings: discovery.warnings, evidenceState: "Canonical discovery evidence; external visibility and unavailable measurements are NOT_MEASURED." };
+  const deterministicEvidence = await findScanEvidence(input.organizationId, input.scanId, input.websiteId);
+  const allEvidence = [...new Map([...discovery.evidence, ...deterministicEvidence].map((record) => [record.evidenceId, record])).values()];
+  const allEvidenceReferences = allEvidence.map((record) => record.evidenceId);
+  const sharedContext = { discoveryPages: discovery.pages, deterministicFindings: input.deterministicFindings, deterministicEvidence, discoveryWarnings: discovery.warnings, evidenceState: "Canonical discovery and deterministic scanner evidence; external visibility and unavailable measurements are NOT_MEASURED." };
   const settled = await Promise.all(SPECIALISTS.map(async (spec) => {
     const definition = getAgentDefinition(spec.agentType)!;
+    const stageOwner = randomUUID();
     try {
-      const result = await agentExecutor.execute({ taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: spec.agentType, agentVersion: definition.version, evidenceReferences, riskLevel: spec.riskLevel, satisfiedDependencies: ["DISCOVERY"], allowedTools: spec.allowedTools, context: sharedContext });
+      const claimed = await claimStage(input, spec.agentType, stageOwner);
+      if (!claimed) return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, "Stage already completed by another execution")] as const;
+      if (await isCancelled(input)) return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, "Scan was cancelled before specialist execution")] as const;
+      const result = await agentExecutor.execute({ taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: spec.agentType, agentVersion: definition.version, evidenceReferences: allEvidenceReferences, riskLevel: spec.riskLevel, satisfiedDependencies: ["DISCOVERY"], allowedTools: spec.allowedTools, context: sharedContext });
+      if (await isCancelled(input)) return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, "Scan was cancelled after specialist execution")] as const;
       const quality = assessQuality({ result, evidenceValid: result.findings.every((finding) => finding.evidenceIds.length > 0) });
       if (quality.status !== "ACCEPT") throw new Error(`QC_REJECTED: ${quality.status}`);
       await persistAgentFindings(input, spec.category, spec.agentType, result.findings);
+      await finishStage(input, spec.agentType, stageOwner, "COMPLETED");
       return [spec.agentType, result] as const;
     } catch (error: unknown) {
+      await finishStage(input, spec.agentType, stageOwner, "FAILED", (error as Error).message);
       return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, (error as Error).message)] as const;
     }
   }));
@@ -98,8 +113,12 @@ export async function runScanIntelligence(input: {
   let reportResult: AgentResult | null = null;
   if (successfulResults.length > 0) {
     try {
+      if (await isCancelled(input)) {
+        await markCancelled(input);
+        return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult: null, status: "failed", error: "Scan was cancelled before report synthesis" };
+      }
       const definition = getAgentDefinition("REPORT_SYNTHESIS")!;
-      reportResult = await agentExecutor.execute({ taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: "REPORT_SYNTHESIS", agentVersion: definition.version, evidenceReferences, riskLevel: "MEDIUM", satisfiedDependencies: ["DISCOVERY"], allowedTools: ["FINDING_AGGREGATOR"], context: { ...sharedContext, agentStatuses: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), agentFindings: Object.fromEntries(successfulResults.map(([type, result]) => [type, result.findings])) } });
+      reportResult = await agentExecutor.execute({ taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: "REPORT_SYNTHESIS", agentVersion: definition.version, evidenceReferences: allEvidenceReferences, riskLevel: "MEDIUM", satisfiedDependencies: ["DISCOVERY"], allowedTools: ["FINDING_AGGREGATOR"], context: { ...sharedContext, agentStatuses: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), agentFindings: Object.fromEntries(successfulResults.map(([type, result]) => [type, result.findings])) } });
       const quality = assessQuality({ result: reportResult, evidenceValid: reportResult.findings.every((finding) => finding.evidenceIds.length > 0) });
       if (quality.status !== "ACCEPT") throw new Error(`QC_REJECTED: ${quality.status}`);
     } catch (error: unknown) {
@@ -108,7 +127,8 @@ export async function runScanIntelligence(input: {
   }
   const status = failedResults.length === 0 && reportResult?.status !== "FAILED" ? "completed" : successfulResults.length > 0 ? "partial" : "failed";
   const error = failedResults.length > 0 ? `${failedResults.length} specialist agent(s) failed` : reportResult?.status === "FAILED" ? "Report synthesis failed" : undefined;
-  await query("UPDATE reports SET status = $4, summary = $5, error = $6, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportResult?.status === "FAILED" ? "FAILED" : "READY", JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), error]);
+  const reportStatus = status === "completed" && reportResult?.status !== "FAILED" ? "READY" : "FAILED";
+  await query("UPDATE reports SET status = $4, summary = $5, synthesis_artifact = $6, synthesis_execution_id = $7, synthesis_quality_status = $8, error = $9, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportStatus, JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), reportResult, reportResult?.executionId ?? null, reportResult?.status === "FAILED" ? "REJECTED" : "ACCEPTED", error]);
   await query("UPDATE scans SET intelligence_status = $3, intelligence_error = $4 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, status === "completed" ? "COMPLETED" : status === "partial" ? "PARTIAL" : "FAILED", error]);
   return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult, status, error };
 }
@@ -116,6 +136,29 @@ export async function runScanIntelligence(input: {
 async function failIntelligence(input: { scanId: string; organizationId: string; websiteId: string }, error: string): Promise<void> {
   await query("UPDATE scans SET intelligence_status = 'FAILED', intelligence_error = $3 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, error]);
   await query("UPDATE reports SET status = 'FAILED', error = $4, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, error]);
+}
+
+async function isCancelled(input: { scanId: string; organizationId: string }): Promise<boolean> {
+  const { rows } = await query<{ status: string }>("SELECT status FROM scans WHERE id=$1 AND org_id=$2", [input.scanId, input.organizationId]);
+  return rows[0]?.status === "cancelled";
+}
+
+async function claimStage(input: { scanId: string; organizationId: string }, stageName: string, ownerId: string): Promise<boolean> {
+  const { rows } = await query<{ stage_name: string }>(`INSERT INTO agent_stage_claims (scan_id, org_id, stage_name, owner_id, status, attempt_number, claimed_at, lease_until)
+    VALUES ($1,$2,$3,$4,'RUNNING',1,NOW(),NOW()+INTERVAL '2 minutes')
+    ON CONFLICT (scan_id, stage_name) DO UPDATE SET owner_id=EXCLUDED.owner_id, status='RUNNING', attempt_number=agent_stage_claims.attempt_number+1, claimed_at=NOW(), lease_until=NOW()+INTERVAL '2 minutes', error=NULL
+    WHERE agent_stage_claims.status <> 'COMPLETED' AND agent_stage_claims.lease_until < NOW()
+    RETURNING stage_name`, [input.scanId, input.organizationId, stageName, ownerId]);
+  return rows.length > 0;
+}
+
+async function finishStage(input: { scanId: string; organizationId: string }, stageName: string, ownerId: string | undefined, status: "COMPLETED" | "FAILED", error?: string): Promise<void> {
+  if (ownerId) await query("UPDATE agent_stage_claims SET status=$4, completed_at=NOW(), error=$5 WHERE scan_id=$1 AND org_id=$2 AND stage_name=$3 AND owner_id=$6", [input.scanId, input.organizationId, stageName, status, error ?? null, ownerId]);
+}
+
+async function markCancelled(input: { scanId: string; organizationId: string; websiteId: string }): Promise<void> {
+  await query("UPDATE scans SET intelligence_status='CANCELLED', intelligence_error='Scan cancelled' WHERE id=$1 AND org_id=$2 AND status='cancelled'", [input.scanId, input.organizationId]);
+  await query("UPDATE reports SET status='FAILED', error='Scan cancelled', updated_at=NOW() WHERE scan_id=$1 AND org_id=$2 AND website_id=$3 AND report_version=1", [input.scanId, input.organizationId, input.websiteId]);
 }
 
 async function startDiscoveryExecution(input: { scanId: string; organizationId: string }): Promise<string> {
@@ -162,7 +205,7 @@ async function persistAgentFindings(
        RETURNING id`,
       [input.scanId, input.websiteId, input.organizationId, findingKey, agentType, category, finding.severity.toLowerCase(), finding.title, finding.description, finding.recommendation ?? "", finding.affectedResource ? [finding.affectedResource] : [], finding.confidence]
     );
-    await query("UPDATE evidence SET finding_id = $1 WHERE id = ANY($2::uuid[]) AND org_id = $3 AND task_id = $4", [rows[0].id, finding.evidenceIds, input.organizationId, input.scanId]);
+    await query("INSERT INTO finding_evidence (finding_id, evidence_id, org_id) SELECT $1, id, $3 FROM evidence WHERE id = ANY($2::uuid[]) AND org_id = $3 AND task_id = $4 ON CONFLICT DO NOTHING", [rows[0].id, finding.evidenceIds, input.organizationId, input.scanId]);
   }
 }
 

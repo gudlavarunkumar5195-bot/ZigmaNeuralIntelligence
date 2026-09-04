@@ -420,8 +420,8 @@ async function persistExecution(opts: {
   const { rows } = await query<{ id: string }>(
     `INSERT INTO agent_executions
        (scan_id, org_id, agent_type, model_id, task, status, attempt_number,
-        routing_id, agent_version, failure_type, started_at, completed_at, latency_ms, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() - ($11 || ' milliseconds')::interval, NOW(), $11, $12)
+        routing_id, agent_version, failure_type, execution_kind, logical_execution_id, started_at, completed_at, latency_ms, error)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'AGENT_EXECUTION', $13, NOW() - ($11 || ' milliseconds')::interval, NOW(), $11, $12)
      RETURNING id`,
     [
       opts.input.scanId ?? null,
@@ -436,6 +436,7 @@ async function persistExecution(opts: {
       opts.failureType ?? null,
       opts.latencyMs,
       opts.errorCode ?? null,
+      opts.input.correlationId ?? randomUUID(),
     ]
   );
   return rows[0]?.id ?? randomUUID();

@@ -28,7 +28,7 @@ export async function reportRoutes(fastify: FastifyInstance): Promise<void> {
          ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, created_at`,
         [scanId, request.orgId],
       ),
-      query("SELECT id, website_id, report_version, status, deterministic_score, summary, error, created_at, updated_at FROM reports WHERE scan_id = $1 AND org_id = $2 ORDER BY report_version DESC LIMIT 1", [scanId, request.orgId]),
+      query("SELECT id, website_id, report_version, status, deterministic_score, summary, synthesis_artifact, synthesis_execution_id, synthesis_quality_status, error, created_at, updated_at FROM reports WHERE scan_id = $1 AND org_id = $2 ORDER BY report_version DESC LIMIT 1", [scanId, request.orgId]),
     ]);
 
     return reply.send({ data: { scan, intelligenceStatus: scan.intelligence_status, scores: scores.rows, findings: findings.rows, report: reports.rows[0] ?? null } });

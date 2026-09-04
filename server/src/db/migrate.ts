@@ -43,6 +43,7 @@ async function migrate() {
       { version: "012", file: "012_qa_verification.sql" },
       { version: "013", file: "013_scan_idempotency.sql" },
       { version: "014", file: "014_intelligence_reports.sql" },
+      { version: "015", file: "015_multi_agent_reliability.sql" },
     ];
 
     for (const { version, file } of migrations) {

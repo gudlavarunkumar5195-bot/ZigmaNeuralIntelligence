@@ -5,11 +5,31 @@ import { runSecurityScanner } from "../scanner/security.js";
 import { runSSLScanner } from "../scanner/ssl.js";
 import { runPerformanceScanner } from "../scanner/performance.js";
 import { calculateCategoryScore } from "../types.js";
-import type { ScanRow, ModuleResult, NewFinding, ScoreStatus } from "../types.js";
+import type { ScanRow, ModuleResult, NewFinding, ScoreStatus, ScanStatus } from "../types.js";
 import { audit } from "./audit.service.js";
 import { collectEvidence } from "../ai/evidence/store.js";
 import type { EvidenceType } from "../ai/evidence/types.js";
 import { runScanIntelligence } from "../ai/agents/scan-pipeline.js";
+import { randomUUID } from "node:crypto";
+
+const SCAN_LEASE_MS = 120_000;
+
+export async function claimScanExecution(scanId: string, orgId: string, ownerId = randomUUID()): Promise<string | null> {
+  const { rows } = await query<{ execution_owner: string }>(
+    `UPDATE scans SET execution_owner=$3, execution_claimed_at=NOW(), execution_lease_until=NOW() + ($4 || ' milliseconds')::interval
+    WHERE id=$1 AND org_id=$2 AND status IN ('queued','running') AND intelligence_status <> 'COMPLETED' AND (execution_owner IS NULL OR execution_lease_until < NOW() OR execution_owner=$3)
+     RETURNING execution_owner`, [scanId, orgId, ownerId, SCAN_LEASE_MS]);
+  return rows[0]?.execution_owner ?? null;
+}
+
+export async function releaseScanExecution(scanId: string, orgId: string, ownerId: string): Promise<void> {
+  await query("UPDATE scans SET execution_owner=NULL, execution_claimed_at=NULL, execution_lease_until=NULL WHERE id=$1 AND org_id=$2 AND execution_owner=$3", [scanId, orgId, ownerId]);
+}
+
+export async function isScanCancelled(scanId: string, orgId: string): Promise<boolean> {
+  const { rows } = await query<{ status: ScanStatus }>("SELECT status FROM scans WHERE id=$1 AND org_id=$2", [scanId, orgId]);
+  return rows[0]?.status === "cancelled";
+}
 
 const MODULE_RUNNERS: Record<string, (url: string) => Promise<ModuleResult>> = {
   seo: runSEOScanner,
@@ -143,7 +163,7 @@ export async function runScan(scanId: string): Promise<void> {
   const { rows } = await query<{ scan_id: string; url: string; org_id: string; website_id: string; modules: string[] }>(
     `SELECT s.id AS scan_id, s.website_id, w.url, s.org_id, s.modules
      FROM scans s JOIN websites w ON w.id = s.website_id
-     WHERE s.id = $1`,
+    WHERE s.id = $1 AND s.org_id = w.org_id`,
     [scanId]
   );
 
@@ -153,10 +173,12 @@ export async function runScan(scanId: string): Promise<void> {
   }
 
   const { url, org_id, website_id, modules } = rows[0];
+  const ownerId = await claimScanExecution(scanId, org_id);
+  if (!ownerId || await isScanCancelled(scanId, org_id)) return;
 
   await query(
-    "UPDATE scans SET status = 'running', started_at = NOW() WHERE id = $1",
-    [scanId]
+    "UPDATE scans SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = $1 AND org_id = $2 AND status <> 'cancelled'",
+    [scanId, org_id]
   );
   await emitScanEvent(scanId, "scan_started", { scanId });
 
@@ -188,6 +210,7 @@ export async function runScan(scanId: string): Promise<void> {
   const moduleStatuses: Record<string, "completed" | "failed" | "skipped"> = {};
 
   for (const moduleName of modules) {
+    if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
     const runner = MODULE_RUNNERS[moduleName];
     if (!runner) {
       await query(
@@ -267,6 +290,7 @@ export async function runScan(scanId: string): Promise<void> {
     });
   }
 
+  if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
   try {
     const intelligence = await runScanIntelligence({
       scanId,
@@ -288,13 +312,14 @@ export async function runScan(scanId: string): Promise<void> {
     await emitScanEvent(scanId, "intelligence_failed", { error: (err as Error).message });
   }
 
+  if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
   // Calculate scores per category
   const categories = ["seo", "security", "ssl", "performance", "accessibility", "aiVisibility", "technicalHealth", "qa"];
   const categoryRows: ScanScoreSummary[] = [];
 
   for (const cat of categories) {
     const catFindings = allFindings.filter((f) => f.category === cat);
-    const moduleRan = modules.includes(cat) || modules.includes(cat.toLowerCase());
+    const moduleRan = Object.prototype.hasOwnProperty.call(MODULE_RUNNERS, cat) && (modules.includes(cat) || modules.includes(cat.toLowerCase()));
 
     if (!moduleRan) {
       const row = { category: cat, score: null, status: "not_measured" as ScoreStatus, finding_count: 0, critical_count: 0 };
@@ -324,13 +349,12 @@ export async function runScan(scanId: string): Promise<void> {
   const incompleteModules = Object.values(moduleStatuses).filter((s) => s !== "completed").length;
   const finalStatus = incompleteModules === 0 ? "completed" : incompleteModules === modules.length ? "failed" : "partial";
 
-  await query(
-    "UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1",
-    [scanId, finalStatus]
-  );
+  if (await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
+  await query("UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1 AND org_id = $3 AND execution_owner = $4 AND status <> 'cancelled'", [scanId, finalStatus, org_id, ownerId]);
 
   // Snapshot for monitoring
-  await snapshotMonitoring(scanId, org_id, url);
+  if (!(await isScanCancelled(scanId, org_id))) await snapshotMonitoring(scanId, org_id, url);
+  await releaseScanExecution(scanId, org_id, ownerId);
 
   await emitScanEvent(scanId, "scan_completed", { scanId, status: finalStatus });
 
@@ -383,7 +407,8 @@ async function persistFinding(
     const evidenceType: EvidenceType = moduleName === "security" ? "SECURITY_SCANNER_RESULT" : moduleName === "performance" ? "PERFORMANCE_METRIC" : moduleName === "ssl" ? "TLS_CERTIFICATE" : ev.type === "http_status" ? "HTTP_RESPONSE" : "HTML_DOCUMENT";
     const evidenceKey = logicalKey({ findingId: logicalKey({ moduleName, category: f.category, severity: f.severity, title: f.title, affectedUrls: f.affectedUrls ?? [] }), type: ev.type, url: ev.url ?? url, observedValue: ev.observedValue ?? null, expectedValue: ev.expectedValue ?? null, rule: ev.rule ?? null, tool: ev.tool ?? null });
     const record = await collectEvidence({ tenantId: orgId, taskId: scanId, logicalKey: evidenceKey, evidenceType, sourceType: "SCANNER", sourceReference: ev.tool ?? `${moduleName}_scanner`, resourceReference: ev.url ?? url, observedAt: new Date().toISOString(), content: { observedValue: ev.observedValue, expectedValue: ev.expectedValue, rule: ev.rule, type: ev.type }, agentId: moduleName.toUpperCase(), agentVersion: "scanner", metadata: { legacyType: ev.type, tool: ev.tool } });
-    await query(`UPDATE evidence SET finding_id=$2, type=$3, url=$4, observed_value=$5, expected_value=$6, rule=$7, tool=$8 WHERE id=$1`, [record.evidenceId, findingId, ev.type, ev.url ?? null, ev.observedValue ?? null, ev.expectedValue ?? null, ev.rule ?? null, ev.tool ?? null]);
+    await query(`UPDATE evidence SET type=$2, url=$3, observed_value=$4, expected_value=$5, rule=$6, tool=$7, metadata = metadata || $8::jsonb WHERE id=$1`, [record.evidenceId, ev.type, ev.url ?? null, ev.observedValue ?? null, ev.expectedValue ?? null, ev.rule ?? null, ev.tool ?? null, JSON.stringify({ websiteId: websiteId })]);
+    await query("INSERT INTO finding_evidence (finding_id, evidence_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [findingId, record.evidenceId, orgId]);
   }
 
   return findingId;

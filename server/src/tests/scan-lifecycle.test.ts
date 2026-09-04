@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { isRecoverableModuleFailure, logicalKey, summarizeOverallScore } from "../services/scan.service.js";
+import { intelligenceStatusFor, reportStatusFor } from "../ai/agents/lifecycle.js";
 
 describe("Scan lifecycle summary", () => {
+  it("does not make partial intelligence report-ready", () => {
+    expect(intelligenceStatusFor({ status: "partial" })).toBe("PARTIAL");
+    expect(reportStatusFor({ intelligenceStatus: "PARTIAL", qualityAccepted: true })).toBe("FAILED");
+  });
+
+  it("preserves cancelled intelligence as cancelled", () => {
+    expect(intelligenceStatusFor({ status: "cancelled" })).toBe("CANCELLED");
+    expect(reportStatusFor({ intelligenceStatus: "CANCELLED", qualityAccepted: true })).toBe("FAILED");
+  });
   it("computes a weighted overall score from measured categories", () => {
     const summary = summarizeOverallScore([
       { category: "seo", score: 80, status: "scored", finding_count: 2, critical_count: 1 },

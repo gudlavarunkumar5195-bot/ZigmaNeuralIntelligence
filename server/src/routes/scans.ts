@@ -143,7 +143,8 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
     const { rows: findings } = await query(
       `SELECT f.*, json_agg(e.*) FILTER (WHERE e.id IS NOT NULL) AS evidence
        FROM findings f
-       LEFT JOIN evidence e ON e.finding_id = f.id
+      LEFT JOIN finding_evidence fe ON fe.finding_id = f.id AND fe.org_id = f.org_id
+      LEFT JOIN evidence e ON (e.id = fe.evidence_id OR e.finding_id = f.id) AND e.org_id = f.org_id
       WHERE f.scan_id = $1 AND f.org_id = $2
        GROUP BY f.id
        ORDER BY
