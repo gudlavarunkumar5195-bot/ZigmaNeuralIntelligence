@@ -89,6 +89,7 @@ INSERT INTO specialist_agents (agent_type, name, description, risk_level, status
   ('SECURITY_ANALYSIS',   'Security Agent',            'Interprets authorized security scanner output, classifies findings, recommends remediation.',  'HIGH',   'ACTIVE', '1'),
   ('PERFORMANCE_ANALYSIS','Performance Agent',         'Analyzes performance evidence: metrics, bottlenecks, loading behavior, optimization.',         'MEDIUM', 'ACTIVE', '1'),
   ('ACCESSIBILITY_ANALYSIS','Accessibility Agent',     'Analyzes accessibility evidence: WCAG findings, semantic issues, keyboard and ARIA concerns.', 'MEDIUM', 'ACTIVE', '1'),
+  ('TECHNICAL_HEALTH_ANALYSIS','Technical Health Agent','Correlates HTTP, redirects, canonical, robots, sitemap, SSL, headers, timing, links, and structured data.', 'MEDIUM', 'ACTIVE', '1'),
   ('QA_ANALYSIS',         'QA Agent',                  'Validates application behavior: functional tests, broken workflows, regression findings.',      'MEDIUM', 'ACTIVE', '1'),
   ('SSL_ANALYSIS',        'SSL / Infrastructure Agent','Interprets TLS, certificate, DNS, and HTTP infrastructure evidence.',                          'HIGH',   'ACTIVE', '1'),
   ('REMEDIATION',         'Remediation Agent',         'Generates proposed technical fixes, code changes, and configuration recommendations.',         'HIGH',   'ACTIVE', '1'),

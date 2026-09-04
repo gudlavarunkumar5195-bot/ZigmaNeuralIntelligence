@@ -11,7 +11,7 @@ import { getAgentDefinition } from "../ai/agents/registry.js";
 
 describe("Instruction Intelligence — profiles and planning", () => {
   it("creates a versioned baseline profile for every specialist agent", () => {
-    expect(listInstructionProfiles()).toHaveLength(11);
+    expect(listInstructionProfiles()).toHaveLength(12);
     const profile = getInstructionProfile("SEO_ANALYSIS")!;
     expect(profile.version).toBe("1");
     expect(profile.instructions.filter((item) => item.mandatory)).toHaveLength(3);

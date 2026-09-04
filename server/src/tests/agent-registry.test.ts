@@ -99,9 +99,9 @@ function makeInput(overrides: Partial<AgentInput> = {}): AgentInput {
 // ─── 1. Agent registry ────────────────────────────────────────────────────────
 
 describe("Agent registry — definitions", () => {
-  it("returns all 11 agent types", () => {
+  it("returns all 12 agent types", () => {
     const defs = listAgentDefinitions();
-    expect(defs).toHaveLength(11);
+    expect(defs).toHaveLength(12);
   });
 
   it("every AGENT_TYPES entry has a definition", () => {
