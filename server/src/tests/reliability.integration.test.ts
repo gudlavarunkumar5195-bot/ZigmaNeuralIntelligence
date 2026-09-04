@@ -21,11 +21,15 @@ describe.skipIf(!INTEGRATION)("Phase 6.5 PostgreSQL reliability constraints", ()
     scanId = (await query<{ id: string }>("INSERT INTO scans (website_id, org_id, modules) VALUES ($1, $2, ARRAY['seo']) RETURNING id", [websiteId, orgId])).rows[0].id;
     findingA = (await query<{ id: string }>("INSERT INTO findings (scan_id, website_id, org_id, module_name, category, severity, title, description) VALUES ($1,$2,$3,'SEO_ANALYSIS','seo','low','A','A') RETURNING id", [scanId, websiteId, orgId])).rows[0].id;
     findingB = (await query<{ id: string }>("INSERT INTO findings (scan_id, website_id, org_id, module_name, category, severity, title, description) VALUES ($1,$2,$3,'AEO_ANALYSIS','aiVisibility','low','B','B') RETURNING id", [scanId, websiteId, orgId])).rows[0].id;
-    evidenceId = (await query<{ id: string }>("INSERT INTO evidence (finding_id, org_id, task_id, evidence_type, source_type, source_reference, observed_at, content_hash, metadata) VALUES (NULL,$1,$2,'HTML_DOCUMENT','CRAWLER','integration',NOW(),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}') RETURNING id", [orgId, scanId])).rows[0].id;
+    evidenceId = (await query<{ id: string }>("INSERT INTO evidence (finding_id, org_id, task_id, type, evidence_type, source_type, source_reference, observed_at, content_hash, metadata) VALUES (NULL,$1,$2,'integration','HTML_DOCUMENT','CRAWLER','integration',NOW(),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}') RETURNING id", [orgId, scanId])).rows[0].id;
   });
 
   afterAll(async () => {
-    if (query) await query("DELETE FROM organizations WHERE id IN ($1,$2)", [orgId, otherOrgId]);
+    if (query) {
+      await query("DELETE FROM evidence WHERE org_id IN ($1,$2)", [orgId, otherOrgId]);
+      await query("DELETE FROM scans WHERE id=$1", [scanId]);
+      await query("DELETE FROM organizations WHERE id IN ($1,$2)", [orgId, otherOrgId]);
+    }
   });
 
   it("allows one evidence record to support multiple findings", async () => {
