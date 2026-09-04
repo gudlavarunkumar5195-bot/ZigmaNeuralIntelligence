@@ -2,6 +2,30 @@
 
 _Last updated: Phase 3I — Adaptive Intelligence complete._
 
+## Phase 8 — Monitoring, Change Detection, and Alerts
+
+Monitoring is a server-side orchestration layer around the existing scan worker.
+An active tenant-owned configuration claims due work, creates a normal scan, and
+lets the existing scan lease, Discovery, deterministic scanners, intelligence,
+and report lifecycle execute. It never crawls independently or changes a
+customer website.
+
+Only a completed, non-cancelled scan with completed intelligence becomes a valid
+baseline. Failed, partial, cancelled, or unavailable runs do not replace the
+last valid baseline and do not create regression alerts. Comparisons are
+deterministic: URL, status, redirects, metadata, page structure, findings, and
+score changes are represented as persisted before/after records with scan,
+tenant, URL, finding, and evidence references.
+
+Alerts are tenant-scoped, rule-driven, signature-deduplicated records with
+`OPEN`, `ACKNOWLEDGED`, `RESOLVED`, and `DISMISSED` states. Resolution is based
+on the persisted finding linkage; recurrence can create a new open alert after
+the previous one is resolved. Notification delivery is currently an internal
+durable attempt abstraction only: attempts are unique per alert/channel and no
+external provider or secret-bearing webhook is configured. Retention is bounded
+by the monitoring tables' tenant/scan relationships; automated deletion is not
+enabled, and future retention jobs must preserve the latest valid baseline.
+
 ## Phase 7 — Cross-Domain Intelligence and Proposal-Only Remediation
 
 Validated specialist findings are correlated after the Phase 6.5 evidence and

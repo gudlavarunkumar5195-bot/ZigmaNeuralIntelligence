@@ -259,6 +259,16 @@ export async function apiGetDashboard(websiteId?: string): Promise<ApiResponse<D
   return apiFetch<DashboardData>(websiteId ? `/dashboard?websiteId=${encodeURIComponent(websiteId)}` : "/dashboard");
 }
 
+export interface MonitoringConfig {
+  id: string; website_id: string; status: string; enabled: boolean; frequency: string;
+  last_run_at: string | null; next_run_at: string; last_success_at: string | null; last_failure_at: string | null;
+}
+export interface MonitoringChange { id: string; change_type: string; domain: string; severity: string; affected_urls: string[]; before_value: unknown; after_value: unknown; impact: string; detected_at: string; }
+export interface MonitoringAlert { id: string; severity: string; title: string; status: string; detected_at: string; monitoring_id: string; }
+export async function apiListMonitoring(): Promise<ApiResponse<MonitoringConfig[]>> { return apiFetch("/monitoring"); }
+export async function apiListMonitoringChanges(id: string): Promise<ApiResponse<MonitoringChange[]>> { return apiFetch(`/monitoring/${encodeURIComponent(id)}/changes`); }
+export async function apiListAlerts(): Promise<ApiResponse<MonitoringAlert[]>> { return apiFetch("/monitoring/alerts"); }
+
 // ─── Websites ─────────────────────────────────────────────────────────────────
 
 export async function apiListWebsites() {

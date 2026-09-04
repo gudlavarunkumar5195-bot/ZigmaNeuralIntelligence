@@ -148,7 +148,7 @@ export function summarizeOverallScore(scoreRows: ScanScoreSummary[]): {
 export interface CreateScanInput {
   websiteId: string;
   orgId: string;
-  triggeredBy: string;
+  triggeredBy: string | null;
   modules?: string[];
 }
 
@@ -406,6 +406,8 @@ async function runScanWithLease(scanId: string): Promise<void> {
   if (hasLostScanLease(scanId) || await isScanCancelled(scanId, org_id)) { await releaseScanExecution(scanId, org_id, ownerId); return; }
   await query("UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1 AND org_id = $3 AND execution_owner = $4 AND execution_lease_until > NOW() AND status <> 'cancelled'", [scanId, finalStatus, org_id, ownerId]);
 
+  await import("./monitoring.service.js").then(({ finalizeMonitoringRun }) => finalizeMonitoringRun(scanId, org_id, finalStatus)).catch(() => undefined);
+
   // Snapshot for monitoring
   if (!(await isScanCancelled(scanId, org_id))) await snapshotMonitoring(scanId, org_id, url);
   await releaseScanExecution(scanId, org_id, ownerId);
@@ -531,6 +533,10 @@ export function startScanWorker(intervalMs: number): NodeJS.Timeout {
 }
 
 async function processNextQueuedScan(): Promise<void> {
+  await import("./monitoring.service.js").then(({ processDueMonitoringJobs }) => processDueMonitoringJobs()).catch((err: unknown) => {
+    console.error("[worker] Monitoring scheduler failed:", (err as Error).message);
+  });
+
   // Atomic claim: take one queued scan and set it to running
   const { rows } = await query<{ id: string }>(
     `UPDATE scans SET status = 'running'

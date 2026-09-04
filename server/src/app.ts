@@ -22,6 +22,7 @@ import { regenerationRoutes } from "./routes/regeneration.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { reportRoutes } from "./routes/reports.js";
 import { crossDomainRoutes } from "./routes/cross-domain.js";
+import { monitoringRoutes } from "./routes/monitoring.js";
 
 export async function buildApp() {
   const fastify = Fastify({
@@ -98,6 +99,7 @@ export async function buildApp() {
   await fastify.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
   await fastify.register(reportRoutes, { prefix: "/api/v1/reports" });
   await fastify.register(crossDomainRoutes, { prefix: "/api/v1" });
+  await fastify.register(monitoringRoutes, { prefix: "/api/v1/monitoring" });
 
   fastify.all("/api/v1/*", async (_request, reply) => {
     return reply.status(404).send({
