@@ -1,0 +1,1634 @@
+I'll start by sizing the repository, then split the audit across parallel read-only agents.
+Read the small and stub pages together.
+Start with the small stubs and routes.
+Four audit agents are running in parallel (frontend, backend and security, AI layer, database and docs). I'll wait for their results before writing the report.
+The four agents are still running, and I'll consolidate the report once they finish. I haven't written any findings yet because none have come back.
+
+--- FULL FUNCTIONAL AUDIT RESULT ---
+The four agents are still running, and I'll consolidate the report once they finish. I haven't written any findings yet because none have come back.
+Count references per table across non-test source (src and server/src).
+# Frontend audit: ZigmaNeuralIntelligence
+
+All findings come from reading code. Nothing was modified or run, including `tsc` and the tests. I did not open `.env` files. `utils/supabase/info.tsx` exports two constants and I did not print them. `server.env.example` exists. Line numbers are approximate for the one-line page files.
+
+## 0. Architecture facts
+
+- **Stack:** React 19, `react-router` 8 with `createHashRouter`, Tailwind 4, recharts.
+- **State and hooks:** There is no store, no custom hooks directory and no query library. Every page uses local `useState` and `useEffect`.
+- **Deploy:** `app.yaml` serves the frontend and API from one Fastify process. `VITE_API_BASE_URL=/api/v1` and `VITE_APP_MODE=production` are build-time values.
+- **Mode switch:** `src/config/env.ts` defaults `VITE_APP_MODE` to `production`. Any other value means demo mode, in which every API call throws `IntegrationRequired`. No mock data exists in the UI.
+- **Supabase edge function:** `supabase/functions/server/index.tsx` is a Figma-Make boilerplate Hono app.
+  - It serves only `GET /make-server-3e62fbda/health` and sets `cors origin:"*"`.
+  - `kv_store.tsx` is also unused.
+  - Nothing in `src` imports it, and `app.yaml` never deploys it.
+  - It is dead code. The `*` CORS is harmless only while it stays undeployed.
+- **`utils/supabase/info.tsx`:** not imported by `src`.
+- **Dead exports:** `src/lib/scoring.ts` and `src/types/index.ts` are never imported by the UI. `scoring.ts` is exercised only by its own test.
+- **Dead functions:** `assertProductionConfig()` is never called, so production misconfiguration is never reported at startup. `DemoBanner` is a stub that returns null.
+
+## 1. Route table
+
+All routes sit under a Shell loader that throws a 302 redirect to `/login` if `sessionStorage.zn_token` is missing (`router.tsx:50-57`). This is a valid React Router redirect. It only checks that a token exists, not that it is valid or unexpired.
+
+| Route | Component | Status | Evidence |
+|---|---|---|---|
+| `/login` | LoginPage | REAL, with caveats | Login and register call the API. The "92% SEO uplift / 38ms / 24/7" tiles are hardcoded marketing numbers. An already-authenticated user is not redirected away. There is no `/register` route even though `auth.ts` references one. There is no password-length check and no forgot-password flow. `abortRef` is created but never passed to a request. |
+| `/` | Overview | REAL | `apiGetDashboard(websiteId)`, with loading, error, empty and IntegrationRequired states. The "New scan" button opens the existing scan if `latest_scan_id` exists. It only creates a scan when none exists, so the label is misleading. Its `onClick` has no try/catch around `apiCreateScan`. |
+| `/websites` | MyWebsites | REAL | Dashboard data, `apiCreateScan` with fixed modules `["seo","security","performance","ssl"]`, and `apiQaVerifyWebsite`. The "QA verify" button appears for every user on unverified sites. The backend allows only owner and admin, and the UI does no role check. |
+| `/websites/add` | AddWebsite | REAL | Client-side `validateScanUrl`, `apiAddWebsite`, then `apiVerifyOwnership`. The form offers `qa_bypass`. The `orgId` parameter of `apiAddWebsite` is never passed, so the org comes only from the `x-org-id` header. |
+| `/websites/scan/:id` | ScanProgress | PARTIAL | It polls `GET /scans/:id` every 2s. The SSE function `subscribeToScanProgress` is never used. It shows status and scores only, with no module progress and no cancel button (`apiCancelScan` is unused). The polling interval keeps running after an error. |
+| `/websites/history` | ScanHistory | PARTIAL | It shows only the latest scan per website, taken from the dashboard. It is not a history. |
+| `/intelligence/seo`, `ai-visibility`, `security`, `performance`, `accessibility`, `technical-health` | `UnavailableAnalysis` stubs | PLACEHOLDER | Each file is 2 lines and shows "Integration required … No local fallback data". `apiGetFindings` exists in `api.ts` but is never called. |
+| `/testing/browser`, `regression`, `results` | PlaceholderPage | PLACEHOLDER | Each file is 2 lines. PlaceholderPage says "Full implementation connects to backend services". |
+| `/infrastructure/ssl` | UnavailableAnalysis | PLACEHOLDER | 2 lines. |
+| `/infrastructure/certificates`, `domains` | PlaceholderPage | PLACEHOLDER | 2 lines. |
+| `/agents/control-center`, `/agents/model-benchmarks` | UnavailableAnalysis | PLACEHOLDER | 2 lines. |
+| `/agents/agent-registry` | AgentRegistry (558 lines) | REAL, with problems | List, detail, enable/disable and simulate all call the API. Errors are swallowed: `catch { /* ignore */ }` in `loadDetail` and in `handleToggle`. There is no confirmation dialog and no role gating. The disable reason is hardcoded as "Disabled by administrator". |
+| `/agents/model-router` | ModelRouter (726 lines) | PARTIAL | Simulate and the decision history are real. The policy tab is read-only because `apiUpdateRoutingPolicy` is never called. `apiGetRoutingPolicy().catch(() => {})` swallows errors silently. |
+| `/agents/model-registry` | ModelRegistry | PARTIAL | List, detail and catalog refresh work. `apiEnableModel`, `apiDisableModel` and `apiGetCatalogStatus` have no UI. |
+| `/agents/instructions` | Instructions | REAL | Lists profiles and runs the simulator. The simulator hardcodes `taskId:"admin-simulation"` and `evidenceReferences:["evidence-summary"]`. A simulate error replaces the whole page with ErrorState. |
+| `/agents/evidence` | Evidence | REAL | Looks up evidence by task ID, with empty and error states. There is no list of tasks to pick from. |
+| `/agents/quality-control` | QualityControl | REAL | Looks up quality assessments by task ID. It does not trim the task ID before calling `apiGetTaskQuality`, unlike Evidence. |
+| `/reports` | ReportsPage | PARTIAL | It reads the dashboard's `selectedWebsite` and fetches `/reports/:scanId`. It ignores the top-bar website selection. There is no export and no scan picker. |
+| `/reports/client` | PlaceholderPage | PLACEHOLDER | 2 lines. |
+| `/monitoring` | MonitoringPage | BROKEN | See P1-1. |
+| `/monitoring/changes` | ChangesPage | PARTIAL | Lists `monitoring[0]` changes. The `configs` list and `loadSelected` exist, but I did not confirm any selector UI renders them. |
+| `/monitoring/alerts` | AlertsPage | REAL | List plus acknowledge, resolve and dismiss, with reload after each action. |
+| `/settings/workspace`, `team`, `security`, `api`, `integrations` | Settings* via SettingsLayout | PLACEHOLDER, with fabricated data | Static content only, with no API calls at all. See P1-2. |
+| `*` | PlaceholderPage | PLACEHOLDER | The catch-all shows the "Construction" card instead of a 404. |
+
+Shell (`Shell.tsx`):
+- **Navigation:** 8 groups in `NAV_GROUPS`, all pointing at routes that exist.
+- **Dead controls:**
+  - The Bell button has no handler and always shows a red dot.
+  - The "live platform" badge is static.
+  - The sidebar user card says "Authenticated workspace" and never shows a real user or org.
+  - There is no org switcher.
+- **Website selector:** The TopBar loads `GET /websites` and navigates to `/?websiteId=`. Only Overview honors it, and its initial value is not synced to the URL. Its fetch error is swallowed with `.catch(() => {})` (line 282).
+- **Titles:** `getTitle()` returns the generic "Settings" or "Testing" for those sections.
+- **Collapsed sidebar:** shows only 7 icons.
+- **Logout:** `apiLogout` followed by `clearToken` and navigate to `/login`. This is fine.
+
+## 2. API-call list
+
+The base is `${VITE_API_BASE_URL}` (`/api/v1`). Every request sends `credentials:"include"`, `Authorization: Bearer <sessionStorage zn_token>` and `x-org-id` (`api.ts:121-155`). I compared each path against `server/src/app.ts` prefixes and `server/src/routes/*`. Backend routes were not compared by method signature or body schema.
+
+| Function | Method | Path | Body or query | Backend route found |
+|---|---|---|---|---|
+| apiLogin | POST | /auth/login | email, password | yes |
+| apiRegister | POST | /auth/register | email, password, fullName, orgName | yes |
+| apiLogout | POST | /auth/logout | none | yes |
+| apiGetMe | GET | /auth/me | none | yes, but unused |
+| tryRefreshToken | POST | /auth/refresh | cookie only | yes |
+| apiGetDashboard | GET | /dashboard?websiteId= | none | yes |
+| apiListWebsites | GET | /websites | none | yes |
+| apiAddWebsite | POST | /websites | url, verificationMethod, orgId (always undefined) | yes |
+| apiVerifyOwnership | POST | /websites/:id/verify | none | yes |
+| apiQaVerifyWebsite | POST | /websites/:id/qa-verify | none | yes |
+| apiGetMonitoringHistory | GET | /websites/:id/monitoring | none | no route, and unused |
+| apiCreateScan | POST | /scans | websiteId, modules | yes |
+| apiGetScan | GET | /scans/:id | none | yes |
+| apiCancelScan | POST | /scans/:id/cancel | none | yes, but unused |
+| apiGetFindings | GET | /scans/:id/findings | none | yes, but unused |
+| subscribeToScanProgress | GET (fetch stream) | /scans/:id/events | none | yes, but unused |
+| apiGetReport | GET | /reports/:scanId | none | yes |
+| apiListModels | GET | /models?freeOnly=&eligibility= | none | yes |
+| apiGetModel | GET | /models/:id | none | yes |
+| apiRefreshCatalog | POST | /models/catalog/refresh | none | yes |
+| apiGetCatalogStatus | GET | /models/catalog/status | none | yes, but unused |
+| apiEnableModel | POST | /models/:id/enable | none | yes, but unused |
+| apiDisableModel | POST | /models/:id/disable | reason | yes, but unused |
+| apiSimulateRouting | POST | /routing/simulate | RoutingRequirements | yes |
+| apiGetRoutingDecisions | GET | /routing/decisions?limit= | none | yes |
+| apiGetRoutingDecision | GET | /routing/decisions/:id | none | yes, but unused |
+| apiGetRoutingPolicy | GET | /routing/policy | none | yes |
+| apiUpdateRoutingPolicy | POST | /routing/policy | Partial<RoutingPolicy> | yes, but unused |
+| apiListAgents | GET | /agents | none | yes |
+| apiGetAgent | GET | /agents/:type | none | yes |
+| apiEnableAgent | POST | /agents/:type/enable | none | yes |
+| apiDisableAgent | POST | /agents/:type/disable | reason | yes |
+| apiSimulateAgent | POST | /agents/simulate | agentType, riskLevel, satisfiedDependencies | yes |
+| apiPlanWorkflow | POST | /agents/plan | agentTypes | yes, but unused |
+| apiListInstructionProfiles | GET | /ai/instructions | none | yes |
+| apiSimulateInstructions | POST | /ai/instructions/simulate | agentType, taskId, riskLevel, context, evidenceReferences | yes |
+| apiGetTaskEvidence | GET | /ai/tasks/:id/evidence | none | yes |
+| apiGetTaskQuality | GET | /ai/tasks/:id/quality | none | yes |
+| apiListMonitoring | GET | /monitoring | none | yes |
+| apiListMonitoringChanges | GET | /monitoring/:id/changes | none | yes |
+| apiListAlerts | GET | /monitoring/alerts | none | yes |
+| apiCreateMonitoring | POST | /monitoring | websiteId, frequency, modules?, alertConfig? | yes, but unreachable from the UI (P1-1) |
+| apiUpdateMonitoring | PATCH | /monitoring/:id | frequency, modules, alertConfig | yes, but unreachable |
+| apiPauseMonitoring, apiResumeMonitoring, apiDisableMonitoring, apiRunMonitoring | POST | /monitoring/:id/{pause,resume,disable,run} | none | yes, but unreachable |
+| apiGetMonitoringRules | GET | /monitoring/:id/rules | none | yes, but unused |
+| apiCreateMonitoringRule | POST | /monitoring/:id/rules | ruleType, threshold | yes, but unused |
+| apiUpdateMonitoringRule | PATCH | /monitoring/rules/:id | enabled, threshold | yes, but unused |
+| apiGetAlert | GET | /monitoring/alert/:id | none | yes, but unused |
+| apiAcknowledgeAlert, apiResolveAlert, apiDismissAlert | POST | /monitoring/alerts/:id/{acknowledge,resolve,dismiss} | none | yes |
+
+- **Backend routes with no frontend caller:** `/websites/:id`, `/websites/:id/scans`, `/scans/:id/{status,evidence,report,quality}`, `/scans/:scanId/cross-domain`, remediation approve and reject, `/ai/evidence/*`, `/ai/regeneration/*`, `/ai/quality/*`, `/models/preferences/:orgId`, `/models/eligible`, `/agents/types`, and `/agents/:type/{versions,executions}`.
+- **Tenant handling:** Every call relies on `x-org-id` taken from `zn_active_org_id` or the first entry of the JWT `orgIds`. Org IDs are decoded from the JWT client-side without verification, which is acceptable only if the backend re-validates membership.
+
+## 3. Findings
+
+**P1**
+1. **MonitoringPage is broken.** `MonitoringPage.tsx` returns a read-only card list at about lines 80-120. A second full `return (...)` follows with the create form, Run, Pause, Resume, Disable and "Change frequency" buttons. That second return is unreachable. Users cannot create or manage monitoring. The `action`/`busy` helpers are dead as written.
+2. **Settings pages show fabricated "live" data.**
+   - Workspace shows "ZigmaNeural Intelligence / Growth / US East + EU West".
+   - Team shows "12 active / 2 pending" and the members "Ava Thompson / Miles Chen / Nina Patel", each with a dead "Manage" button.
+   - Security shows "MFA Enabled", "Retained 365 days", "SSRF protections Active" and "Rate limiting Enabled".
+   - Integrations shows "Supabase Configured" and "CI/CD Enabled".
+   - API shows "/api/v1", "200/min" and editable inputs that do nothing.
+   - None of this is wired to a backend. The security statements are unverified claims, and `src/tests/production-data.test.ts` does not cover them.
+3. **Roughly 17 of 37 routes are placeholders or "integration required".** The affected sections are all of Intelligence, Testing, Infrastructure and Client Reports, plus Control Center and Benchmarks. The backend `/scans/:id/findings`, `/report` and `/evidence` endpoints could back several of them, but the frontend does not call them.
+
+**P2**
+4. **Possible syntax errors in `api.ts`, MonitoringPage and AlertsPage.** Type members are separated by a space only: `{ code?: string message?: string }` (`api.ts:195`) and `{ code: string message: string }` (`MonitoringPage.tsx`, `AlertsPage.tsx`). Other cases are `ruleType: string threshold?:` and `{ type: string payload: unknown }`. Strict TypeScript rejects this, though esbuild/oxc may be lenient. I did not run `tsc`, so please confirm `tsc --noEmit` passes. Also check whether `dist/` was built from this source.
+5. **401 handling logs the user out on any retry failure.** After a successful refresh, if the retried request returns any non-OK status such as 403 or 500, the code falls through to `clearToken()` and redirects to `/login` (`api.ts:178-191`).
+6. **Concurrent 401s each call refresh.** There is no single-flight lock, so with refresh-token rotation, parallel refreshes can invalidate each other. `setToken` also resets the active org to the first one in the JWT, discarding any prior selection.
+7. **Token storage.** The access token lives in `sessionStorage` under `zn_token` and in a module variable, so any XSS can read it. Per the code comments, the refresh token is an HttpOnly cookie. There is no localStorage use and no expiry check, since `isAuthenticated()` only checks that a token exists. Refresh happens only reactively on a 401.
+8. **Swallowed errors.**
+   - Shell.tsx:282 swallows the website-list fetch error.
+   - AgentRegistry: `loadDetail` and `handleToggle` (an enable/disable failure gives no feedback).
+   - ModelRouter policy tab `.catch(() => {})`.
+   - SSE JSON parse `catch {}` in `api.ts`.
+   - `apiLogout` `.catch(() => {})`.
+   - `res.json()` error parse `catch {}`.
+   - There are no `console.log` calls. Only `console.error` appears in `env.ts`.
+9. **No role-based UI gating anywhere.** Admin-only actions are shown to all users: QA verify, agent enable/disable, model catalog refresh, and the router and simulators. The backend enforces roles. Users will see raw 403 errors.
+10. **The website selector and pages are inconsistent.** The top-bar selector affects only Overview. MyWebsites, ReportsPage and ScanHistory call `apiGetDashboard()` with no `websiteId`, so they ignore the selection.
+11. **ScanProgress uses polling and has no cancel.** `subscribeToScanProgress` and `apiCancelScan` are implemented but have no UI. The poll timer keeps running while an error is displayed.
+
+**P3**
+12. `app.yaml` hardcodes the QA test email `zigma.qa.20260903@example.com` in `QA_AUTHORIZED_EMAILS`. The bypass flags are `"false"`, but the email is committed.
+13. The root `prebuild` script runs `pnpm install --no-frozen-lockfile` for both the root and the server. This causes non-reproducible builds, and installing at build time is a supply-chain concern.
+14. `@anthropic-ai/claude-agent-sdk` is listed as a root frontend dependency but is not imported in `src`. It could bloat the install, and it is risky if it ever got bundled.
+15. The catch-all `*` route renders a "Construction" placeholder instead of a 404.
+16. The marketing numbers on the Login page are hardcoded. Some files have unused imports and variables, such as `location`/`navigate` in Sidebar.
+17. A one-line `qa_bypass` option is exposed in the UI for all users, with a note that the server enforces it.
+18. Mixed code style: some pages are dense one-liners and others are formatted.
+
+## 4. Tests
+
+`pnpm test` runs vitest with `environment: node`, matching only `src/tests/**/*.test.ts`. There is no jsdom and no React Testing Library, so no component is rendered.
+
+- **`validation.test.ts`:** 32 cases for `validateScanUrl`, `canonicalizeUrl` and `extractDomain` (URL normalization, private-network blocking). This is real unit coverage, but it covers only client-side logic.
+- **`scoring.test.ts`:** 32 cases for `lib/scoring.ts`. That module is not used by any UI, so these tests cover dead code.
+- **`api-org-context.test.ts`:** 3 tests.
+  - `buildRequestHeaders` adds `x-org-id` from sessionStorage.
+  - `getActiveOrgId` falls back to the first JWT org.
+  - `resolveAuthRedirect("/","")` returns `/login`.
+  
+  It covers only header construction. It does not test `apiFetch`, the 401 refresh logic or any page.
+- **`deploy-config.test.ts`:** reads files as text and asserts strings. It checks that `app.yaml` contains the migrate-then-start command and `/ready`, that required Supabase env names appear in `server.env.example` and `server/src/config.ts`, and that `server/src/db/migrate.ts` and migration `022_phase9a_tenant_security.sql` contain certain strings. This is a string-presence smoke check, not behavior. It depends on server files.
+- **`production-data.test.ts`:** greps the bundled source for removed fixtures ("data/demo", "acmecorp.com", "Overall Score 87" and similar). It does not catch the fabricated settings values in P1-2.
+- **`e2e/auth.spec.ts`:** 2 Playwright tests against the dev server at 127.0.0.1:8443, both on `#/login`. One checks that the login form renders. The other checks that clicking "Create account" shows the register fields. No login, logout, token refresh, route-guard, page or mutation flow is tested, and no backend is involved.
+- **Not covered by any test:** every page, the `apiFetch` refresh and error paths, SSE, tenant switching, the permission paths, and all of the monitoring, agents and websites flows.
+The frontend audit is back. The backend, AI and database/docs audits are still running, so I'm holding the consolidated report until they finish.
+
+The frontend agent's main findings:
+- **Monitoring page:** it has an unreachable second `return`, so users can't create or manage monitors from the UI.
+- **Settings pages:** all five show fabricated "live" data (team members, MFA enabled, rate limits) with no API calls behind them.
+- **Placeholders:** about 17 of 37 routes are placeholders or "integration required" stubs.
+- **Role gating:** there is none in the UI.
+- **Swallowed errors:** several `catch` blocks hide failures.
+- **`api.ts` syntax:** possible type syntax errors, which need a `tsc` check.
+Use the Grep tool instead.
+# READ-ONLY audit of `server/src/ai`, its routes and AI tests
+
+Everything below comes from reading code under `/workspaces/ZigmaNeuralIntelligence/server/src`. I changed nothing, ran no tests and read no `.env` files. Paths are relative to that directory.
+
+## Headline
+
+The AI stack does not work end to end on a fresh deployment. No code path moves a model out of `DISCOVERED`, so the eligible-model pool is empty and every real agent run fails with `MODEL_FAILURE`.
+
+The pipeline is also unbounded in cost and time. Four of the five "intelligence" layers are not wired to anything that acts on them. The real LLM execution path has no test: the tests either mock it or never touch it.
+
+## Component status
+
+| Component | Status | Evidence |
+|---|---|---|
+| Provider interface (`ai/provider.ts`) | IMPLEMENTED_VERIFIED | Types and `ProviderError` only. |
+| OpenRouter provider (`ai/providers/openrouter.ts`) | IMPLEMENTED_VERIFIED (unit, mocked fetch) | Handles 429, 5xx, 400/401/403, bad JSON, embedded errors and empty choices. It is the only provider. |
+| OX Alpha executor (`ai/ox-alpha.ts`) | IMPLEMENTED_VERIFIED for retry, fallback and JSON retry. PARTIAL for timeout, usage and audit. | See F-05, F-06, F-11, F-12. |
+| Model catalog (`ai/catalog.service.ts`) | IMPLEMENTED, with the eligibility promotion missing | New models are inserted as `DISCOVERED` at `:281`. Nothing ever sets `AVAILABLE` or `ELIGIBLE`. See F-01. |
+| Model registry (`ai/registry.service.ts`) | PARTIAL | `recordReliabilityEvent` has no caller. Nothing writes `model_benchmarks`. |
+| Router: filter, scorer, policy, `index.ts` | IMPLEMENTED, with unwired parts | Reached from the pipeline. `policy.maxAttempts` and `requireCrossModelVerification` are stored but never read. Org `preferredModelId` preferences are never read by the router. |
+| OX Alpha routing call (`router/index.ts:134`) | IMPLEMENTED. Output is validated against the eligible set and falls back to the deterministic choice. | It costs an extra LLM call before every agent and is untracked. See F-10. |
+| Agent registry (`ai/agents/registry.ts`) | IMPLEMENTED | 13 hardcoded definitions plus DB enable/disable. |
+| Agent orchestrator (`orchestrator.ts`) | IMPLEMENTED, with the real path UNVERIFIED | Output validation is real. Tests only cover `simulate:true`, and `getOxAlphaExecutor` is mocked to return `null`. |
+| Policy gate (`policy-gate.ts`) | IMPLEMENTED | Checks membership, enabled state, tool allowlist, website verification, origin, evidence scope and timeout ≤120s. It does not cap `maxRetries`. |
+| Scan pipeline (`scan-pipeline.ts`) | IMPLEMENTED, UNVERIFIED | No test imports it. |
+| Discovery (`discovery.ts`) | IMPLEMENTED | Not an LLM agent. Uses `safeFetch`. |
+| Evidence layer | Store, validator and `collectEvidence`: IMPLEMENTED and invoked by discovery and `scan.service.ts:783`. `validateGrounding` is DEAD. `adapters.ts` is DEAD. | |
+| Instruction layer | Planner, composer, validator and store: IMPLEMENTED and invoked from the orchestrator. | The plan is purely deterministic; `decisionSource` is always `DETERMINISTIC`. OX Alpha never proposes instructions. |
+| Quality evaluator (`quality/evaluator.ts`) | PARTIAL, near-PLACEHOLDER | See F-04. |
+| Quality store | IMPLEMENTED, invoked from the orchestrator only | The pipeline's own `assessQuality` calls are never persisted. |
+| Regeneration supervisor | DEAD outside its simulate route | A pure function with no DB writes. `regeneration_runs` has no writer, so the GET endpoints always return empty. |
+| Adaptation planner | DEAD | No caller at all, not even a route. |
+| `agents/lifecycle.ts` | Utility, not AI | Maps statuses only. |
+| Non-pipeline agents | DEAD or PLACEHOLDER | GEO, QA, SSL and REMEDIATION are defined but never executed. CROSS_DOMAIN is replaced by a deterministic function. |
+| Prompts | Hardcoded in `orchestrator.ts` and `router/index.ts`. Instruction text comes from agent definitions. | No prompt registry or versioning beyond the agent version. |
+| Usage tracking | PARTIAL | Prompt and completion tokens are stored per attempt. There is no cost, budget or per-org quota. |
+| Audit trail | PARTIAL | See F-12. |
+
+## Endpoint table
+
+Prefixes: `/api/v1/models`, `/routing` and `/agents` as shown; the others are mounted at `/api/v1`. "Auth" means `authenticate` + `requireOrgMember`, which takes the org from an `x-org-id` header or route param after a membership check. "Admin" adds `requireRole("owner","admin")`.
+
+| Endpoint | Auth | Tenant scoping | Notes |
+|---|---|---|---|
+| GET `/models`, `/models/eligible`, `/models/:id`, `/models/catalog/status` | Member | Global registry data. Acceptable, but reveals platform config. | |
+| POST `/models/catalog/refresh` | Admin of any org | Global | See F-03. Unthrottled, 30s external call, loops one query per model. |
+| POST `/models/:id/enable`, `/disable` | Admin of any org | Global | F-03. The audit row carries an org, but the effect hits every tenant. |
+| GET and PUT `/models/preferences/:orgId` | Member / Admin | The `orgId` param is checked against `request.orgId`. | OK, but the preferences are inert (F-08). |
+| GET `/agents`, `/types`, `/:agentType`, `/:agentType/versions` | Member | Global definitions | OK. |
+| GET `/agents/:agentType/executions` | Member | `org_id = $2` | OK. |
+| POST `/agents/:agentType/enable`, `/disable` | Admin of any org | Global, via the `specialist_agents` table | F-03. |
+| POST `/agents/simulate` | Admin | The simulate path skips instruction persistence. | Never calls a model. Body `context` is unbounded. |
+| POST `/agents/plan` | Admin | n/a | Pure planning. |
+| POST `/routing/simulate` | Admin | `orgId` is forced from the request context. | |
+| GET `/routing/decisions`, `/decisions/:id` | Admin | `org_id = $` | The candidate sub-query is keyed only by decision id, which is safe because the parent is org-checked. |
+| GET and POST `/routing/policy` | Admin | See F-02. | |
+| GET `/routing/task-types` | Admin | n/a | |
+| GET `/ai/instructions`, `/:agentType`, `/versions` | Member | Global static profiles | `/versions` always returns a single hardcoded entry. |
+| POST `/ai/instructions/simulate` | Admin | n/a | No model call. |
+| GET `/ai/instruction-plans/:id` | Member | `p.org_id = $2` | OK. |
+| GET `/ai/evidence/:id`, `/ai/tasks/:id/evidence`, `/ai/findings/:id/evidence`, `/ai/evidence/:id/lineage` | Member | All filter by org. | OK. The recursive lineage CTE has no depth limit or cycle guard. |
+| POST `/ai/evidence/simulate` | Admin | Not persisted. | |
+| GET `/ai/tasks/:id/quality`, `/executions/:id/quality`, `/quality/:id` | Member | `org_id` | OK. |
+| POST `/ai/quality/simulate` | Admin | n/a | |
+| GET `/ai/tasks/:id/regeneration`, `/regeneration/:id` | Member | `org_id` | No writer exists, so these always return `[]` or 404. |
+| POST `/ai/regeneration/simulate` | Admin | n/a | `assessment` is `z.record(z.unknown())` cast to `QualityAssessment`. Missing fields throw a 500. |
+
+There are no endpoints that run a model on demand. The only real LLM path is the scan pipeline, called from `services/scan.service.ts:543`.
+
+## Findings
+
+### F-01 (P0) No code path makes any model eligible, so the real path always fails
+- **Evidence:** `ai/catalog.service.ts:281` inserts new models as `status='DISCOVERED'`. `ai/registry.service.ts:calculateEligibility` maps `DISCOVERED` to `PENDING_REVIEW`. `getEligibleModels` keeps only `ELIGIBLE`. `enableModel` sets `enabled=TRUE` and recomputes eligibility, but leaves the status as `DISCOVERED`. No migration seeds models, and I found no `AVAILABLE` or `ELIGIBLE` status writes outside the migration enum definitions.
+- **Effect:** `filterCandidates` returns no candidates, routing returns `NO_CANDIDATES`, and the orchestrator throws `MODEL_FAILURE` at `orchestrator.ts:129`. Every specialist fails and every scan ends with intelligence status `FAILED`. The only workaround is a manual DB edit.
+- **Missing:** an approve or promote workflow, or a rule for `DISCOVERED` to `AVAILABLE`, plus a seeded or approved baseline model.
+- **Recommendation:** add an admin "approve model" endpoint that sets the status and audits it, or auto-promote under policy. Add a startup health check that warns when the eligible set is empty.
+- **Tests required:** a catalog refresh, approval and eligibility integration test. A routing test against a real DB fixture, not a mock.
+
+### F-02 (P1) A tenant admin's routing-policy update deactivates the global policy
+- **Evidence:** `router/routing-policy.ts:122-130`. `getActivePolicy(orgId)` falls back to the global row (`org_id IS NULL`) when the org has no policy. `updateActivePolicy` then runs `UPDATE routing_policies SET is_active=FALSE WHERE id=$1` on that global row, before inserting an org-specific row. The deactivate and insert are also not in a transaction.
+- **Effect:** the first policy change by any org owner or admin disables the platform default for every tenant that has no policy of its own. A crash between the two statements leaves the org with no active policy.
+- **Recommendation:** only deactivate when `current.orgId === orgId`, and run the change inside `withTransaction`. Add a unique partial index on `(org_id) WHERE is_active`.
+- **Tests required:** two-tenant policy update test. A transaction rollback test.
+
+### F-03 (P1) Global AI resources are controlled by any tenant admin
+- **Evidence:** `routes/models.ts:249` (catalog refresh), `:285` and `:295` (enable/disable model), `routes/agents.ts:110` and `:121` (enable/disable agent). All use the per-org `requireRole("owner","admin")`. The target tables (`models`, `specialist_agents`) have no `org_id`.
+- **Effect:** one tenant's admin can disable a model or a specialist agent for every tenant and break all scans. A tenant admin can also trigger paid-key catalog fetches repeatedly.
+- **Recommendation:** add a platform-operator role, or make enablement per-tenant (`org_model_overrides`). Rate-limit and single-flight the catalog refresh.
+- **Tests required:** route tests showing a non-platform admin gets 403, and cross-tenant effect tests.
+
+### F-04 (P1) The quality gate does not verify quality
+- **Evidence:** `ai/quality/evaluator.ts:6-12` and `scan-pipeline.ts:100,124`.
+  - Grounding scores 100 whenever `findingEvidence.length >= findings.length`, and 100 when there are no findings.
+  - `FINDING_QUALITY`, `CONSISTENCY` and `EVIDENCE_COMPLETENESS` are not computed from content. `CONSISTENCY` and `FINDING_QUALITY` are not set at all and contribute 0 to the weighted sum, but coverage defaults to 100 when no scope is supplied.
+  - Callers pass `evidenceValid` as "every finding has at least one evidence id". The evidence has no semantic relationship to the finding. `validateGrounding` is never called, so tenant, task, resource and freshness are never checked.
+  - `requiredCoverage`, `evidenceFresh`, `instructionValid`, `securityViolation` and `unauthorizedTool` are never supplied by any real caller, so those branches never fire.
+- **Effect:** a result with zero findings scores 100 and is ACCEPT. Any model-fabricated finding that cites one real evidence id is ACCEPT. The gate is an "evidence ids non-empty" check labelled as a quality score.
+- **Recommendation:**
+  - Call `validateGrounding` with the resolved evidence records.
+  - Compute coverage from discovered pages versus the pages cited.
+  - Decide explicitly what an empty result means for each agent.
+  - Pass the policy-gate and instruction-validation outcomes into the evaluator.
+- **Tests required:** negative tests (evidence from another resource, stale evidence, an empty result for an agent that should find something). A pipeline test that asserts a rejected result is not persisted.
+
+### F-05 (P1) Unbounded cost and time per scan, with a 2-minute stage lease
+- **Evidence:** `ox-alpha.ts:68-69` loops over `1 + fallbacks` models times `maxRetries`, with `maxRetries` defaulting to 3 and the config value uncapped. The orchestrator passes `routing.fallbackModels` (up to 3). Timeout is up to 60s per attempt, and `policy-gate.ts` checks timeout but never `maxRetries`. The routing call adds its own retry loop. Six specialists run in parallel (`Promise.all`) plus one synthesis call. `scan-pipeline.ts:166` sets the stage claim lease to 2 minutes with no heartbeat.
+- **Effect:**
+  - The worst case is about 4 models × 3 attempts × 60s, plus backoff, per agent. That is roughly 12 calls per agent and 80+ per scan, plus the routing calls.
+  - A stage can exceed its lease, so another worker can re-claim it. That duplicates paid executions and conflicts on findings.
+  - There is no per-org or per-scan token or cost budget and no concurrency cap.
+- **Recommendation:** cap `maxRetries` and total attempts in the policy gate and in `OxAlphaExecutor`. Add a per-scan deadline passed through to the executor. Add a lease heartbeat or a lease longer than the worst case. Enforce a per-org daily token budget from `agent_executions` usage.
+- **Tests required:** a test that the worst-case attempt count is bounded, a lease-expiry test, and a budget-exceeded test.
+
+### F-06 (P2) Timeout handling is mis-wired
+- **Evidence:** `openrouter.ts:128` converts an `AbortError` into `ProviderError("CANCELLED", …, retryable=false)`. `ox-alpha.ts:109` looks for `err.name === "AbortError"`, which never matches a real provider failure. The `TIMEOUT` code is never produced.
+- **Effect:** a timeout is classified `CANCELLED` and non-retryable. It breaks to the next fallback model and never retries the same model. The timeout test passes only because its mock throws a raw `AbortError`, so it doesn't reflect the real provider. Reliability stats can't tell a timeout from a user cancel. There is no overall wall-clock limit across attempts.
+- **Recommendation:** have the executor detect its own timeout (`controller.signal.aborted`) and map it to `TIMEOUT`. Decide the retry policy explicitly.
+- **Tests required:** use the real `OpenRouterProvider` with a stalled mocked fetch, and assert the error code and behaviour.
+
+### F-07 (P1) Prompt-injection exposure through "trusted" context
+- **Evidence:** `orchestrator.ts:253-259` prints every context key except `websiteContent`, `rawHtml` and `userInput` under the heading "Structured context (system-provided, trusted)". `scan-pipeline.ts:90` puts `discoveryPages` there. Those pages carry attacker-controlled data: title, meta description, headings, image alt text, link URLs, structured data and response headers, as well as `deterministicEvidence` content. The pipeline never sets `websiteContent`, so the untrusted label and the 8000-char slice are never applied.
+- **Effect:** a crawled site can place instruction text in a `<title>` or JSON-LD, and the model sees it labelled as trusted. Mitigations that do exist: the system prompt's "treat as untrusted" policy line, a strict JSON output contract, evidence-id allowlisting, and persistence only after quality and schema checks. A page can still push false findings, severities and recommendations that cite real ids. There is also no total size cap on the context, so a large crawl can exceed the context window or inflate cost.
+- **Recommendation:** label `discoveryPages` and scanner evidence as untrusted data. Wrap them in delimiters and cap their size. Strip control strings. Never describe model-visible site data as trusted.
+- **Tests required:** an injection fixture through title and JSON-LD that asserts the prompt labels it untrusted, and a size-cap test.
+
+### F-08 (P2) Configuration that exists but has no effect
+- `routing_policies.max_attempts` and `require_cross_model_verification` are stored and exposed via the API but never read.
+- `model_preferences` (`PUT /models/preferences/:orgId`) is never consumed by routing.
+- `getModel` and `model_benchmarks` have no writer. `recordReliabilityEvent` has no caller. Consequently reliability and historical scores are always UNKNOWN, and the scorer falls back to a neutral 50.
+- Impact: admins believe controls are applied when they are not.
+- Tests required: tests that assert each control changes the routing output, or remove the controls.
+
+### F-09 (P2) Regeneration, adaptation and the retry loop are not wired in
+- **Evidence:** `planRegeneration` is called only from its simulate route, and `planAdaptation` has no caller. The pipeline throws `QC_REJECTED` and fails the stage on any non-ACCEPT result (`scan-pipeline.ts:101`). No `regeneration_runs` or adaptation rows are ever written.
+- **Effect:** the "adaptive" layers are simulation-only. The advertised improvement loop (collect more evidence, retry with new instructions or a different model) doesn't exist. A single quality miss fails the specialist.
+- **Tests required:** if wired in, a bounded-loop test (`maxIterations`, `maxModelCalls`, `maxDurationMs` are in the policy but not enforced anywhere). If left unwired, mark the layers as simulation-only in the API.
+
+### F-10 (P2) Routing LLM call is extra cost and not tracked
+- **Evidence:** `router/index.ts:134-230` makes a model call with no `scanId` or `orgId`. `ox-alpha.ts:189` skips the `agent_executions` insert when those are absent, and the audit rows carry no org. `resolveRouting` is called for each agent, so each agent run costs 2 LLM calls.
+- **Effect:** routing usage is invisible and cannot be budgeted or attributed to a tenant. The router's executor runs with the default model (`OX_ALPHA_MODEL`) regardless of the eligibility filter.
+- **Recommendation:** pass org and scan to the routing call, or drop the LLM routing call. Choosing the top-scored candidate is already deterministic.
+
+### F-11 (P2) Hardcoded default model
+- **Evidence:** `config.ts:61` sets `OX_ALPHA_MODEL` to `meta-llama/llama-3.1-8b-instruct:free`. It is used for routing calls and for any executor call without an explicit model. Agent execution passes the routed model, so it is not hardcoded there.
+- **Effect:** routing runs on a small free-tier model that may not exist in the catalog or be eligible, and the router is not constrained by the registry's eligibility rules.
+
+### F-12 (P2) Audit and usage gaps
+- **Evidence:** `ox-alpha.ts:241` audits only a success or failure summary per call chain, with `resourceId` possibly `undefined` (`scanId as unknown as string`). It records no model, token usage or attempts. `audit()` swallows DB failures. Per-attempt rows go to `agent_executions` only when scan and org are known. `recordStart` and `recordEnd` swallow all errors silently. `recordEnd` for failed attempts stores the elapsed time since the start of the whole chain, not the attempt.
+- **Effect:** the audit trail is best-effort and loses data silently. Model inputs and outputs are not retained, so there is no replay.
+
+### F-13 (P2) Output validation is lenient where it matters
+- **Evidence:** `orchestrator.ts:274-322`.
+  - Invalid findings (bad severity) are silently dropped. The result is still SUCCESS.
+  - `finding.status` defaults to OPEN.
+  - Finding `evidenceIds` are filtered against the supplied set. The earlier `hasInvalidEvidence` check fails the whole result when any id is foreign, which is strict, but a finding with no ids is kept and only fails later in quality.
+  - `parsedJson` of `false` or `0` is treated as failure. Findings from the model keep the model-supplied `findingId`, which can collide with another agent's id.
+  - There is no schema library: the checks are hand-written, and `confidence` defaults to 50 when missing.
+- **Recommendation:** use a zod schema and fail or warn on dropped findings.
+
+### F-14 (P3) Smaller issues
+- **Simulate crash:** `routes/regeneration.ts:13` and `routes/instructions.ts:225` can throw on malformed bodies (500s). `getInstructionProfile(...)!` is dereferenced before the null check.
+- **Dead code:** `persistSeoFindings` in `scan-pipeline.ts` and `adapters.ts` are unused.
+- **Evidence collection:** `collectEvidence` isn't wrapped in a transaction. Its logical-key branch relies on `ON CONFLICT`. The 24h freshness rule is hardcoded.
+- **Response headers:** discovery stores full response headers (`discovery.ts:154`), which could include `Set-Cookie`, and sends them to the third-party model. `redactEvidence` strips only key and value patterns.
+- **Instruction versions:** the `/versions` endpoint always returns one hardcoded entry.
+- **Instruction validator:** the injection filter is a keyword regex over system-generated text, not over model or user text. It protects little because planner text is controlled. The test "keeps website-content prompt injection out" only checks that the string is not in the plan.
+- **Evidence lineage:** the recursive CTE has no cycle or depth guard.
+- **Provider coverage:** there is a single provider (OpenRouter, credential `OPENROUTER_API_KEY`). There is no provider failover. Retries and fallback models are within OpenRouter only.
+
+## Real versus placeholder verdicts
+
+- **Evidence, quality, regeneration and adaptation stubs:**
+  - Evidence store and validator are real and used.
+  - The quality evaluator is a real weighted scorer, but its inputs are shallow (F-04) and it can ACCEPT empty results.
+  - Regeneration and adaptation are real decision functions that nothing calls. They are unit-tested at 3 cases each.
+- **Mock or hardcoded responses:** the simulate path returns a deterministic stub with `confidence: 0` and a warning. It is labelled `simulate: true` and no real path returns it. There is no fake success when the key is missing: the pipeline marks `unavailable`, which is correct.
+- **Malformed output:** invalid JSON is retried and then fails. Valid JSON with bad shape yields a FAILED result rather than a stored value. This part is sound.
+
+## Test assessment
+
+| Test file | Real coverage | Gaps |
+|---|---|---|
+| `ox-alpha.test.ts` (400 lines) | Retry, fallback, JSON retry and provider error mapping with mocked providers and fetch. Real. | The timeout test uses a mock that throws a raw `AbortError` (F-06). Nothing for the DB-write and audit paths. |
+| `router.test.ts` (453) | Filter and scorer logic. | No org/tenant cases. No OX routing prompt or validation test. |
+| `registry.test.ts` (377) | Eligibility and registry functions. | No promotion path (F-01) and no route tests. |
+| `agent-registry.test.ts` (678) | Definitions, dependencies, tool allowlists, simulate-mode orchestrator. | The real execution path is never run, because OX Alpha is mocked to `null`. `validateAgentOutput` is untested. |
+| `instruction-intelligence.test.ts` (52) | Planner, validator and hash. | Light. No orchestrator integration. |
+| `evidence-intelligence.test.ts` (13), `quality-verification.test.ts` (10), `regeneration.test.ts` (4), `adaptation-intelligence.test.ts` (4) | Pure-function unit tests, a few cases each. | No DB, route, tenancy or pipeline coverage. |
+| `qa-verification.test.ts` | Not an AI test (QA bypass policy). | |
+
+No test covers any AI route (authorization or tenancy), the scan pipeline, the stage lease, or the real OpenRouter execution path.
+
+## Prioritised recommendations
+
+1. F-01: build a model-promotion path, seed an approved baseline model, and add an empty-pool health check.
+2. F-02 and F-03: fix the policy deactivation bug, and separate platform-level from tenant-level admin actions.
+3. F-05 and F-06: bound total attempts, add a per-scan deadline and a lease heartbeat, and map real timeouts correctly.
+4. F-07 and F-04: label crawled data untrusted and cap its size, then make the quality gate check grounding semantically.
+5. F-09, F-08 and F-10: either wire in or clearly label the regeneration and adaptation layers and the unused policy fields. Attribute routing usage to a tenant or remove the LLM routing step.
+6. Add integration tests with a fake provider server for the full pipeline, route authorization and tenancy tests for every `/ai/*` endpoint, and prompt-injection fixtures.
+The AI audit is back. Two audits are still running: backend routes/security and database/docs. I'm holding the consolidated report until both finish.
+
+The AI agent's headline findings:
+- **F-01 (P0): the real AI path can't run on a fresh deployment.**
+  - New models are inserted as `DISCOVERED`, and nothing ever promotes them to an eligible status.
+  - The eligible pool is therefore empty, and every real agent run fails with `MODEL_FAILURE`.
+- **F-02 (P1): a policy change by one tenant disables the platform default for others.** A tenant admin's first routing-policy update deactivates the global default policy row, and the two statements aren't in a transaction.
+- **F-03 (P1): any tenant admin controls global resources.** Model catalog refresh, model enable/disable and agent enable/disable all use per-org admin roles but affect every tenant.
+- **F-04 (P1): the quality gate doesn't check quality.**
+  - It mostly checks that evidence ids are non-empty.
+  - A result with zero findings scores 100.
+  - `validateGrounding` is never called.
+- **F-05 (P1): scan cost and time are unbounded.** Retries are uncapped, the worst case is dozens of model calls per scan, and the 2-minute stage lease has no heartbeat.
+- **F-07 (P1): prompt-injection exposure.** Crawled page content is labelled "trusted" in the prompt.
+- **Timeout handling:** a real provider timeout is classed as a non-retryable `CANCELLED`, and the timeout test only passes because its mock throws a raw `AbortError`.
+- **Unwired layers:** regeneration and adaptation are not wired into the scan pipeline. Several policy and preference settings are stored but never read.
+- **Tests:** there are none for the real pipeline, the AI routes, or the real OpenRouter path.
+# Backend audit: `server/` non-AI portions (read-only)
+
+Nothing was modified, installed or migrated, and no `.env` was read. I did not run any tests or scripts, because the shell harness blocked compound commands, so every finding below comes from reading the code. Three claims are inferred from library or language behavior and are marked "verify" where they appear.
+
+I read the AI routes only for auth, tenancy and validation. Their service internals (routing policy, agent orchestrator) were not audited.
+
+## Summary
+
+- **Auth and tenancy are mostly sound.** Every data query I read filters by `org_id` using the org from `requireOrgMember` (a DB membership lookup). The body `orgId` in `addWebsiteSchema` and `taskRequirementsSchema` is ignored. All queries are parameterized, and the only dynamic SQL is `registry.service.ts:137`, which is safe.
+- **Production-blocking problems:**
+  - Rate limits are probably shared by all users (F-01).
+  - The QA-bypass flag parsing is wrong (F-02).
+  - Global model and agent settings can be changed by any tenant (F-03).
+  - The SSRF checks have gaps (F-04, F-05).
+  - Crashed scans never recover (F-06).
+  - Scheduled monitoring stalls after any failed or cancelled scan (F-07).
+- **No HTTP-level tests exist.** No test calls `buildApp` or `inject()`. All route, auth and RBAC behavior is untested, and the tenancy and DB suites are skipped by default.
+
+## Endpoint table
+
+All paths are under `/api/v1` unless noted. "Org" means `authenticate` plus `requireOrgMember`, so the org comes from the `x-org-id` header or an `:orgId` param and is checked against `memberships`. Roles: M = member or higher (owner/admin/member, so viewers are excluded), A = owner/admin, Any = any member including viewer.
+
+| Method and path | Auth / RBAC | Tenant | Validation | Real or mock | Notes and tests |
+|---|---|---|---|---|---|
+| GET `/health` | none | n/a | n/a | real | no DB check, no tests |
+| GET `/ready` | none | n/a | n/a | real, `SELECT 1` | no tests |
+| POST `/auth/register` | none; 5 per 15 min per IP | creates org and owner | zod | real, transaction, bcrypt 12 | audited, no tests (F-01, F-12, F-13) |
+| POST `/auth/login` | none; 10 per 15 min per IP | n/a | zod | real | failure audit has no userId or IP, no tests (F-01, F-11, F-12) |
+| POST `/auth/refresh` | cookie `zn_refresh` | derived from user | none | real, rotating | no audit, no tests (F-09, F-11, F-15) |
+| POST `/auth/logout` | access JWT required | n/a | n/a | real | fails if the access token has expired (F-10) |
+| GET `/auth/me` | JWT only | orgIds come from the JWT, not the DB | n/a | real | returns ids only, no org names or roles |
+| GET `/websites` | Org, Any | org-scoped | `parsePagination` | real | the code comment says `?orgId=` but the query param is ignored |
+| GET `/websites/:id` | Org, Any | `id` and `org_id` | none (non-UUID gives 500) | real | returns `verification_token` to viewers |
+| GET `/websites/:id/scans` | Org, Any | org-scoped | none | real | unpaginated, `SELECT *` |
+| POST `/websites` | Org, M | org from auth | zod | real, transaction | audited; a duplicate race gives 422/500; the port is dropped from the URL |
+| POST `/websites/:id/verify` | Org, M | scoped | none | real: HTML meta, file or DNS TXT | catch-all returns 422 with the raw message (F-14) |
+| POST `/websites/:id/qa-verify` | Org, A + QA email allowlist | scoped | none | real | audited; see F-02 |
+| POST `/scans` | Org, M | website checked against org | zod; modules not allowlisted | real, queue | admission checks race (F-17); audited |
+| GET `/scans/:id`, `/status`, `/evidence`, `/report`, `/quality` | Org, Any | `getScan(id, org)` first | none | real | `/evidence` and `/report` are unpaginated |
+| GET `/scans/:id/findings` | Org, Any | scoped | none | real | the evidence join `(fe OR e.finding_id)` can duplicate rows; unpaginated |
+| POST `/scans/:id/cancel` | Org, M | `getScan` check, then `UPDATE ... WHERE id` only | none | real | no state guard (F-16); not audited; errors swallowed |
+| GET `/scans/:id/events` (SSE) | Org, Any | scan checked | none | real, 500 ms DB polling | see F-08 |
+| GET `/dashboard` | Org, Any | scoped | `websiteId` used only as a bind param | real | websites list unbounded; history unbounded |
+| GET `/reports/:scanId` | Org, Any | scoped, joins `w.org_id` | none | real | includes AI `synthesis_artifact` |
+| GET `/:scanId/cross-domain` | Org, Any | scoped | none | real | unpaginated |
+| GET `/:scanId/remediation` | Org, Any | scoped | none | real | unpaginated |
+| POST `/remediation/:proposalId/approve` | Org, A | `org_id` in the UPDATE | none | real | audited; atomic state guard |
+| POST `/remediation/:proposalId/reject` | Org, A | same | none | real | audited; `rejected_by` not recorded |
+| GET `/monitoring`, `/monitoring/alerts` | Org, Any | scoped | pagination | real | |
+| POST `/monitoring` | Org, M | website `org_id`, verified and active | zod strict | real | audited; modules not allowlisted; `alertConfig` is unbounded and never used |
+| GET `/monitoring/:id` | Org, Any | scoped | uuid | real | |
+| PATCH `/monitoring/:id` | Org, A | scoped | zod partial | real | audited; no uuid check, so a bad id gives 500 |
+| POST `/monitoring/:id/pause`, `/resume`, `/disable` | Org, A | scoped | none | real | audited; returns 200 `{updated:false}` instead of 404; no state-transition guard |
+| POST `/monitoring/:id/run` | Org, M | scoped | none | real | F-18 |
+| GET `/monitoring/:id/changes`, `/alerts` | Org, Any | scoped | pagination | real | |
+| GET `/monitoring/:id/rules` | Org, A | scoped | none | real | |
+| POST `/monitoring/:id/rules` | Org, A | `EXISTS` check on org | `ruleType` is a free string up to 60 chars | real | not audited |
+| PATCH `/monitoring/rules/:id` | Org, A | scoped | zod strict | real | not audited |
+| POST `/monitoring/alerts/:id/acknowledge`, `/resolve`, `/dismiss` | Org, M | scoped, state-guarded | none | real | audited |
+| GET `/monitoring/alert/:id` | Org, Any | scoped | uuid | real | path is singular `/alert/`, unlike `/alerts/`; likely frontend trap |
+| GET `/models`, `/eligible`, `/catalog/status`, `/:id` | Org, Any | global registry | query params cast, not validated | real | |
+| POST `/models/catalog/refresh` | Org, A | global | none | real if the OpenRouter key is set, else 503 | F-03 |
+| POST `/models/:id/enable`, `/disable` | Org, A | global table, no org filter | disable has a zod reason | real | F-03 |
+| GET and PUT `/models/preferences/:orgId` | Org, Any / A | `orgId` must equal the header org | zod | real | OK |
+| POST `/routing/simulate` | Org, A | org from auth | zod | simulation | |
+| GET `/routing/decisions`, `/decisions/:id`, `/policy`, `/task-types` | Org, A | passes org to the service (not verified) | `limit` clamped | real | |
+| POST `/routing/policy` | Org, A | passes org (not verified) | zod | real | |
+| GET `/agents`, `/types`, `/:agentType`, `/:agentType/versions` | Org, Any | global | `agentType` checked against definitions | real | DB errors are swallowed by `.catch(()=>[])` |
+| GET `/agents/:agentType/executions` | Org, Any | `org_id` | `limit` clamped | real | |
+| POST `/agents/:agentType/enable`, `/disable` | Org, A | global `UPDATE specialist_agents` | `reason` unvalidated | real | F-03; audited |
+| POST `/agents/simulate`, `/plan` | Org, A | | zod | simulation | |
+| GET `/ai/instructions`, `/:agentType`, `/versions` | Org, Any | global static profiles | none | static | |
+| POST `/ai/instructions/simulate` | Org, A | | zod | simulation | |
+| GET `/ai/instruction-plans/:id` | Org, Any | `p.org_id` | none | real | |
+| GET `/ai/evidence/:id`, `/ai/tasks/:id/evidence`, `/ai/findings/:id/evidence` | Org, Any | `org_id` | none | real | |
+| GET `/ai/evidence/:id/lineage` | Org, Any | scoped | none | real | recursive CTE uses `UNION ALL` with no cycle guard |
+| POST `/ai/evidence/simulate` | Org, A | | zod | simulation | |
+| GET `/ai/tasks/:id/quality`, `/ai/executions/:id/quality`, `/ai/quality/:id` | Org, Any | scoped | none | real | |
+| POST `/ai/quality/simulate` | Org, A | | zod | simulation | |
+| GET `/ai/tasks/:id/regeneration`, `/ai/regeneration/:id` | Org, Any | scoped | none | real | |
+| POST `/ai/regeneration/simulate` | Org, A | | zod | simulation | |
+| `ALL /api/v1/*` | none | n/a | n/a | n/a | JSON 404 |
+| GET `/*` and `/assets/*` | none | n/a | n/a | n/a | static SPA; the `/assets/*` handler hard-codes three chunk names |
+
+**Mock or fake:** the notification delivery worker always marks the delivery FAILED with "No notification provider is configured" (`monitoring.service.ts:969`). That is an honest no-op, but it means alerts exist only in-app. `alert_config` is stored and never read.
+
+## Endpoints the frontend should consume
+
+- **Auth:** `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`. Send `Authorization: Bearer` and `x-org-id` on every call, with `credentials: "include"` for the refresh cookie.
+- **Core flow:** `/websites` (list, create), `/websites/:id/verify`, `/scans` (create), `/scans/:id/status`, `/scans/:id/report` or `/reports/:scanId`, `/scans/:id/findings`, `/scans/:id/cancel`.
+- **Overview pages:** `/dashboard` and `/monitoring/*`.
+- **Advanced or admin pages:** `/models*`, `/routing*`, `/agents*`, `/ai/*`, and the cross-domain and remediation endpoints.
+
+**Backend gaps the frontend will hit:**
+- There is no scan list endpoint. Only `/websites/:id/scans` and `/dashboard` expose scans.
+- There is no organization or membership endpoint, so no org names, roles or invites.
+- There is no password change or reset, and no email verification.
+- There is no website delete or deactivate endpoint, even though the schema has an `active` flag.
+- Nothing returns the user's role per org. `/auth/me` returns org ids only.
+- `/scans/:id/events` cannot work with a native `EventSource`, because that cannot send an `Authorization` header. It must use fetch streaming.
+
+## Findings
+
+### P1
+
+**F-01 [P1, BROKEN/SECURITY_GAP] Rate limiting keys on `request.ip` with no `trustProxy`.**
+- Evidence: `app.ts:28-36` creates Fastify with no `trustProxy`; `app.ts:56-63` keys the limiter on `request.ip`. The app is meant to run behind App Platform (the comment at `app.ts:110`).
+- Impact: behind a load balancer every client probably shares one IP. The limits would then be global: login is 10 per 15 minutes for all users, register is 5, and the general limit is 200 per minute for everyone. That means a lockout and DoS of auth. If the deployment is not proxied, `request.ip` is correct and this is fine.
+- Fix: set `trustProxy` to the platform hop count, and key auth limits on IP plus normalized email. Add per-account failed-login throttling.
+- Tests needed: `inject()` with `x-forwarded-for`, asserting separate buckets per client IP.
+
+**F-02 [P1, SECURITY_GAP] `z.coerce.boolean()` treats the string `"false"` as `true`.**
+- Evidence: `config.ts:29,31` for the QA flags; `config.ts:14` for `DB_SSL_REJECT_UNAUTHORIZED`.
+- Impact: `validateProductionSecurityConfig` (`config-security.ts:4`) only rejects the exact string `"true"`. In production, `QA_VERIFICATION_BYPASS_ENABLED=false` plus `QA_ALLOW_PRODUCTION_BYPASS=false` passes the guard but parses to `true`/`true`. The QA bypass then becomes live for any email in `QA_AUTHORIZED_EMAILS`. The DB flag fails safe. `production-security-config.test.ts:25` asserts the unsafe pair is accepted.
+- Fix: parse with an explicit enum, `z.enum(["true","false"]).transform(v => v === "true")`, and have the production guard run on the parsed config.
+- Tests needed: `loadConfig({..., QA_VERIFICATION_BYPASS_ENABLED:"false"}).QA_VERIFICATION_BYPASS_ENABLED === false`.
+
+**F-03 [P1, TENANCY_GAP] Global registries can be changed by any tenant's owner or admin.**
+- Evidence: `models.ts:60,96,106` and `agents.ts:110,121` use `requireRole("owner","admin")`, which is a per-org role. The writes are global: `registry.service.ts:193,216` run `UPDATE models ... WHERE id=$1`, and `agents/registry.ts:564,584` run `UPDATE specialist_agents ... WHERE agent_type=$1`.
+- Impact: registration is open and every registrant becomes owner of their own org. Anyone can therefore disable models or agents, or trigger a catalog refresh, for every tenant.
+- Fix: add a platform-admin concept (an `is_platform_admin` flag or a separate allowlist) for global mutations, or make the enable/disable state per-org.
+- Tests needed: a second-org owner gets 403 on `/models/:id/disable`.
+
+**F-04 [P1, SECURITY_GAP] The SSL scanner bypasses SSRF protection and is open to DNS rebinding.**
+- Evidence: `ssl.ts:19` calls `tls.connect({host: hostname, ... rejectUnauthorized:false})`. It never calls `checkUrlSafety` and does not use the pinned IP from `fetch.ts`.
+- Impact: an attacker adds and verifies their own domain, then points its DNS at an internal address. The scanner connects to port 443 there. Certificate issuer, SAN, subject and expiry are persisted into findings and returned to the user, which is an internal cert disclosure and a port probe.
+- Fix: run `checkUrlSafety`, connect to the pinned IP with `servername` set, enforce a timeout, and honor the URL port.
+- Tests needed: with DNS mocked to a private IP, the SSL scanner must refuse.
+
+**F-05 [P1, SECURITY_GAP] The IPv6 and IPv4-mapped check is incomplete, and it also wrongly blocks real domains.**
+- Evidence: `ssrf.ts:43-52`.
+  - The `::ffff:` branch calls `isPrivateIPv4` on the dotted form only. WHATWG URL and c-ares return the hex form (`::ffff:7f00:1`). **Verify** by running `new URL("http://[::ffff:127.0.0.1]").hostname`.
+  - An attacker-controlled AAAA record of `::ffff:7f00:1` passes `checkUrlSafety`, and `fetch.ts:172` then pins it. The result is a dual-stack loopback or internal connection.
+  - `ssrf.test.ts:145` passes only because the mocked `resolve4` throws on the IP literal, so it is right for the wrong reason.
+  - The check also misses `::`, `fe80::/10` addresses starting `fe9`/`fea`/`feb`, `fec0::/10`, `ff00::/8`, `64:ff9b::/96` and `2002::/16`.
+  - IPv4 documentation ranges are missing too.
+- Second bug, a false positive: `ssrf.ts:47` runs `startsWith("fc") || startsWith("fd")` on the hostname itself, not only on IP literals. Hostnames such as `fcc.gov`, `fda.gov`, `fdic.gov` and `fcbarcelona.com` are rejected.
+- Fix: parse IPv6 properly (for example with `node:net` `BlockList`, or an `ipaddr.js`-style normalizer) and only apply the IPv6 check to literals or resolved addresses. Block mapped, NAT64 and 6to4 forms by extracting the embedded IPv4.
+- Tests needed: mocked AAAA `::ffff:7f00:1` and `::ffff:a00:1`; hostnames `fcc.gov` and `fdexample.com` must be allowed; `fec0::1` and `ff02::1` must be blocked.
+
+**F-06 [P1, BROKEN] Crashed or deadlocked scans stay `running` forever.**
+- Evidence: the worker claims only `status='queued'` (`scan.service.ts:923-931`) and flips it to `running` with no lease. Lease expiry is only consulted inside `claimScanExecution`, which is called after that claim. No sweeper requeues `running` scans with an expired lease. Shutdown (`index.ts:22-28`) waits 30 s and then calls `process.exit`.
+- Related paths that strand a scan:
+  - A failed `scan_modules` insert in `createScan` (`scan.service.ts:305-310`; no transaction) leaves missing rows. Later, `claimed.length===0` and `current[0]` is undefined, so the code treats it as "another worker owns this" and returns silently (`scan.service.ts:463`).
+  - After a lease loss the code returns without a final status or event.
+- Impact: the scan never finishes, SSE hangs, and the stuck scan occupies the tenant's concurrency slot.
+- Fix: add a sweeper that requeues or fails `running` scans with `execution_lease_until < NOW()`, create the scan and its modules in one transaction, and mark scans failed on graceful-shutdown timeout.
+- Tests needed: crash simulation, plus a DB integration test for the sweeper.
+
+**F-07 [P1, BROKEN] One failed, partial or cancelled scan stops scheduled monitoring.**
+- Evidence: `finalizeMonitoringRun` sets `monitoring_configs.status='FAILED'` for any non-completed scan, including a user cancel (`monitoring.service.ts:564-567`). `claimDueMonitoring` and `runMonitoringNow` both require `status='ACTIVE'` (`:381`, `:411`), and `enabled` stays true. Only `/resume` recovers it.
+- Impact: the failure is silent from the UI's point of view.
+- Fix: keep scheduling after a failure, or auto-recover on the next success. Do not mark FAILED for a user cancel.
+- Tests needed: simulate a cancelled scan and assert the config remains schedulable.
+
+### P2
+
+**F-08 [P2, BROKEN] SSE endpoint problems (`scans.ts:273-349`).**
+- The handler writes to `reply.raw` without `reply.hijack()`. In Fastify 5 an async handler that returns `undefined` without sending logs a "Promise may not be fulfilled with 'undefined'" error. **Verify** with an integration test. The `onSend` hooks, security headers and CORS headers are also skipped for raw writes.
+- The stream ends only on `scan_completed` or `scan_failed`. `scan_failed` is emitted nowhere (grep shows only the consumer at line 328). A cancelled scan emits `scan_cancelled`, and a crashed scan emits nothing, so those streams never terminate.
+- There is no heartbeat, no max duration, and no per-user or per-org connection cap. Each connection runs a DB query every 500 ms. The poll callback can overlap and swallows errors (`:339`).
+- Fix: use `reply.hijack()` with CORS and security headers set manually, end the stream on terminal scan statuses, add a heartbeat and a limit.
+
+**F-09 [P2, SECURITY_GAP] No refresh-token reuse detection.**
+- Evidence: `consumeRefreshToken` (`auth.service.ts:132-169`) revokes the token and the request then fails if it is replayed, but it does not revoke the token family or the user's other tokens. Rotation is also not atomic with creating the new token: if `createRefreshToken` fails, the user is logged out.
+- Related: expired tokens are never purged (a growing `refresh_tokens` table); `revokeAllUserTokens` exists but is never called; there is no password change or reset flow.
+
+**F-10 [P2, SECURITY_GAP] Disabled users, and logout after access-token expiry.**
+- `authenticate` and `requireOrgMember` never check `users.active`, so a disabled user keeps API access for up to 15 minutes. Refresh does check it.
+- `POST /auth/logout` requires a valid access token. After expiry the client cannot revoke its refresh cookie.
+- The JWT has no `iss`/`aud`/`alg` pinning or token-type claim. Login also hardcodes `"15m"` instead of `config.JWT_ACCESS_EXPIRES_IN`.
+
+**F-11 [P2, SECURITY_GAP] Login enumeration and weak throttling.**
+- The dummy bcrypt hash at `auth.service.ts:86` is malformed, so `bcrypt.compare` likely returns immediately, which makes timing differ between known and unknown emails (verify).
+- `ACCOUNT_DISABLED` returns 403 before the password check.
+- Register returns 409 `EMAIL_EXISTS`.
+- Throttling is per IP only (see F-01). `register` also bcrypt-hashes before the uniqueness check, a CPU DoS vector within the 5-per-15-minute limit.
+- There is no password maximum. bcrypt truncates input at 72 bytes.
+
+**F-12 [P2, ERROR_HANDLING_GAP / info leak] Route-level catches turn arbitrary exceptions into raw 4xx responses.**
+- `auth.ts:64-67`: any error (including DB connection text) becomes a 401 with `e.message`, except invalid credentials.
+- `auth.ts:94-96`: refresh returns the raw message with `code` possibly undefined, and a DB blip logs the user out.
+- `websites.ts:74-77` and `:112-115`: any exception becomes 422 with the raw message, for example a pg unique-violation text.
+- Fix: whitelist known coded errors and rethrow everything else to the central handler.
+
+**F-13 [P2, TENANCY_GAP, low-medium] Open registration creates unbounded orgs and nothing limits what a tenant can create.**
+- No cap on websites, monitoring configs, monitoring rules, or the `alertConfig` JSON size per org.
+- `POST /monitoring` has no duplicate-website check, so several configs can fan out scans for the same site.
+
+**F-14 [P2, BROKEN, scan.service] The final scan update is not checked.**
+- `scan.service.ts:678-680` updates `... AND execution_owner=$4 AND execution_lease_until > NOW()` without checking the row count. If the lease expired, the scan row keeps its old status, but the worker still finalizes monitoring, snapshots, emits `scan_completed` and audits.
+- Persistence is not transactional: `persistFinding`, evidence, scores and the snapshot are separate statements.
+- `finalizeMonitoringRun` is called with `.catch(() => undefined)` (`scan.service.ts:687`, `:955`; `scans.ts:266`). A failure leaves the run in `RUNNING` with no log.
+- Previously persisted findings are reloaded into `allFindings` and then re-added if their module re-runs, which double-counts in scoring.
+
+**F-15 [P2, BROKEN] Scan and monitoring fan-out failures.**
+- `runMonitoringNow` inserts a `monitoring_runs` row and then calls `createScan` (`monitoring.service.ts:415-424`). `ScanAdmissionError` has no `statusCode` in this path, so the API returns 500 and leaves an orphan `RUNNING` run with a 10-minute lease.
+- `processDueMonitoringJobs` (`:460-481`) calls `createScan` after the config's `next_run_at` was already advanced. An admission error aborts the loop for remaining orgs and loses that period's run.
+- Expired runs are reaped only when that org still has a due config.
+- The scan worker is one serial loop (`workerRunning`) shared with monitoring and notifications, so one slow scan, up to 300 s, delays everything. The per-tenant concurrency limit is moot in practice.
+- A single scan can overrun its 300-second budget, because the deadline is checked only between modules and a module's fetch chain is bounded only per step.
+
+**F-16 [P2, ERROR_HANDLING_GAP] Cancel is unguarded and unaudited.**
+- `scans.ts:257` runs `UPDATE scans SET status='cancelled' WHERE id=$1` with no org and no status guard (check-then-act race). A scan that finished between the read and the write is flipped to cancelled.
+- In-flight module fetches are not aborted.
+
+**F-17 [P2, TENANCY_GAP] Admission limits are check-then-insert.**
+- `enforceScanAdmission` (`scan.service.ts:274-289`) is not atomic, so concurrent requests all pass.
+- `modules` is not allowlisted, and duplicate modules hit the `scan_modules` unique constraint and return 500.
+
+**F-18 [P2, BROKEN] Monitoring snapshot key is lossy.**
+- `buildSnapshot` builds the finding key as `module:category:severity:affected_urls`, without the title (`monitoring.service.ts:856`). Distinct findings with the same key collapse in the `Map`, so changes are missed.
+- The evidence query (`:824-829`) scans every `finding_evidence` row for the org, not just the scan.
+- The remediation proposal upsert (`cross-domain.service.ts:101`) overwrites content after approval while keeping `APPROVED`.
+
+**F-19 [P2, SECURITY_GAP] The SSL scanner reports false criticals.**
+- `ssl.ts:94-107` reports a critical "certificate could not be retrieved" for any transient connect error or timeout, and the module is marked `completed`, so it is never retried.
+- Wildcard SAN matching is a loose `endsWith`, so `*.example.com` also matches `a.b.example.com`.
+- It ignores the URL port and checks `url.startsWith("https://")` case-sensitively.
+- `rejectUnauthorized:false` means untrusted or self-signed chains are never flagged.
+
+### P3
+
+- **F-20 [P3] Trailing CORS, header and redirect issues.**
+  - `app.ts:131-137` registers a dead `onRequest` no-op for auth rate limits, after routes.
+  - There is no `helmet`. Headers are hand-rolled, and a CSP with `style-src 'unsafe-inline'` is attached to JSON.
+  - There are no explicit `bodyLimit`, `requestTimeout` or `connectionTimeout`. The CORS refinement in `config.ts:37` rejects `*` in every environment, not just production. `CORS_ORIGIN` defaults to localhost.
+- **F-21 [P3] Unvalidated ids give 500 instead of 400.**
+  - Non-UUID `:id` params and a non-UUID `x-org-id` hit Postgres error 22P02 and return 500 (`auth.ts:54`, most routes).
+  - `monitoring` and the AI evidence/quality routes skip the uuid check.
+  - Most routes use `parsed.error.message` (a JSON string) and omit `requestId`. The shape is inconsistent with `errorHandler`, so the frontend must handle both.
+- **F-22 [P3] Unpaginated lists.** `/websites/:id/scans`, `/scans/:id/evidence|findings`, `/dashboard` websites and history, cross-domain and remediation, `/ai/tasks/:id/*`. Pagination exists only on websites, monitoring list, changes and alerts. `/dashboard` runs several subqueries per website.
+- **F-23 [P3] Audit coverage is incomplete.**
+  - No audit for scan cancel, failed website verification, monitoring rule create/update, or notification attempts without an org.
+  - Login failures have no `userId`, `requestId` or IP.
+  - `audit()` swallows write failures (acceptable for general events, not fail-closed for the QA bypass).
+  - Audit rows also use `as unknown as string` casts.
+- **F-24 [P3] Miscellaneous.**
+  - `/lineage` can recurse forever on a cyclic graph.
+  - `ensureRuntimeSchema` runs DDL at startup, outside the migration runner.
+  - `withTransaction` can mask the original error if `ROLLBACK` fails.
+  - `unhandledRejection` kills the process.
+  - `agents.ts` swallows DB errors as empty lists.
+  - `/auth/me` returns stale orgIds from the JWT.
+  - The verification DNS name and meta token use `zignaneural`, but the QA domain and project name use `zigmaneural`. Confirm which spelling the UI instructions show.
+  - `confidence` in `buildCrossDomainFinding` is a constant 75.
+  - The normalized website URL drops port and query, so non-default-port sites cannot be scanned.
+- **F-25 [P3] Dependencies.** Many tenant filters rely on the app role bypassing RLS. The RLS policies target the Supabase `authenticated` role, so the API (connected as an owner role) is the only enforcement point. Application-level filters are therefore the sole tenant barrier.
+
+## Verified good
+
+- bcryptjs with 12 rounds.
+- Refresh tokens are random 48-byte values stored as SHA-256 hashes, with an atomic `UPDATE ... RETURNING` consume that blocks simple replay.
+- The refresh cookie is `httpOnly`, `sameSite=strict`, path-restricted, and `secure` in production.
+- CSRF risk is low because API calls use Bearer tokens.
+- Redirects are re-validated and DNS-pinned in `fetch.ts`. Body size, redirect count and timeouts are enforced. Userinfo URLs are rejected. Decompression is disabled.
+- All SQL is parameterized.
+- The error handler returns a generic 500 and logs context.
+- `requireOrgMember` does a real membership lookup per request.
+
+## Test quality
+
+- **No HTTP tests.** `buildApp` and `inject()` are never used outside `error-handler.test.ts` (which calls the handler with mocked `request`/`reply`). The auth routes, `requireOrgMember`, `requireRole`, rate limits and the SSE route have no tests. There is also no test of `auth.service`.
+- **Skipped by default.** `tenancy.test.ts`, `monitoring.integration.test.ts` and `reliability.integration.test.ts` are `describe.skipIf` unless `DATABASE_URL` and `RUN_INTEGRATION=1` are set. The tenancy suite exercises only the service layer (`getWebsite`, `listWebsites`), not routes. I did not see tenancy tests for scans, findings or monitoring routes in the visible part.
+- **Pure-unit tests of production code (good but narrow):** `pagination.test.ts`, `scan-lifecycle.test.ts` (scoring and retry classification), `report-lifecycle.test.ts`, `monitoring.test.ts` (compare and signatures), `cross-domain.test.ts` (with a mocked DB).
+- **Mock-heavy:** `scan-lease.test.ts` mocks `query`, so it asserts SQL call patterns, not lease semantics. `ssrf.test.ts` mocks DNS, and its IPv6-mapped test passes for the wrong reason (F-05). `qa-verification.test.ts` and `production-security-config.test.ts` exercise config logic, and the latter locks in the unsafe pair from F-02.
+- **Not string-inspection tests.** I did not find any test that merely greps source text, but the non-integration suites never touch the real DB.
+- **Skipped tests:** the three `skipIf` suites above, and no `.skip`/`.todo` elsewhere in the files I checked.
+
+**Highest-value tests to add:**
+1. `inject()` auth lifecycle: register, login, refresh rotation, replay, logout, disabled user.
+2. A cross-org matrix for every `:id` route, covering header spoofing and IDOR.
+3. SSRF cases for mapped and hex IPv6 and the `fcc.gov` false positive, and SSL-scanner private-IP refusal.
+4. Config parsing of `"false"` flags.
+5. Scan sweeper and cancel race.
+6. SSE termination on cancelled and failed scans.
+7. A rate-limit test behind a forwarded IP.
+8. Platform-admin gating of `/models` and `/agents` mutations.
+The backend audit is back. One audit is still running, database and docs, so I'm holding the full report until it finishes.
+
+The backend agent's headline findings:
+- **F-02 (P1): the QA-bypass flags are parsed wrongly.**
+  - `z.coerce.boolean()` turns the string `"false"` into `true`.
+  - The production guard only rejects the exact string `"true"`.
+  - A production config with both flags set to `"false"` therefore passes the guard but enables the QA bypass.
+  - `production-security-config.test.ts` locks in that unsafe pair.
+- **F-01 (P1): rate limits are probably shared by all users.** There is no `trustProxy`, so behind a load balancer every client likely shares one IP. That would make the 10-login-per-15-minutes limit global.
+- **F-03 (P1): any tenant admin can change global model and agent settings.** The AI agent found the same problem.
+- **F-04 and F-05 (P1): SSRF gaps.**
+  - The SSL scanner skips the SSRF check entirely and is open to DNS rebinding.
+  - The IPv6 and IPv4-mapped check is incomplete.
+  - The `fc`/`fd` check wrongly blocks real hostnames such as `fcc.gov`.
+- **F-06 (P1): crashed scans stay `running` forever.** There is no sweeper for expired leases.
+- **F-07 (P1): one failed or cancelled scan stops scheduled monitoring** until someone resumes it.
+- **F-08 (P2): the SSE endpoint writes raw output without `reply.hijack()`.** Streams for cancelled or crashed scans never end.
+- **Tests:** there are no HTTP-level tests at all, and the tenancy and DB suites are skipped by default.
+
+I'm still waiting on the database and docs agent.
+# Audit: migrations, DB consumers and documentation (read-only)
+
+I did not connect to a database or modify anything. Everything below comes from static reading and grep. Anything that needs a live DB to confirm is marked "unverified".
+
+## 0. Highest-impact findings (details in section 5)
+
+| ID | Sev | Finding |
+|---|---|---|
+| F-01 | P0 (unverified at runtime) | Every evidence INSERT omits the `NOT NULL` column `evidence.type`. |
+| F-02 | P1 | `z.coerce.boolean()` turns the string `"false"` into `true`, so `app.yaml`'s `QA_VERIFICATION_BYPASS_ENABLED="false"` enables the QA bypass. |
+| F-03 | P1 | Migration 021's JWT-claim RLS policies are never dropped, so they stay in force beside 022's membership policies. |
+| F-04 | P1 | `app.yaml` runs `migrate` via `tsx`, which is a devDependency; production pruning could break it. |
+| F-05 | P1 | The migration runner has no checksum or drift detection and relies on a hard-coded file list. |
+
+## 1. Part A: table-by-table map
+
+Legend:
+- **CRUD** is what the server code actually does (C=INSERT, R=SELECT, U=UPDATE). **D=none anywhere**: there is no `DELETE FROM` in `server/src`, outside tests.
+- **RLS**: all tables have RLS enabled via 011, 014, 015, 016 or 020. The "policy" column shows whether a policy exists.
+- Every FK listed as plain has the default `NO ACTION`.
+
+| Table (migration) | PK / unique | FKs and ON DELETE | CHECKs and indexes | Policy (022 unless noted) | Consumers / CRUD |
+|---|---|---|---|---|---|
+| users (001) | id; email UNIQUE | none | idx_users_email is redundant with the unique constraint | `users_self` SELECT. It exposes `password_hash` to the row owner. | C/R only. No update or delete. |
+| organizations (001) | id; slug UNIQUE | none | none | `organizations_membership` SELECT | C only (auth.service). No R, U or D. |
+| memberships (001) | id; UNIQUE(user_id, org_id) | user CASCADE, org CASCADE | role CHECK; indexes on user and org | `FOR ALL`, see F-06 | C/R only. No member-management routes. |
+| refresh_tokens (001) | id; token_hash UNIQUE | user CASCADE | idx_refresh_tokens_token is redundant; no index on expires_at | none (deny) | C/U (revoke). Never purged. |
+| websites (001, 012, 022) | id; UNIQUE(org_id, url); UNIQUE(id, org_id) | org CASCADE; created_by has no action | no index on domain. Column `verification_environment` added in 012. | org_membership | C/R/U(verify). No edit or delete route. Unscoped `UPDATE websites ... WHERE id=$1` at website.service.ts:168. |
+| scans (001, 014, 015, 022) | id; UNIQUE(id, org_id) | website CASCADE; org no action; triggered_by no action; composite (website_id, org_id) FK added in 022 | status and intelligence_status CHECKs; idx on website, org, status, lease. **No (org_id, created_at) index**, though lists are paginated. | org_membership | C/R/U. No D. Unscoped reads at scan.service.ts:715, 855, 943, 947. |
+| scan_modules (001, 013) | UNIQUE(scan_id, module_name) | scan CASCADE | status CHECK, retry CHECKs | none and no org_id (deny) | C/R/U |
+| scan_events (001) | BIGSERIAL id | scan CASCADE | idx (scan_id, id). Grows without limit. SSE initial replay is unbounded. | none (deny) | C/R |
+| findings (001, 013, 015) | id; UNIQUE(id, org_id); unique index (org_id, scan_id, logical_key) | scan CASCADE; **website no action**; org no action; composites added in 022 | severity, confidence and provenance CHECKs | **No policy.** `findings` is missing from 022's list, so it is deny-all. | C/R |
+| evidence (001, 007, 013, 015, 022) | id; UNIQUE(id, org_id); unique index (org_id, task_id, logical_key) | finding CASCADE, finding_id nullable; org_id nullable; composite (finding_id, org_id) FK | **Legacy `type NOT NULL` kept** next to the new `evidence_type`. status, kind and freshness have no CHECKs. | **No policy** (not in 022's list) | C/R/U. See F-01. |
+| scan_scores (001, 022) | UNIQUE(scan_id, category) | scan CASCADE, composite FK | score and status CHECKs | org_membership | C/R (upsert) |
+| agent_executions (001, 002, 005, 015, 022) | id | scan CASCADE; specialist_agent_id no action; composite FK | status CHECK. `execution_kind` and `failure_type` have no CHECK. Several indexes. | org_membership | C/R/U |
+| instructions (001) | id | org CASCADE, created_by no action | layer CHECK | org_membership | **ORPHAN.** Instruction profiles are code constants. |
+| monitoring_snapshots (001) | id | website CASCADE; org no action; scan no action | no (website_id, captured_at) index | **No policy** (not in 022's list) | C/R (dashboard) |
+| audit_log (001, 022) | id | user and org, no action. This blocks deleting users and orgs that have audit rows. | result CHECK; idx on timestamp, org, user | SELECT and INSERT only. UPDATE/DELETE revoked from PUBLIC and authenticated; no trigger. | C only. **No read API.** The table owner can still UPDATE/DELETE. |
+| models (003) | id; openrouter_id UNIQUE | none | status, free_status, eligibility CHECKs | none (deny) | C/R/U, in both catalog.service and registry.service |
+| model_benchmarks (003) | UNIQUE(model_id, task_type) | model CASCADE | status CHECK; idx_benchmarks_model redundant | none | **R only.** Never written, so always NOT_BENCHMARKED. |
+| model_reliability (003) | model_id UNIQUE | model CASCADE | none | none | C/R/U |
+| model_history (003) | id | model CASCADE | idx | none | C/R. The cascade deletes the "immutable" audit trail. |
+| model_preferences (003) | UNIQUE(org_id, task_type) | org CASCADE; preferred_model SET NULL; `fallback_model_ids UUID[]` has no FK | none | org_membership | C/R (upsert) |
+| catalog_refreshes (003) | id | none | status CHECK | none | C/R/U |
+| routing_policies (004) | id | **org_id has no FK** | partial unique index on the global active policy only. Weights are not CHECKed to sum to 1. | org_membership (NULL = global, invisible) | C/R/U |
+| routing_decisions (004) | id | **org_id has no FK**; policy_id and selected_model_id have no FK | status and source are unchecked free text | org_membership | C/R |
+| routing_candidates (004) | id | decision CASCADE; model_id has no FK | none | Not applied: no org_id column | C/R |
+| routing_feedback (004) | id | decision CASCADE | none | Not applied: no org_id column | **ORPHAN** (doc says "Phase 3G placeholder") |
+| specialist_agents (005) | id; agent_type UNIQUE | none | risk and status CHECKs; idx_specialist_agents_type is redundant | none | R/U (seeded with 12 rows) |
+| specialist_agent_versions (005) | UNIQUE(agent_id, version) | agent CASCADE | status CHECK | none | R only |
+| specialist_agent_capabilities, _tools, _dependencies (005) | composite PKs | agent CASCADE | permission_level and dependency_type CHECKs | none | **ORPHAN.** Capabilities and tools are code constants in `registry.ts`. |
+| instruction_profiles, instruction_profile_versions (006) | UNIQUE keys | version rows CASCADE | status CHECK | none | **ORPHAN** |
+| instruction_plans (006) | id | org no action, nullable | idx (org_id, created_at) | org_membership | C/R |
+| instruction_validations, instruction_compositions (006) | id | plan CASCADE | status CHECK | none, no org_id | C/R |
+| evidence_relationships (007) | UNIQUE triple | both evidence FKs CASCADE | none | none | C/R |
+| evidence_requests (007) | id | org no action | status and priority unchecked | org_membership | **ORPHAN** |
+| claims (007) | id | finding CASCADE; `evidence_ids UUID[]` has no FK | confidence CHECK | org_membership | **ORPHAN** |
+| quality_policies (008) | id | org nullable | none | org_membership | **ORPHAN** |
+| quality_assessments (008) | id | org no action; `execution_id`, `routing_id`, `instruction_plan_id` have no FK | score CHECKs; idx (org_id, task_id, created_at) | org_membership | C/R |
+| regeneration_runs (009) | UNIQUE(org_id, task_id, idempotency_key); a NULL key allows duplicates | org no action | status and strategy unchecked | org_membership | **R only.** No writer, so it is always empty. |
+| improvement_diagnoses (009) | **id has no DEFAULT** | run CASCADE | none | none, no org_id | **ORPHAN** |
+| regeneration_decisions, regeneration_reviews (009) | id | run CASCADE; reviewer no action | none | none | **ORPHAN** |
+| adaptation_decisions (010) | id | run CASCADE, nullable | none; idx on assessment | skipped: **no org_id column** | **ORPHAN.** It stores tenant data with no org column. |
+| reports (014, 015, 022) | UNIQUE(scan_id, report_version); UNIQUE(id, org_id) | org, website and scan CASCADE | status CHECK; idx on org and website | org_membership | C/R/U |
+| finding_evidence (015) | PK(finding_id, evidence_id) | CASCADE; composite org FKs are NO ACTION | idx | org_membership | C/R |
+| agent_stage_claims (015, 022) | PK(scan_id, stage_name) | scan and org CASCADE | status CHECK; lease index | org_membership | C/U |
+| cross_domain_findings (016) | UNIQUE(org_id, scan_id, logical_key); UNIQUE(id, org_id) | org, website and scan CASCADE | CHECKs on severity, priority, cardinalities | org_membership | C/R. `status` is never updated. |
+| cross_domain_finding_sources, _evidence (016, 018, 019) | composite PKs | CASCADE, with composite FKs added | idx | org_membership | C/R |
+| remediation_proposals (016) | UNIQUE(org_id, scan_id, logical_key) | org, website and scan CASCADE; approved_by no action | `requires_human_approval = TRUE` CHECK; approval_status CHECK | org_membership | C/R/U (approve). Unlike the other flows, reject/expire have no writer. |
+| remediation_proposal_findings (016, 017) | PK(proposal_id, finding_id) | CASCADE | idx | org_membership | C/R |
+| monitoring_configs (020, 021, 022) | UNIQUE(org_id, website_id); UNIQUE(id, org_id) | org and website CASCADE | status and frequency CHECKs; idx_monitoring_due | **Two policies:** `_org_isolation` (021) and `_org_membership` (022) | C/R/U |
+| monitoring_runs (020, 021) | UNIQUE(monitoring_id, scheduled_for); `scan_id` UNIQUE | scan SET NULL; the others CASCADE | status CHECK recreated in 021; lease index | both policies | C/R/U |
+| monitoring_baselines, monitoring_changes (020) | UNIQUE keys | CASCADE; baseline_scan_id SET NULL | status and severity CHECKs; lookup indexes | both policies | C/R |
+| alert_rules (020) | UNIQUE(org_id, monitoring_id, rule_type) | CASCADE | `rule_type` is unchecked | both policies | C/R/U |
+| alerts (020) | UNIQUE(org_id, monitoring_id, signature, status) | CASCADE; rule_id and baseline_scan_id SET NULL | status and severity CHECKs; idx | both policies | C/R/U |
+| notification_deliveries (020, 021) | UNIQUE(alert_id, channel) | CASCADE | status CHECK; lease index | both policies | C/R/U. Always marked FAILED (monitoring.service.ts:970). |
+
+Other schema facts:
+- **Triggers:** none in any migration or in `supabase_setup.sql`. The `updated_at` columns are maintained only where the app sets them.
+- **Functions:** `zn_current_user_id` and `zn_user_is_org_member` (022), both `SECURITY DEFINER` in `public`.
+- **Audit tables:** `audit_log` and `model_history` only.
+- **Consumers of columns/tables that no migration creates:** none found. Every INSERT and ON CONFLICT target I checked matches a constraint or index.
+- **Dead tables, 15 in total:** `instructions`, `instruction_profiles`, `instruction_profile_versions`, `specialist_agent_capabilities`/`_tools`/`_dependencies`, `evidence_requests`, `claims`, `quality_policies`, `improvement_diagnoses`, `regeneration_decisions`, `regeneration_reviews`, `adaptation_decisions`, `routing_feedback`, and `kv_store` (the leftover `supabase/functions/server/` code expects it, but no migration creates it). `regeneration_runs` and `model_benchmarks` are effectively dead too, because nothing populates them.
+- **Missing CRUD:** websites (no update/delete), scans, users, organizations and memberships have no delete or management routes. There is no retention or purge for refresh_tokens, scan_events, audit_log, monitoring_snapshots or evidence.
+
+### Migration-by-migration notes
+
+- **008-010 and 012 are small but real.**
+  - 008 is two quality tables.
+  - 009 is four regeneration tables.
+  - 010 is `adaptation_decisions`.
+  - 012 is a single column (`websites.verification_environment`).
+  - Their file names do not describe them ("012_qa_verification" is one `ALTER`). 008-010 create the dead tables above, so they are placeholder-level.
+- **017-019:** tiny FK-cascade patches whose names do not match their content.
+- **Not idempotent on re-run:**
+  - 013 and 014 use bare `ADD CONSTRAINT`.
+  - 015 and 016 add `UNIQUE (id, org_id)` constraints without guards.
+  - 022 does guard its constraints and policies, but not its audit-log policies.
+
+  The runner's version table is the only guard.
+- **022 FKs on existing data:** the new composite FKs, for example `scans(website_id, org_id)`, will fail the whole migration if any legacy row has an inconsistent org. The risk is real but unverified.
+- **Drift with `supabase_setup.sql`:** it covers only 001-011 (921 lines) and is labelled "LEGACY REFERENCE ONLY". Migrations 012-022 are absent: the extra column, the idempotency indexes, `reports`, the lease and agent-claim tables, all cross-domain and monitoring tables, and every policy. It writes `schema_migrations` rows for 001-011, so the runner would continue from 012 against such a database. Its DO-wrapped body differs from the real files.
+- **Migration runner (`migrate.ts`):**
+  - Good: it takes a session advisory lock, runs each migration in its own transaction, records the version after success, and rolls back on error.
+  - Bad: the file list is hard-coded, so an unlisted file is silently ignored.
+  - Bad: there is no checksum, so an edited, already-applied migration goes unnoticed.
+  - Bad: there is no down path, and no record of the file name.
+  - Risk: the session-level advisory lock is unreliable behind a transaction-mode pooler (Supabase port 6543).
+  - Risk: the SSL branch requires a CA bundle if the platform CA is not trusted.
+  - Neutral: production SSL is on by default; `DB_SSL_REJECT_UNAUTHORIZED` is only validated by `config-security`.
+  - Neutral: `validateProductionSecurityConfig` runs before the `DATABASE_URL` check.
+- **Tenant-isolation gaps:**
+  - `findings`, `evidence` and `monitoring_snapshots` have an `org_id` but no policy (deny-all, which is safe but inconsistent).
+  - `adaptation_decisions` has no `org_id`.
+  - `routing_*` and `evidence.org_id` are nullable or have no FK.
+  - `routing_decisions` has no FK on `org_id`.
+  - `scans.org_id` and `findings.org_id` are NO ACTION, which is fine for deletes only because the rows go in the same statement.
+  - No `FORCE ROW LEVEL SECURITY`, so the backend role, which owns the tables, bypasses RLS. App code is the only tenant guard and never sets a per-request setting.
+- **RLS policy design:**
+  - The frontend has no Supabase client, `SUPABASE_*` is read only in `config.ts`, and app JWTs carry no `role`, so the Data API policies are effectively dead code.
+  - A `USING (true)` policy does not exist.
+- **Dangerous deletes:**
+  - `organizations` → `memberships` and `websites` cascade down through scans, findings, evidence, reports and monitoring. It is blocked by `audit_log.org_id`.
+  - `models` cascades into `model_history`.
+  - `users` deletion is blocked by `audit_log`, `websites.created_by`, `scans.triggered_by` and `instructions.created_by`.
+  - `findings` are deleted by composite-FK cascade through three lineage paths (017-019).
+
+## 2. Part B: documentation claim verification
+
+| Doc | Claim | Verdict | Evidence |
+|---|---|---|---|
+| AGENTS.md / CLAUDE.md | "Plain Vite scaffold; `src/App.tsx` is the usual starting point; no Tailwind or PostCSS config needed" | **Stale / incomplete** | The repo is a full product with a `src/pages/*` router (`router.tsx`), a Fastify server in `server/`, and 22 migrations. `postcss` is in devDependencies. AGENTS.md says nothing about `server/`, tests, migrations or deployment. `.mise.toml` exists as it says. CLAUDE.md only contains `@AGENTS.md`. |
+| AGENTS.md | "Dev server already running on `$PORT` (default 8443)" | Partly true | `playwright.config.ts` uses 8443. |
+| AGENTS.md | "Formatting: oxfmt; Vite 8, TS 5.7" | Matches | package.json. |
+| ARCHITECTURE | "Last updated: Phase 3I" and test counts (226, 247) | **Stale / contradictory** | The document opens with Phases 8 and 7 and also contains Phase 9A and 3J. SECURITY_AUDIT says 249 backend and 71 frontend tests; ARCHITECTURE says 247 and 66. |
+| ARCH Phase 2 | "Quality gates ≥95 / ≥90 / ≥80 / ≥70" | Partial | Only `scoring.ts:97` ("Excellent" ≥ 95) was confirmed. |
+| ARCH Phase 2 | "Rate limiting 200 req/min global" | **True** | `app.ts:56-58`. Auth routes add 5 and 10 per 15 min (`auth.ts:34,54`), which the doc omits. |
+| ARCH Phase 2 | "bcrypt 12 rounds, dummy compare" | **True** | `auth.service.ts:6,86`. |
+| ARCH Phase 2 | "react-router hash mode" | **True** | `router.tsx:2` uses `createHashRouter`. |
+| ARCH Phase 2 | "SSE with token via query param, 500 ms poll" | **Incorrect** | The poll is 500 ms (`scans.ts:342`), but the token travels in a header: `api.ts:886-901` uses fetch streaming "instead of EventSource". |
+| ARCH Phase 2 | "Monitoring scheduler STUB: no cron" | **Stale** | `processDueMonitoringJobs()` is called from the scan worker (`scan.service.ts:910-911`). Phase 8 at the top of the same doc describes it as implemented. |
+| ARCH Phase 2 | "Alert delivery STUB" | **True** | Deliveries are always marked FAILED: "No notification provider is configured" (`monitoring.service.ts:970`). |
+| ARCH Phase 2 | "Report PDF export STUB" | Plausible | No generator was found; the UI strings I counted were not inspected. |
+| ARCH Phase 2 | "Browser QA NOT RUN / No Playwright config / No E2E tests" (also in "High" item 4) | **Stale** | `playwright.config.ts` and `e2e/auth.spec.ts` exist, though coverage is one spec. |
+| ARCH 3A | "Upsert `monitoring_snapshots`" (scan pipeline diagram) | **Incorrect** | It is a plain INSERT (`scan.service.ts:860`). |
+| ARCH "Multi-Tenancy" | "SQL queries include `AND org_id` in every WHERE clause" | **Incorrect** | Unscoped statements exist: `scan.service.ts:715, 855, 943, 947`, `website.service.ts:168`, plus the child-table reads (scan_events SSE, and reads under a scan after one tenant check). |
+| ARCH 3D | "11 specialist agents" | **Stale** | `registry.ts` also defines `TECHNICAL_HEALTH_ANALYSIS` and `CROSS_DOMAIN_ANALYSIS`. The 005 seed has 12 rows and not CROSS_DOMAIN. |
+| ARCH 3D | "Tool/capability tables in the DB registry" | Misleading | `specialist_agent_capabilities`, `_tools` and `_dependencies` have no consumers (code constants only). |
+| ARCH 3B | Models API table, "model_history immutable" | Partly true | The routes exist. There is no immutability trigger, and models → history is CASCADE. `model_benchmarks` is read-only, so "NOT_BENCHMARKED" is permanent. |
+| ARCH 3C | "Routing policy: unique active policy per scope" | **Incorrect** | Only the global scope has a partial unique index (`004`). Per-org active uniqueness is not enforced. |
+| ARCH 3H | "Migration 009 provides tenant-scoped runs, diagnoses, supervisory decisions, human-review records; secure APIs expose run history" | Schema true, behaviour false | Only a SELECT on `regeneration_runs` exists. The other three tables have no consumer. |
+| ARCH 3I | "Migration 010 records selected models… and actual later outcomes" | **Overstated** | `adaptation_decisions` has no consumer and no `org_id`. |
+| ARCH 3E/3F | "Tenant-scoped plans stored by 006; claims and evidence requests in 007" | Partial | Plans, validations and compositions are written. `claims` and `evidence_requests` are empty tables ("future" in the doc). |
+| ARCH Tech Stack | "@fastify/jwt 9.x, cookie 9.x, cors 10.x, rate-limit 10.x" | **Stale** | Installed versions are jwt 10.2.2, cookie ^11, cors ^11, rate-limit ^11 (server/package.json). `@fastify/static` and the pinned versions are not listed. |
+| ARCH Tech Stack | "PostgreSQL 14+" | Unverified | No version is enforced anywhere; `hashtextextended` needs PG 11+. |
+| ARCH SSRF | Lists blocked TLDs, ranges and DNS rebinding | **True** | `ssrf.ts:16, 26, 30, 101-124`. |
+| ARCH 9A | "Advisory lock, version recorded only after commit, failed migration not marked" | **True** | `migrate.ts:27, 72-83`. |
+| ARCH 9A | "RLS: membership-backed policies, `x-org-id` never an RLS trust source" | True (for RLS) | `middleware/auth.ts:38-46` does read `x-org-id` for app-level org selection, with a membership check. |
+| ARCH 9A / 3J | "011 enables RLS on every application table" | Mostly true | 011 covers the tables that existed at the time. Later tables enable it in their own migrations. The `supabase_setup.sql` snapshot stops at 011. |
+| ARCH 9A | "Audit records permit insert/select only; update/delete denied" | **Partly true** | Only for the `authenticated` role. The owner is unrestricted and there is no trigger, so the table is not append-only (001 says "append-only"). |
+| ARCH 9A | "`pnpm start`, `/ready`, `HOST=0.0.0.0`, deploy from main" | **True** | `app.yaml`, `package.json`. |
+| ARCH Phase 8 | "Worker claims, leases, stale-run recovery; no provider falsely configured; automated deletion not enabled" | **True** | `monitoring.service.ts:367-373`, `970`. |
+| ARCH Phase 8 | "Resolution… recurrence can create a new open alert" | **At risk** | The `UNIQUE(..., signature, status)` constraint blocks a second RESOLVED alert for the same signature. |
+| ARCH Phase 7 | "Priority 40/20/15/15/10; owner/admin approval" | Not verified in code | Approve route and `requires_human_approval = TRUE` CHECK exist (`cross-domain.ts:27`). Reject and expire have no code path. |
+| ARCH Blockers | "Critical: backend suite has now been run against the configured Supabase database" vs. "no live verification performed" (3I/3J) | **Contradictory** | The same document says both. |
+| ARCH Blockers | "Monitoring scheduler, no cron" and "Alert rules in UI but no sender" | Mixed | The first is stale (see above), the second is true. |
+| ARCH Deployment | "The server `.env.example`" | Wrong name | The file is `server.env.example` at the repo root. |
+| ARCH Deployment | "Production PostgreSQL always uses certificate verification" | **True** | `db/client.ts:10-13` and `migrate.ts:18-20` hard-code `rejectUnauthorized: true`. |
+| ARCH "Verdict" | "Ownership verification and Supabase-backed integration tests implemented" | Partly | Three integration test files are gated by `RUN_INTEGRATION`. |
+| SECURITY_AUDIT | Date 2026-09-03; "Conditional Pass" | **Stale** | It predates migrations 020-022 and the Phase 8/9A work, and does not mention them. |
+| SECURITY_AUDIT | Remaining risk 2: "current architecture intentionally denies direct table access… RLS policies not added" | **Contradicted** | Migrations 021 and 022 add policies for the `authenticated` role. |
+| SECURITY_AUDIT | Risk 6: "Add worker lease/heartbeat recovery" | **Stale** | 015 adds `execution_lease_until`, and `scan.service.ts` has heartbeats (`leaseHeartbeats`, line ~109). |
+| SECURITY_AUDIT | "Dependencies audits report no known vulnerabilities" | Unverifiable offline | `package.json` also gained an unused `@anthropic-ai/claude-agent-sdk`. |
+| SECURITY_AUDIT | CSP, frame, MIME, referrer, permissions and production HSTS headers | **True** | `app.ts:66-77` (the CSP allows `style-src 'unsafe-inline'`). |
+| SECURITY_AUDIT | Per-auth rate limits, non-spoofable IP | **True** | `auth.ts:34,54`; `app.ts:61`. |
+| SECURITY_AUDIT | Website ownership verification token and action | **True** | `website.service.ts` (`verifyOwnership`). |
+| SECURITY_AUDIT | "Secrets: runtime scan still required" and "QA bypass" | **Contradicted in practice** | See F-02. |
+
+## 3. Scripts, dependencies and deploy config
+
+- **Root scripts.**
+  - `prebuild` runs `pnpm install --no-frozen-lockfile` for both root and server on every build. This rewrites the lockfile and makes builds non-reproducible.
+  - `start` and `test:*` look fine.
+  - `@vitest/ui` is declared but no script uses it.
+  - `postcss` is unused, because Tailwind v4 uses the Vite plugin.
+  - `@anthropic-ai/claude-agent-sdk` is an uncommitted dependency with no import in `src/` or `server/src/`.
+- **Server scripts.** `migrate` uses `tsx` at runtime, but `tsx` is a devDependency. `uuid` and `@types/uuid` are unused, as no file imports `uuid`. `SUPABASE_*` env vars are validated but never used in code.
+- **Vitest.** Both configs include `src/tests/**/*.test.ts`. The root one adds a `@` alias; they run in separate directories.
+- **Playwright.** `webServer` is `pnpm dev -- --host 127.0.0.1` on port 8443 and only covers the Vite frontend, with no backend.
+- **Procfile.** `web: pnpm start` omits migrations, but `app.yaml` includes them. The two deploy definitions disagree.
+- **app.yaml.**
+  - Missing from `envs`: `DB_SSL_CA`, the SCANNER_* and MAX_* limits, WORKER_POLL_INTERVAL_MS and OX_ALPHA_*. They fall back to defaults.
+  - The `QA_AUTHORIZED_EMAILS` literal address is hard-coded as a value.
+  - `instance_count: 1`, so the multi-instance lease logic is not exercised.
+  - `health_check` uses `/ready`, which matches the docs.
+- **server.env.example (names only).** The variables are: NODE_ENV, PORT, HOST, DATABASE_URL, DB_SSL_REJECT_UNAUTHORIZED, DB_SSL_CA (commented), SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY, JWT_SECRET, JWT_ACCESS/REFRESH_EXPIRES_IN, COOKIE_SECRET, three QA_* variables, CORS_ORIGIN, nine SCANNER_/MAX_ limits, WORKER_POLL_INTERVAL_MS, OPENROUTER_API_KEY and four OX_ALPHA_* variables. This matches the `config.ts` keys.
+- **Leftovers.** `supabase/functions/server/` (a Hono + kv_store Figma Make leftover) is unreferenced. `.zigma-agent/` is untracked and holds reports and scripts. `dist/` is gitignored.
+
+## 4. Test and migration coverage
+
+No test exercises `migrate.ts`, checksums or advisory locks. `deploy-config.test.ts` only string-matches `app.yaml`. Only three integration tests touch the database, and all are gated.
+
+## 5. Findings
+
+| ID | Sev | Evidence | Problem | Recommendation |
+|---|---|---|---|---|
+| F-01 | P0 (unverified) | `server/src/ai/evidence/store.ts:11,14` vs `001_initial.sql` (`evidence.type VARCHAR(100) NOT NULL`, no default; 007 only drops NOT NULL on `finding_id`) | Neither INSERT lists `type`. `scan.service.ts:803` sets it afterwards with `UPDATE evidence SET type=...`, but only after the insert. The integration test (`reliability.integration.test.ts:24`) supplies `type` explicitly, which would mask this. If correct, every scan's evidence write fails. | Confirm against a real schema. Either supply `type` in the INSERTs or add a migration with `ALTER COLUMN type DROP NOT NULL`. Add a test that inserts through `collectEvidence`. |
+| F-02 | P1 | `config.ts:29-31` (`z.coerce.boolean()`); `config-security.ts:4`; `app.yaml` (`"false"` values); `website.service.ts:31-37` | `Boolean("false")` is `true`. Both flags become true in production, and the production guard only compares the raw string `"true"`. Registering the address in `QA_AUTHORIZED_EMAILS` (committed in `app.yaml`, with no email verification) as owner/admin enables `qa_bypass` verification, limited to the zigmaneural.com domain. | Replace the coercion with `z.enum(["true","false"]).transform(v => v === "true")`. Test `config.ts`, not only the raw env guard. Remove the QA email from `app.yaml`. |
+| F-03 | P1 | `021_phase8_completion.sql` creates `*_org_isolation` policies; `022_phase9a_tenant_security.sql` adds `*_org_membership` and never drops them | Permissive policies are OR-ed. Access with a JWT `org_id` claim bypasses the membership check, and the `request.jwt.claim.org_id` GUC form is the legacy one. | Drop the 021 policies in a new migration. |
+| F-04 | P1 | `app.yaml` `run_command`; `server/package.json` (`migrate` runs via `tsx`, which is a devDependency) | If the platform prunes devDependencies after build, the deploy fails at the migrate step. Unverified. | Compile `migrate.ts` to `dist` and copy the `.sql` files at build, or move `tsx` to dependencies. |
+| F-05 | P1 | `migrate.ts:35-58` | Hard-coded file list, no checksum, no drift detection, an unlisted file is silently skipped. | Read the directory, store a SHA-256 per file, and fail on mismatch. Add a test that every file in the directory is listed. |
+| F-06 | P2 | `022_phase9a_tenant_security.sql`, `memberships_org_membership` (`FOR ALL`, `WITH CHECK (user_id = current user OR member)`) | Any member could insert, alter or delete membership rows, including their own role, if the policy were ever reachable. The FK to `users(id)` and the lack of a Supabase client make this latent today. | Replace it with SELECT only. All other `org_membership` policies are also `FOR ALL` with no role check, so a `viewer` could write. |
+| F-07 | P2 | `022` `users_self` SELECT | Exposes `password_hash` and `email` to the row owner. | Create a safe view or column privileges instead of the policy. |
+| F-08 | P2 | `022` list of tables; `findings`, `evidence` and `monitoring_snapshots` have `org_id` but are not in it; `adaptation_decisions`, `routing_candidates`/`_feedback` lack `org_id` | Inconsistent tenant coverage; policy-less tables are deny-all and the others do not exist for authenticated users. | Add `org_id` to the child tables and policies, or document the deny-by-design list. |
+| F-09 | P2 | `audit_log` | "Append-only" is enforced only by REVOKE on `authenticated`, with no trigger and no read API. | Add a trigger that blocks UPDATE/DELETE, and an admin read endpoint. |
+| F-10 | P2 | `003`: `model_history ... ON DELETE CASCADE` | The "immutable" model audit trail is deleted with the model. | Use RESTRICT, or drop the FK cascade. |
+| F-11 | P2 | `004`: `routing_policies.org_id`, `routing_decisions.org_id`, `policy_id`, `selected_model_id` have no FK | Orphans survive org deletion, and no per-org active-policy uniqueness. | Add FKs and a partial unique index `(org_id) WHERE is_active`. |
+| F-12 | P2 | `020`: `UNIQUE (org_id, monitoring_id, signature, status)` | A signature can appear at most once per status, so a second resolution of the same signature fails. | Use a partial unique index on OPEN/ACKNOWLEDGED only. |
+| F-13 | P2 | Doc: ARCHITECTURE.md, SECURITY_AUDIT.md | Contradictory, stale or incorrect statements (see section 2); the audit predates Phases 8 and 9A. | Rewrite SECURITY_AUDIT.md as of the current migrations. Reconcile ARCHITECTURE.md's order, test counts and the "live-verified?" contradiction. |
+| F-14 | P2 | `package.json`, `app.yaml`, `Procfile` | `prebuild` reinstalls without a frozen lockfile; the Procfile skips the migration. | Drop `prebuild`, and remove or fix the Procfile. |
+| F-15 | P2 | Missing indexes | `scans(org_id, created_at)`, `monitoring_snapshots(website_id, captured_at)`, `refresh_tokens(expires_at)`, the `(org_id, ...)` filters on audit_log. | Add them. |
+| F-16 | P3 | 15 dead tables (see section 1) | Dead schema and false doc implications for 3H/3I. | Remove them or mark them as planned. |
+| F-17 | P3 | No DELETE/retention anywhere | No data-retention, GDPR or purge path. `scan_events` and `refresh_tokens` grow without limit. | Add retention jobs, and website/user deletion flows. |
+| F-18 | P3 | `monitoring_runs.scan_id` SET NULL plus composite NO ACTION FK (022) | Delete ordering depends on MATCH SIMPLE null semantics. | Add an integration test for scan deletion. |
+| F-19 | P3 | Redundant indexes (`idx_users_email`, `idx_refresh_tokens_token`, `idx_specialist_agents_type`, `idx_benchmarks_model`) | Dead weight. | Drop them. |
+| F-20 | P3 | `zn_*` functions in `public`, `SECURITY DEFINER`, no EXECUTE revocation | They are reachable as RPC. | `REVOKE EXECUTE ... FROM anon/PUBLIC` or move them to a private schema. |
+| F-21 | P3 | `uuid`, `@vitest/ui`, `postcss`, `@anthropic-ai/claude-agent-sdk` unused; `supabase/functions/server` unreferenced | Dependency hygiene. | Remove them. |
+| F-22 | P3 | `catalog.service.ts` and `registry.service.ts` both write `model_history` (swallowed by try/catch in `catalog.service.ts:383`) | Duplicate logic. | Consolidate, and log the history failure. |
+| F-23 | P3 | `improvement_diagnoses.id` has no default; `regeneration_runs` allows duplicate NULL idempotency keys | Latent bugs if the tables are used. | Add `DEFAULT gen_random_uuid()` and `NULLS NOT DISTINCT` or a partial index. |
+
+**Not checked:** I could not run `pnpm audit`, so the "no known vulnerabilities" claim is unverified. I also did not read `src/pages/*` beyond keyword counts, and did not trace every unscoped query to confirm its caller already scopes it.
+All four audits are in. Before I write the report, I'll check the one P0 that the agent marked unverified: the evidence `type` column.
+# ZigmaNeuralIntelligence functional audit: completion backlog
+
+## Method and confidence
+
+I split the audit across four read-only agents (frontend, backend and security, AI layer, database and docs). Their findings come from reading code. Nothing was executed: no tests, `tsc` or `pnpm audit`. I spot-checked one claim myself, F-001.
+
+All other findings are static-analysis conclusions from the agents. Items marked "verify" need a runtime check.
+
+Many items overlap across agents. I merged them and kept the highest severity.
+
+---
+
+## Executive summary
+
+The application's skeleton is real. Authentication, website onboarding, scan queueing, monitoring, evidence storage and the model router are implemented against a real database. The frontend has no mock data.
+
+The product does not work end to end today, for three reasons:
+1. **F-001:** the evidence insert violates a `NOT NULL` column, so every scan's evidence write should fail.
+2. **F-002:** no model is ever promoted to an eligible status, so every real AI run fails.
+3. **F-003:** production would enable the QA bypass despite config saying `"false"`.
+
+About 17 of 37 frontend routes are placeholders. The Monitoring page's management UI is unreachable. Settings pages show fabricated "live" data.
+
+Several tenancy and security gaps remain. There are also no HTTP-level tests of auth, RBAC or tenancy.
+
+---
+
+## Findings (P0 and P1 in full; P2 and P3 in the tables below)
+
+Each P0/P1 finding lists area, status, evidence, what is wrong, fix and tests. Dependencies and risk are folded into the fix and the execution order.
+
+### P0
+
+**F-001: Evidence insert violates a NOT NULL column**
+- **Status:** BROKEN. I verified this statically; it is not runtime-confirmed.
+- **Evidence:**
+  - `db/migrations/001_initial.sql:158` defines `evidence.type VARCHAR(100) NOT NULL` with no default.
+  - Migration 007 drops `NOT NULL` only on `finding_id` and adds `evidence_type`. No migration touches `type`.
+  - Both inserts in `ai/evidence/store.ts:11,14` list `evidence_type` but not `type`.
+  - `scan.service.ts:803` sets `type` with a later `UPDATE`, which never runs if the insert fails.
+  - The only test that inserts evidence (`reliability.integration.test.ts:24`) supplies `type` explicitly, which masks the bug.
+- **Effect:** every evidence write should fail, so scans and the AI pipeline break. The live database may differ from the migrations, so confirm against it.
+- **Fix:** supply `type` in the inserts, or add a migration that drops `NOT NULL` on the legacy column.
+- **Tests:** an integration test that goes through `collectEvidence` with no hand-supplied `type`.
+
+**F-002: No path makes any model eligible, so real AI runs always fail**
+- **Status:** BROKEN.
+- **Evidence:**
+  - `ai/catalog.service.ts:281` inserts new models as `DISCOVERED`.
+  - `calculateEligibility` maps `DISCOVERED` to `PENDING_REVIEW`.
+  - `getEligibleModels` keeps only `ELIGIBLE`.
+  - `enableModel` flips `enabled` but not the status.
+  - No migration seeds models.
+- **Effect:** routing returns `NO_CANDIDATES`, and the orchestrator throws `MODEL_FAILURE` at `orchestrator.ts:129`. Every scan's intelligence stage ends `FAILED`.
+- **Fix:** add an approve or promote workflow, seed a baseline model, and add a startup warning when the eligible pool is empty.
+- **Tests:** an integration test from catalog refresh through approval to routing, against a database and a fake provider.
+
+**F-003: QA bypass parsed wrongly, so it can be enabled in production**
+- **Status:** SECURITY_GAP. Two independent agents found this.
+- **Evidence:** `config.ts:29-31` uses `z.coerce.boolean()`, and `Boolean("false")` is `true`.
+  - `config-security.ts:4` rejects only the raw string `"true"`.
+  - `app.yaml` sets both flags to `"false"`.
+  - `production-security-config.test.ts:25` asserts that this pair is accepted.
+  - `app.yaml` also commits a `QA_AUTHORIZED_EMAILS` address.
+- **Effect:** the QA bypass is probably live in production for that email. It lets an owner or admin mark a website verified without proof, limited to the QA domain.
+- **Fix:** parse with `z.enum(["true","false"]).transform(...)`, run the production guard on the parsed config, and remove the committed email.
+- **Tests:** `loadConfig` with `"false"` yields `false`, plus an inverted version of the existing test.
+
+### P1
+
+| ID | Area | Finding | Status | Evidence | Fix | Tests |
+|---|---|---|---|---|---|---|
+| F-004 | Frontend | **Monitoring page management UI is unreachable.** The second `return (...)` holding the create, run, pause, resume, disable and frequency controls follows a first `return` and never executes. | BROKEN | `src/pages/monitoring/MonitoringPage.tsx` | Merge the two returns, with role gating. | Component test (needs jsdom and Testing Library). |
+| F-005 | Frontend | **Settings pages show fabricated data** (members "Ava Thompson" and others, "MFA Enabled", "Rate limiting Enabled", "200/min", "12 active / 2 pending"). There are no API calls and the buttons are dead. | DUMMY_OR_MOCK | `src/pages/settings/*` | Wire to real endpoints, or replace with honest unavailable states. | Extend `production-data.test.ts` to catch these. |
+| F-006 | Frontend | **About 17 of 37 routes are placeholders.** All Intelligence, Testing and Infrastructure pages, Client Reports, Control Center and Benchmarks are stubs. `/scans/:id/findings` and `/scans/:id/report` exist in the backend but the frontend never calls them. | PLACEHOLDER | `src/pages/{intelligence,testing,infrastructure}/*`, `reports/ClientReportsPage.tsx` | Build the pages or remove them from navigation. | Per-page tests. |
+| F-007 | AI | **Policy update disables the global default.** `updateActivePolicy` deactivates whatever row `getActivePolicy` returned, including the global row (`org_id IS NULL`). The deactivate and insert are not in a transaction. | TENANCY_GAP | `ai/router/routing-policy.ts:122-130` | Deactivate only the org's own row, inside a transaction, with a partial unique index. | Two-tenant policy test. |
+| F-008 | Backend and AI | **Any tenant admin controls global resources.** Model catalog refresh, model enable/disable and agent enable/disable use per-org roles but write to global tables. Registration is open, so anyone can become an owner of their own org. | TENANCY_GAP | `routes/models.ts:60,96,106`, `routes/agents.ts:110,121`, `registry.service.ts:193,216`, `agents/registry.ts:564,584` | Add a platform-admin concept, or make enablement per-org. | A second-org owner gets 403. |
+| F-009 | AI | **Quality gate does not check quality.** Grounding scores 100 whenever evidence ids are non-empty, and 100 when there are no findings. `validateGrounding` is never called. Several branches are never fed by real callers. Result with zero findings is ACCEPT. | PARTIALLY_IMPLEMENTED | `ai/quality/evaluator.ts:6-12`, `scan-pipeline.ts:100,124` | Call `validateGrounding`, compute real coverage, pass policy-gate outcomes in. | Negative tests: foreign, stale and empty evidence. |
+| F-010 | AI | **Unbounded cost and time per scan.** `maxRetries` is uncapped. Worst case is roughly 12 calls per agent across several agents, plus an untracked routing call each. The stage lease is 2 minutes and the agent says it has no heartbeat. That is in tension with the docs agent, which found lease heartbeats in `scan.service.ts` (verify). | ERROR_HANDLING_GAP | `ox-alpha.ts:68-69`, `policy-gate.ts`, `scan-pipeline.ts:166` | Cap total attempts, add a per-scan deadline and a per-org token budget. | Bounded-attempts and lease-expiry tests. |
+| F-011 | AI | **Prompt injection exposure.** Crawled page data (titles, meta, JSON-LD, headers) is labelled "system-provided, trusted" in the prompt, with no size cap. Mitigations exist: a strict JSON contract and evidence-id allowlisting. | SECURITY_GAP | `orchestrator.ts:253-259`, `scan-pipeline.ts:90` | Label it untrusted, delimit it, cap it, and strip `Set-Cookie` headers before sending. | Injection fixtures. |
+| F-012 | Backend | **Rate limits probably shared by all users.** No `trustProxy`, and limits key on `request.ip`. Behind App Platform every client likely shares one IP, making login limited to 10 per 15 minutes globally. | BROKEN or SECURITY_GAP (verify) | `app.ts:28-36,56-63` | Set `trustProxy`, and key auth limits on IP plus email. | `inject()` with `x-forwarded-for`. |
+| F-013 | Backend | **SSL scanner bypasses SSRF protection.** It calls `tls.connect` on the hostname directly, so it is open to DNS rebinding and internal probes. Findings leak certificate data. | SECURITY_GAP | `scanner/ssl.ts:19` | Run `checkUrlSafety`, connect to the pinned IP, enforce a timeout. | Mocked private-IP DNS refusal. |
+| F-014 | Backend | **IPv6 SSRF check incomplete and over-blocking.** Hex-form mapped addresses, `fe80::/10` variants, `fec0::/10`, NAT64 and 6to4 are not blocked (verify the hex-form claim). `startsWith("fc"/"fd")` on hostnames wrongly blocks `fcc.gov`, `fda.gov` and similar. | SECURITY_GAP and BROKEN | `scanner/ssrf.ts:43-52` | Parse IPv6 properly and apply it to IPs only. | Cases for mapped and hex IPv6, and `fcc.gov` allowed. |
+| F-015 | Backend | **Crashed scans stay `running` forever.** The worker claims only `queued`. No sweeper requeues expired leases. `createScan` is not transactional. Graceful shutdown just exits after 30 seconds. | BROKEN | `scan.service.ts:305-310,463,923-931`, `index.ts:22-28` | Add a sweeper, make `createScan` transactional, fail scans on shutdown timeout. | Crash simulation and a sweeper integration test. |
+| F-016 | Backend | **One failed or cancelled scan stops scheduled monitoring.** The config is set `FAILED`, and scheduling requires `ACTIVE`. Only `/resume` recovers it. | BROKEN | `monitoring.service.ts:381,411,564-567` | Do not set `FAILED` on cancel, and auto-recover. | A cancelled-scan test. |
+| F-017 | Database | **Old RLS policies from migration 021 are never dropped.** The JWT-claim `*_org_isolation` policies stay in force beside 022's membership policies and are OR-ed, so the older one can bypass the membership check. | SECURITY_GAP | `021_phase8_completion.sql`, `022_phase9a_tenant_security.sql` | A new migration that drops them. | A policy-inventory test. |
+| F-018 | Deploy | **Migrate step runs `tsx`, which is a devDependency.** If production prunes devDependencies, the deploy fails at migrate. `Procfile` omits migrations. `prebuild` reinstalls with `--no-frozen-lockfile`. | BROKEN (unverified) | `app.yaml`, `server/package.json`, `Procfile`, root `package.json` | Compile the migrator and copy the SQL, drop `prebuild`, align `Procfile`. | A deploy-config test that checks behavior. |
+| F-019 | Database | **Migration runner is weak.** A hard-coded file list silently ignores unlisted files. No checksums or drift detection. A session advisory lock is unreliable behind a transaction pooler. | PARTIALLY_IMPLEMENTED | `db/migrate.ts:35-58` | Read the directory, store checksums, add a test. | Runner tests. |
+| F-020 | Testing | **No HTTP-level tests.** `buildApp` and `inject()` are never used for auth, RBAC or tenancy. The tenancy and integration suites are skipped without `DATABASE_URL`. The real LLM path and scan pipeline have no tests. | TEST_GAP | `server/src/tests/*` | See test plan. | See test plan. |
+
+### P2
+
+| ID | Area | Finding | Evidence |
+|---|---|---|---|
+| F-021 | Backend | SSE endpoint writes to `reply.raw` without `reply.hijack()` (verify). Streams for cancelled or crashed scans never end, no heartbeat, no connection cap, a 500 ms DB poll per client. `scan_failed` is emitted nowhere. | `routes/scans.ts:273-349` |
+| F-022 | Auth | No refresh-token reuse detection. Rotation is not atomic with creating the new token. No purge, no password change or reset, and `revokeAllUserTokens` is unused. | `auth.service.ts:132-169` |
+| F-023 | Auth | Disabled users keep access for up to 15 minutes. Logout needs a valid access token. JWT has no `iss`/`aud`/type claim. | `middleware/auth.ts` |
+| F-024 | Auth | Login enumeration: a malformed dummy hash likely skips the bcrypt timing, `ACCOUNT_DISABLED` returns before the password check, and register returns 409. No password maximum (bcrypt truncates at 72 bytes). | `auth.service.ts:86` |
+| F-025 | Errors | Route-level catches turn any exception into a raw 4xx with `e.message`, possibly leaking DB text. A DB blip on refresh logs the user out. | `routes/auth.ts:64-67,94-96`, `routes/websites.ts:74-77,112-115` |
+| F-026 | Backend | Final scan update does not check the row count, so a worker with an expired lease still emits completion and audit. Persistence is not transactional. `finalizeMonitoringRun(...).catch(()=>undefined)` hides failures. | `scan.service.ts:678-687,955` |
+| F-027 | Backend | `runMonitoringNow` and the scheduler leave orphan `RUNNING` runs on admission errors and can lose a period's run. One serial worker loop runs scans, monitoring and notifications. | `monitoring.service.ts:415-424,460-481` |
+| F-028 | Backend | Cancel has no org or state guard (check-then-act race) and is not audited. Admission checks are check-then-insert, so concurrent requests all pass. Modules are not allowlisted. | `routes/scans.ts:257`, `scan.service.ts:274-289` |
+| F-029 | Backend | Monitoring snapshot key omits the title, so distinct findings collapse. The evidence query scans every row for the org. | `monitoring.service.ts:824-856` |
+| F-030 | Backend | SSL scanner reports a false critical on any transient error and marks the module completed. Wildcard matching is loose. It ignores the port and does not flag self-signed chains. | `scanner/ssl.ts:94-107` |
+| F-031 | AI | A provider timeout is mapped to a non-retryable `CANCELLED`, and `TIMEOUT` is never produced. The timeout test passes only because of its mock. | `openrouter.ts:128`, `ox-alpha.ts:109` |
+| F-032 | AI | Controls that have no effect: `max_attempts`, `require_cross_model_verification`, org model preferences. `recordReliabilityEvent` has no caller. `model_benchmarks` is never written. | `routing-policy.ts`, `registry.service.ts` |
+| F-033 | AI | Regeneration and adaptation are simulation-only. A single quality miss fails the specialist. `regeneration_runs` has no writer, so its GET endpoints always return empty. | `scan-pipeline.ts:101`, `routes/regeneration.ts` |
+| F-034 | AI | The routing LLM call has no org or scan, so it is untracked. Default model is hardcoded to a free Llama. | `router/index.ts:134-230`, `config.ts:61` |
+| F-035 | AI | Audit is best-effort and swallows DB failures. Attempt duration is measured from the start of the whole chain. Output validation silently drops bad findings and defaults confidence to 50. | `ox-alpha.ts:241`, `orchestrator.ts:274-322` |
+| F-036 | Database | Membership policy is `FOR ALL` with no role check. `users_self` exposes `password_hash`. | `022_phase9a_tenant_security.sql` |
+| F-037 | Database | `findings`, `evidence` and `monitoring_snapshots` have no policy. `adaptation_decisions` has no `org_id`. | `022` |
+| F-038 | Database | Routing tables have no org FK, with no per-org active-policy uniqueness. `model_history` cascades from `models`, deleting the "immutable" trail. `audit_log` is not append-only for the table owner. | `003`, `004`, `001` |
+| F-039 | Database | `UNIQUE(org_id, monitoring_id, signature, status)` blocks a second resolution of the same signature. | `020_monitoring_alerts.sql` |
+| F-040 | Database | Missing indexes: `scans(org_id, created_at)`, `monitoring_snapshots(website_id, captured_at)`, `refresh_tokens(expires_at)`, `domain`. | various |
+| F-041 | Frontend | 401 handling logs the user out when the retry returns any non-OK status. Concurrent 401s each call refresh, with no single-flight. | `src/services/api.ts:178-191` |
+| F-042 | Frontend | No role-based gating in the UI. Admin-only actions are shown to everyone, so users see raw 403s. | `AgentRegistry`, `MyWebsites`, `ModelRegistry` |
+| F-043 | Frontend | Swallowed errors in the website selector, agent toggles, router policy and logout. Top-bar website selection affects only Overview. | `Shell.tsx:282`, `AgentRegistry.tsx` |
+| F-044 | Frontend | Scan progress polls and has no cancel. The SSE client and `apiCancelScan` are unused. History shows only the latest scan per site. | `ScanProgress.tsx`, `ScanHistory.tsx` |
+| F-045 | Frontend | `api.ts` and two pages have space-separated type members that may fail strict `tsc` (verify). `dist/` may be stale. | `api.ts:195`, `MonitoringPage.tsx`, `AlertsPage.tsx` |
+| F-046 | Backend gaps | No scan list, org or membership endpoint, website delete, password reset or per-org role in `/auth/me`. Notification delivery always marks FAILED (an honest no-op). `alert_config` is stored but never read. | `routes/*`, `monitoring.service.ts:969` |
+| F-047 | Docs | SECURITY_AUDIT.md, ARCHITECTURE.md and AGENTS.md are stale. See the documentation gap table. | |
+
+### P3
+
+| ID | Finding |
+|---|---|
+| F-048 | 15 dead tables (`instructions`, `instruction_profiles` and versions, agent capability/tool/dependency tables, `evidence_requests`, `claims`, `quality_policies`, regeneration and diagnosis tables, `adaptation_decisions`, `routing_feedback`, `kv_store`). |
+| F-049 | No retention or purge for `scan_events`, `refresh_tokens`, `audit_log`, snapshots or evidence. No `DELETE FROM` anywhere in `server/src`. |
+| F-050 | Unused dependencies: `uuid`, `@vitest/ui`, `postcss`, `@anthropic-ai/claude-agent-sdk`. The `supabase/functions/server` Hono app and `utils/supabase/info.tsx` are unused. `assertProductionConfig()` is never called. |
+| F-051 | `supabase_setup.sql` stops at migration 011 and writes `schema_migrations` rows only for 001-011. |
+| F-052 | Non-UUID ids return 500, not 400. Error shapes are inconsistent across routes. Several lists are unpaginated. The CSP allows `unsafe-inline` styles. There is no explicit `bodyLimit` or request timeout. |
+| F-053 | Redundant indexes, `zn_*` SECURITY DEFINER functions with no EXECUTE revocation, `improvement_diagnoses.id` with no default. Catch-all route renders a "Construction" card, not a 404. Login marketing numbers are hardcoded. |
+| F-054 | A website's port and query are dropped when normalizing, so non-default-port sites cannot be scanned. `/models/*` auth lets any member read global registry data. |
+
+---
+
+## Required summary tables
+
+### 1. Feature inventory
+
+| Feature | Status |
+|---|---|
+| Register, login, refresh, logout | IMPLEMENTED_UNVERIFIED (F-012, F-022 to F-025) |
+| Website add, verify (meta, file, DNS) | IMPLEMENTED_UNVERIFIED. No edit or delete. |
+| QA bypass verification | SECURITY_GAP (F-003) |
+| Scan create, queue, worker, scoring, report | PARTIALLY_IMPLEMENTED. Blocked by F-001, and scans stall on F-015. |
+| SEO, security, performance and SSL scanners | IMPLEMENTED_UNVERIFIED. SSL has F-013 and F-030. |
+| SSRF-safe fetch | PARTIALLY_IMPLEMENTED (F-014) |
+| Dashboard, reports | IMPLEMENTED_UNVERIFIED. No export. |
+| Monitoring backend, alerts | PARTIALLY_IMPLEMENTED. No delivery provider. |
+| Monitoring UI management | BROKEN (F-004) |
+| Multi-agent AI pipeline | BROKEN on a fresh deployment (F-002) |
+| Model catalog, registry, router | PARTIALLY_IMPLEMENTED |
+| Instruction, evidence, quality layers | PARTIALLY_IMPLEMENTED (F-009) |
+| Regeneration, adaptation | DEAD_OR_UNUSED outside simulate |
+| Cross-domain, remediation | IMPLEMENTED_UNVERIFIED. No reject or expire writer. |
+| Settings, team, API keys, integrations | DUMMY_OR_MOCK |
+| Testing and infrastructure sections | PLACEHOLDER |
+
+### 2. Frontend functionality
+
+| Area | Status |
+|---|---|
+| Login, Overview, Websites, Add website | REAL |
+| Scan Progress, History | PARTIAL (F-044) |
+| Agent Registry | REAL, errors swallowed |
+| Model Router, Registry | PARTIAL: read-only policy, enable/disable not exposed |
+| Instructions, Evidence, Quality Control | REAL (lookup by task id) |
+| Reports | PARTIAL |
+| Monitoring | BROKEN (F-004) |
+| Changes, Alerts | PARTIAL, REAL |
+| Settings (5 pages) | DUMMY_OR_MOCK |
+| Intelligence (6), Testing (3), Infrastructure (3), Client Reports, Control Center, Benchmarks | PLACEHOLDER |
+
+### 3. Backend endpoint status
+
+All endpoints require auth except `/health`, `/ready`, register, login, refresh and the static SPA. They derive the org from a membership-checked `x-org-id`, so the body `orgId` is ignored. Queries are parameterized.
+
+Roles vary: viewers can read, members can create, owners and admins can administer.
+
+No endpoint has an HTTP-level test.
+
+Endpoints with **no frontend consumer** (consistent across the agents; the second group sits on routes the frontend does consume under other names): `/websites/:id`, `/websites/:id/scans`, `/scans/:id/{status,evidence,report,quality}`, `/:scanId/cross-domain`, `/:scanId/remediation`, remediation approve and reject, `/ai/evidence/*`, `/ai/regeneration/*`, `/ai/quality/*`, `/models/preferences/:orgId`, `/models/eligible`, `/agents/types`, `/agents/:type/{versions,executions}`.
+
+Also unused by the UI are `/auth/me`, `/scans/:id/{cancel,events,findings}`, `/models/catalog/status`, enable/disable model, `/routing/policy` POST, `/agents/plan`, the monitoring rules endpoints and `/monitoring/alert/:id`.
+
+**Frontend calls with no backend route:** `GET /websites/:id/monitoring` (`apiGetMonitoringHistory`). It is unused.
+
+### 4. Database feature mapping
+
+The full table-by-table map from the docs agent is long, so this summary lists the main groups:
+- **Full or near-full CRUD (C/R/U, no D):** users, organizations, memberships, websites, scans, scan_modules, scan_events, findings, evidence, scores, reports, finding_evidence, stage claims, agent_executions, all cross-domain tables, all monitoring tables, routing_policies, routing_decisions, models, model_preferences, instruction_plans and quality_assessments.
+- **Read-only or effectively dead:** `model_benchmarks` (never written), `regeneration_runs` (never written).
+- **Orphans:** the 15 tables in F-048.
+- **Consumers without schema:** none found.
+- **Delete behavior:** nothing is ever deleted by the application, so cascade risk is latent. An organization delete would cascade through websites, scans, findings and monitoring but is blocked by `audit_log.org_id`.
+
+### 5. AI and agent status
+
+| Component | Status |
+|---|---|
+| OpenRouter provider (the only provider) | IMPLEMENTED_VERIFIED (mocked fetch) |
+| OX Alpha executor (retry, fallback, JSON retry) | IMPLEMENTED_VERIFIED. Timeout and audit are PARTIAL. |
+| Model catalog | IMPLEMENTED, promotion missing (F-002) |
+| Model registry | PARTIAL (F-032) |
+| Router (filter, scorer, policy) | IMPLEMENTED_UNVERIFIED. Some policy fields are inert. |
+| Agent registry, orchestrator, policy gate | IMPLEMENTED. The real run path is UNVERIFIED. |
+| Scan pipeline | IMPLEMENTED_UNVERIFIED (no test) |
+| Instruction layer | IMPLEMENTED, deterministic |
+| Evidence store | IMPLEMENTED. `validateGrounding` and adapters are DEAD. |
+| Quality evaluator | PARTIALLY_IMPLEMENTED (F-009) |
+| Regeneration, adaptation | DEAD_OR_UNUSED outside simulate |
+| GEO, QA, SSL and REMEDIATION agents | DEAD (defined, never executed) |
+| Prompts | Hardcoded in code, with no versioning |
+| Usage tracking | PARTIAL (tokens only, no cost or budget) |
+
+### 6. Integration status
+
+| Integration | Status |
+|---|---|
+| OpenRouter (`OPENROUTER_API_KEY`) | Real. Unavailable behavior is honest: 503 on refresh, `unavailable` in the pipeline. Single provider. |
+| PostgreSQL / Supabase | Real. `SUPABASE_*` variables are validated but unused. |
+| Notification providers | INTEGRATION_REQUIRED. Deliveries always marked FAILED. |
+| Report PDF export | MISSING |
+| CI/CD, API keys, team, MFA (settings UI) | DUMMY_OR_MOCK |
+| Supabase edge function | DEAD_OR_UNUSED |
+
+Credentials were not read or exposed.
+
+### 7. Security findings
+F-003, F-008, F-011, F-012, F-013, F-014, F-017, F-022, F-023, F-024, F-036, F-038, plus F-025 (info leak).
+
+Verified good: bcrypt 12, hashed rotating refresh tokens in an HttpOnly, SameSite=strict cookie, a real membership check per request, parameterized SQL, DNS-pinned and re-validated redirects in `fetch.ts`, and a generic 500 handler.
+
+Token storage in `sessionStorage` is XSS-readable.
+
+### 8. Error-handling findings
+F-010, F-015, F-016, F-021, F-025, F-026, F-027, F-031, F-035, F-041, F-043.
+
+### 9. Test gaps
+- **F-020:** no `inject()` tests for auth, RBAC, rate limits or SSE. Tenancy and integration suites are skipped by default, and the tenancy suite covers service functions, not routes.
+- Several tests prove the wrong thing:
+  - `ssrf.test.ts`: the IPv6-mapped case passes for the wrong reason.
+  - `production-security-config.test.ts`: locks in an unsafe pair.
+  - `scan-lease.test.ts`: mocks `query`, so it checks SQL call patterns, not lease behavior.
+  - `reliability.integration.test.ts`: masks F-001.
+  - `deploy-config.test.ts`: matches strings in files.
+  - `production-data.test.ts`: greps source for removed fixtures.
+- Frontend: vitest runs in a node environment, so no component renders. `scoring.test.ts` covers dead code, and `api-org-context.test.ts` covers header building only. One Playwright spec exercises two login-page behaviors.
+- Untested: the real LLM path and scan pipeline, `migrate.ts`, and all pages.
+
+### 10. Documentation gaps
+- **AGENTS.md and CLAUDE.md:** describe a bare Vite scaffold. They omit `server/`, migrations, tests and deployment. CLAUDE.md is only `@AGENTS.md`.
+- **ARCHITECTURE.md:**
+  - It says "no cron", but the scheduler runs inside the scan worker.
+  - It says "No Playwright config", but one exists.
+  - It says the SSE token goes in a query parameter, but it uses a header.
+  - It says "every WHERE has org_id", but unscoped statements exist.
+  - It says "11 agents", but there are 13 in code and 12 seeded.
+  - Its dependency versions are stale.
+  - Its test counts disagree with SECURITY_AUDIT.md.
+  - It both claims and denies a live-database test run.
+  - It says routing policy uniqueness is per scope, but only the global scope is enforced.
+  - It overstates the regeneration and adaptation migrations.
+  - It refers to `.env.example`, but the file is `server.env.example`.
+- **SECURITY_AUDIT.md:**
+  - Dated 2026-09-03 and predates migrations 020-022.
+  - It says RLS policies were not added, but 021 and 022 add them.
+  - Its lease-recovery risk is out of date.
+  - Its "no vulnerabilities" claim was not verified here.
+
+### 11. Dummy, mock and placeholder findings
+F-005, F-006, F-046 (notifications), F-048, the hardcoded Login marketing numbers, the hardcoded "Disabled by administrator" reason, and the Instructions simulator's hardcoded `taskId`/`evidenceReferences`.
+
+Simulate endpoints are labelled `simulate: true` and never return a fake success on a real path.
+
+### 12. Cross-layer mismatches
+- F-001: the code and the schema disagree on `evidence.type`.
+- F-002: the registry has no promotion path although the router needs eligible models.
+- F-004: the frontend management calls for monitoring exist, but the UI can't reach them.
+- Scan history and findings: the backend exposes them, but the UI shows the latest scan only and never calls `/findings`.
+- F-021: SSE terminal events do not match the statuses the server can produce.
+- `/monitoring/alert/:id` is singular while the rest are `/alerts/`.
+- Error response shapes differ across routes.
+- `/auth/me` returns org ids only, so the UI shows no org name or role.
+- F-017: the policy generations 021 and 022 conflict.
+- The `supabase_setup.sql` snapshot disagrees with the migration set.
+- `app.yaml` and `Procfile` disagree.
+
+### 13. Backlog
+Counts: P0 has 3, P1 has 17 (F-004 to F-020), and P2 and P3 are in the tables above.
+
+---
+
+## Recommended execution order
+
+1. **P0 blockers:** F-001, F-003, F-002. Add a minimal seeded or approved model.
+2. **P1 core functionality:** F-004, F-015, F-016, F-018 and F-019, F-009.
+3. **Cross-layer integration:** F-005, F-006 (wire the findings and report endpoints), F-044, F-046, F-021, F-042.
+4. **Error handling and resilience:** F-010, F-025 to F-028, F-031, F-035, F-041, F-043.
+5. **Security and tenancy hardening:** F-007, F-008, F-011 to F-014, F-017, F-022 to F-024, F-036 to F-038.
+6. **Tests:** the F-020 `inject()` suite, a cross-org matrix, SSRF and SSL cases, config parsing, a real-provider-path test with a fake server, jsdom component tests, and a runner test.
+7. **Documentation:** rewrite SECURITY_AUDIT.md, reconcile ARCHITECTURE.md, and replace AGENTS.md and CLAUDE.md with a description of the real repo.
+8. **P3 polish:** the dead tables, unused dependencies, indexes, retention, error-shape consistency, and the 404 route.
+
+---
+
+## Limits of this audit
+- **Static only:** nothing was executed. Items marked "verify" need runtime checks: F-012, F-014, F-018, F-021, F-045 and parts of F-024.
+- **Only F-001 independently verified by me.**
+- **Agent disagreement:** the docs agent reported lease heartbeats exist in `scan.service.ts`, while the AI agent says the pipeline's stage lease has none. These may be different leases (scan and stage). Confirm before acting on F-010.
+- **Coverage:** the docs agent did not trace every unscoped query to its caller. The backend agent did not audit routing-policy or orchestrator internals.
+- **Git status not re-checked:** my final `git status` check was blocked, so I could not re-confirm that the working tree is unchanged. No write tools were used by me, and the agents were instructed read-only.
+
+AUDIT COMPLETE: YES
+FILES MODIFIED: NONE (by me. The final `git status` check was blocked, so this is not re-confirmed)
+DATABASE MODIFIED: NO
+DEPLOYMENT PERFORMED: NO
+SECRETS EXPOSED: NO
+
+--- FULL FUNCTIONAL AUDIT RESULT ---
+The frontend audit is back. The backend, AI and database/docs audits are still running, so I'm holding the consolidated report until they finish.
+
+The frontend agent's main findings:
+- **Monitoring page:** it has an unreachable second `return`, so users can't create or manage monitors from the UI.
+- **Settings pages:** all five show fabricated "live" data (team members, MFA enabled, rate limits) with no API calls behind them.
+- **Placeholders:** about 17 of 37 routes are placeholders or "integration required" stubs.
+- **Role gating:** there is none in the UI.
+- **Swallowed errors:** several `catch` blocks hide failures.
+- **`api.ts` syntax:** possible type syntax errors, which need a `tsc` check.
+
+--- FULL FUNCTIONAL AUDIT RESULT ---
+The AI audit is back. Two audits are still running: backend routes/security and database/docs. I'm holding the consolidated report until both finish.
+
+The AI agent's headline findings:
+- **F-01 (P0): the real AI path can't run on a fresh deployment.**
+  - New models are inserted as `DISCOVERED`, and nothing ever promotes them to an eligible status.
+  - The eligible pool is therefore empty, and every real agent run fails with `MODEL_FAILURE`.
+- **F-02 (P1): a policy change by one tenant disables the platform default for others.** A tenant admin's first routing-policy update deactivates the global default policy row, and the two statements aren't in a transaction.
+- **F-03 (P1): any tenant admin controls global resources.** Model catalog refresh, model enable/disable and agent enable/disable all use per-org admin roles but affect every tenant.
+- **F-04 (P1): the quality gate doesn't check quality.**
+  - It mostly checks that evidence ids are non-empty.
+  - A result with zero findings scores 100.
+  - `validateGrounding` is never called.
+- **F-05 (P1): scan cost and time are unbounded.** Retries are uncapped, the worst case is dozens of model calls per scan, and the 2-minute stage lease has no heartbeat.
+- **F-07 (P1): prompt-injection exposure.** Crawled page content is labelled "trusted" in the prompt.
+- **Timeout handling:** a real provider timeout is classed as a non-retryable `CANCELLED`, and the timeout test only passes because its mock throws a raw `AbortError`.
+- **Unwired layers:** regeneration and adaptation are not wired into the scan pipeline. Several policy and preference settings are stored but never read.
+- **Tests:** there are none for the real pipeline, the AI routes, or the real OpenRouter path.
+
+--- FULL FUNCTIONAL AUDIT RESULT ---
+The backend audit is back. One audit is still running, database and docs, so I'm holding the full report until it finishes.
+
+The backend agent's headline findings:
+- **F-02 (P1): the QA-bypass flags are parsed wrongly.**
+  - `z.coerce.boolean()` turns the string `"false"` into `true`.
+  - The production guard only rejects the exact string `"true"`.
+  - A production config with both flags set to `"false"` therefore passes the guard but enables the QA bypass.
+  - `production-security-config.test.ts` locks in that unsafe pair.
+- **F-01 (P1): rate limits are probably shared by all users.** There is no `trustProxy`, so behind a load balancer every client likely shares one IP. That would make the 10-login-per-15-minutes limit global.
+- **F-03 (P1): any tenant admin can change global model and agent settings.** The AI agent found the same problem.
+- **F-04 and F-05 (P1): SSRF gaps.**
+  - The SSL scanner skips the SSRF check entirely and is open to DNS rebinding.
+  - The IPv6 and IPv4-mapped check is incomplete.
+  - The `fc`/`fd` check wrongly blocks real hostnames such as `fcc.gov`.
+- **F-06 (P1): crashed scans stay `running` forever.** There is no sweeper for expired leases.
+- **F-07 (P1): one failed or cancelled scan stops scheduled monitoring** until someone resumes it.
+- **F-08 (P2): the SSE endpoint writes raw output without `reply.hijack()`.** Streams for cancelled or crashed scans never end.
+- **Tests:** there are no HTTP-level tests at all, and the tenancy and DB suites are skipped by default.
+
+I'm still waiting on the database and docs agent.
+
+--- FULL FUNCTIONAL AUDIT RESULT ---
+# ZigmaNeuralIntelligence functional audit: completion backlog
+
+## Method and confidence
+
+I split the audit across four read-only agents (frontend, backend and security, AI layer, database and docs). Their findings come from reading code. Nothing was executed: no tests, `tsc` or `pnpm audit`. I spot-checked one claim myself, F-001.
+
+All other findings are static-analysis conclusions from the agents. Items marked "verify" need a runtime check.
+
+Many items overlap across agents. I merged them and kept the highest severity.
+
+---
+
+## Executive summary
+
+The application's skeleton is real. Authentication, website onboarding, scan queueing, monitoring, evidence storage and the model router are implemented against a real database. The frontend has no mock data.
+
+The product does not work end to end today, for three reasons:
+1. **F-001:** the evidence insert violates a `NOT NULL` column, so every scan's evidence write should fail.
+2. **F-002:** no model is ever promoted to an eligible status, so every real AI run fails.
+3. **F-003:** production would enable the QA bypass despite config saying `"false"`.
+
+About 17 of 37 frontend routes are placeholders. The Monitoring page's management UI is unreachable. Settings pages show fabricated "live" data.
+
+Several tenancy and security gaps remain. There are also no HTTP-level tests of auth, RBAC or tenancy.
+
+---
+
+## Findings (P0 and P1 in full; P2 and P3 in the tables below)
+
+Each P0/P1 finding lists area, status, evidence, what is wrong, fix and tests. Dependencies and risk are folded into the fix and the execution order.
+
+### P0
+
+**F-001: Evidence insert violates a NOT NULL column**
+- **Status:** BROKEN. I verified this statically; it is not runtime-confirmed.
+- **Evidence:**
+  - `db/migrations/001_initial.sql:158` defines `evidence.type VARCHAR(100) NOT NULL` with no default.
+  - Migration 007 drops `NOT NULL` only on `finding_id` and adds `evidence_type`. No migration touches `type`.
+  - Both inserts in `ai/evidence/store.ts:11,14` list `evidence_type` but not `type`.
+  - `scan.service.ts:803` sets `type` with a later `UPDATE`, which never runs if the insert fails.
+  - The only test that inserts evidence (`reliability.integration.test.ts:24`) supplies `type` explicitly, which masks the bug.
+- **Effect:** every evidence write should fail, so scans and the AI pipeline break. The live database may differ from the migrations, so confirm against it.
+- **Fix:** supply `type` in the inserts, or add a migration that drops `NOT NULL` on the legacy column.
+- **Tests:** an integration test that goes through `collectEvidence` with no hand-supplied `type`.
+
+**F-002: No path makes any model eligible, so real AI runs always fail**
+- **Status:** BROKEN.
+- **Evidence:**
+  - `ai/catalog.service.ts:281` inserts new models as `DISCOVERED`.
+  - `calculateEligibility` maps `DISCOVERED` to `PENDING_REVIEW`.
+  - `getEligibleModels` keeps only `ELIGIBLE`.
+  - `enableModel` flips `enabled` but not the status.
+  - No migration seeds models.
+- **Effect:** routing returns `NO_CANDIDATES`, and the orchestrator throws `MODEL_FAILURE` at `orchestrator.ts:129`. Every scan's intelligence stage ends `FAILED`.
+- **Fix:** add an approve or promote workflow, seed a baseline model, and add a startup warning when the eligible pool is empty.
+- **Tests:** an integration test from catalog refresh through approval to routing, against a database and a fake provider.
+
+**F-003: QA bypass parsed wrongly, so it can be enabled in production**
+- **Status:** SECURITY_GAP. Two independent agents found this.
+- **Evidence:** `config.ts:29-31` uses `z.coerce.boolean()`, and `Boolean("false")` is `true`.
+  - `config-security.ts:4` rejects only the raw string `"true"`.
+  - `app.yaml` sets both flags to `"false"`.
+  - `production-security-config.test.ts:25` asserts that this pair is accepted.
+  - `app.yaml` also commits a `QA_AUTHORIZED_EMAILS` address.
+- **Effect:** the QA bypass is probably live in production for that email. It lets an owner or admin mark a website verified without proof, limited to the QA domain.
+- **Fix:** parse with `z.enum(["true","false"]).transform(...)`, run the production guard on the parsed config, and remove the committed email.
+- **Tests:** `loadConfig` with `"false"` yields `false`, plus an inverted version of the existing test.
+
+### P1
+
+| ID | Area | Finding | Status | Evidence | Fix | Tests |
+|---|---|---|---|---|---|---|
+| F-004 | Frontend | **Monitoring page management UI is unreachable.** The second `return (...)` holding the create, run, pause, resume, disable and frequency controls follows a first `return` and never executes. | BROKEN | `src/pages/monitoring/MonitoringPage.tsx` | Merge the two returns, with role gating. | Component test (needs jsdom and Testing Library). |
+| F-005 | Frontend | **Settings pages show fabricated data** (members "Ava Thompson" and others, "MFA Enabled", "Rate limiting Enabled", "200/min", "12 active / 2 pending"). There are no API calls and the buttons are dead. | DUMMY_OR_MOCK | `src/pages/settings/*` | Wire to real endpoints, or replace with honest unavailable states. | Extend `production-data.test.ts` to catch these. |
+| F-006 | Frontend | **About 17 of 37 routes are placeholders.** All Intelligence, Testing and Infrastructure pages, Client Reports, Control Center and Benchmarks are stubs. `/scans/:id/findings` and `/scans/:id/report` exist in the backend but the frontend never calls them. | PLACEHOLDER | `src/pages/{intelligence,testing,infrastructure}/*`, `reports/ClientReportsPage.tsx` | Build the pages or remove them from navigation. | Per-page tests. |
+| F-007 | AI | **Policy update disables the global default.** `updateActivePolicy` deactivates whatever row `getActivePolicy` returned, including the global row (`org_id IS NULL`). The deactivate and insert are not in a transaction. | TENANCY_GAP | `ai/router/routing-policy.ts:122-130` | Deactivate only the org's own row, inside a transaction, with a partial unique index. | Two-tenant policy test. |
+| F-008 | Backend and AI | **Any tenant admin controls global resources.** Model catalog refresh, model enable/disable and agent enable/disable use per-org roles but write to global tables. Registration is open, so anyone can become an owner of their own org. | TENANCY_GAP | `routes/models.ts:60,96,106`, `routes/agents.ts:110,121`, `registry.service.ts:193,216`, `agents/registry.ts:564,584` | Add a platform-admin concept, or make enablement per-org. | A second-org owner gets 403. |
+| F-009 | AI | **Quality gate does not check quality.** Grounding scores 100 whenever evidence ids are non-empty, and 100 when there are no findings. `validateGrounding` is never called. Several branches are never fed by real callers. Result with zero findings is ACCEPT. | PARTIALLY_IMPLEMENTED | `ai/quality/evaluator.ts:6-12`, `scan-pipeline.ts:100,124` | Call `validateGrounding`, compute real coverage, pass policy-gate outcomes in. | Negative tests: foreign, stale and empty evidence. |
+| F-010 | AI | **Unbounded cost and time per scan.** `maxRetries` is uncapped. Worst case is roughly 12 calls per agent across several agents, plus an untracked routing call each. The stage lease is 2 minutes and the agent says it has no heartbeat. That is in tension with the docs agent, which found lease heartbeats in `scan.service.ts` (verify). | ERROR_HANDLING_GAP | `ox-alpha.ts:68-69`, `policy-gate.ts`, `scan-pipeline.ts:166` | Cap total attempts, add a per-scan deadline and a per-org token budget. | Bounded-attempts and lease-expiry tests. |
+| F-011 | AI | **Prompt injection exposure.** Crawled page data (titles, meta, JSON-LD, headers) is labelled "system-provided, trusted" in the prompt, with no size cap. Mitigations exist: a strict JSON contract and evidence-id allowlisting. | SECURITY_GAP | `orchestrator.ts:253-259`, `scan-pipeline.ts:90` | Label it untrusted, delimit it, cap it, and strip `Set-Cookie` headers before sending. | Injection fixtures. |
+| F-012 | Backend | **Rate limits probably shared by all users.** No `trustProxy`, and limits key on `request.ip`. Behind App Platform every client likely shares one IP, making login limited to 10 per 15 minutes globally. | BROKEN or SECURITY_GAP (verify) | `app.ts:28-36,56-63` | Set `trustProxy`, and key auth limits on IP plus email. | `inject()` with `x-forwarded-for`. |
+| F-013 | Backend | **SSL scanner bypasses SSRF protection.** It calls `tls.connect` on the hostname directly, so it is open to DNS rebinding and internal probes. Findings leak certificate data. | SECURITY_GAP | `scanner/ssl.ts:19` | Run `checkUrlSafety`, connect to the pinned IP, enforce a timeout. | Mocked private-IP DNS refusal. |
+| F-014 | Backend | **IPv6 SSRF check incomplete and over-blocking.** Hex-form mapped addresses, `fe80::/10` variants, `fec0::/10`, NAT64 and 6to4 are not blocked (verify the hex-form claim). `startsWith("fc"/"fd")` on hostnames wrongly blocks `fcc.gov`, `fda.gov` and similar. | SECURITY_GAP and BROKEN | `scanner/ssrf.ts:43-52` | Parse IPv6 properly and apply it to IPs only. | Cases for mapped and hex IPv6, and `fcc.gov` allowed. |
+| F-015 | Backend | **Crashed scans stay `running` forever.** The worker claims only `queued`. No sweeper requeues expired leases. `createScan` is not transactional. Graceful shutdown just exits after 30 seconds. | BROKEN | `scan.service.ts:305-310,463,923-931`, `index.ts:22-28` | Add a sweeper, make `createScan` transactional, fail scans on shutdown timeout. | Crash simulation and a sweeper integration test. |
+| F-016 | Backend | **One failed or cancelled scan stops scheduled monitoring.** The config is set `FAILED`, and scheduling requires `ACTIVE`. Only `/resume` recovers it. | BROKEN | `monitoring.service.ts:381,411,564-567` | Do not set `FAILED` on cancel, and auto-recover. | A cancelled-scan test. |
+| F-017 | Database | **Old RLS policies from migration 021 are never dropped.** The JWT-claim `*_org_isolation` policies stay in force beside 022's membership policies and are OR-ed, so the older one can bypass the membership check. | SECURITY_GAP | `021_phase8_completion.sql`, `022_phase9a_tenant_security.sql` | A new migration that drops them. | A policy-inventory test. |
+| F-018 | Deploy | **Migrate step runs `tsx`, which is a devDependency.** If production prunes devDependencies, the deploy fails at migrate. `Procfile` omits migrations. `prebuild` reinstalls with `--no-frozen-lockfile`. | BROKEN (unverified) | `app.yaml`, `server/package.json`, `Procfile`, root `package.json` | Compile the migrator and copy the SQL, drop `prebuild`, align `Procfile`. | A deploy-config test that checks behavior. |
+| F-019 | Database | **Migration runner is weak.** A hard-coded file list silently ignores unlisted files. No checksums or drift detection. A session advisory lock is unreliable behind a transaction pooler. | PARTIALLY_IMPLEMENTED | `db/migrate.ts:35-58` | Read the directory, store checksums, add a test. | Runner tests. |
+| F-020 | Testing | **No HTTP-level tests.** `buildApp` and `inject()` are never used for auth, RBAC or tenancy. The tenancy and integration suites are skipped without `DATABASE_URL`. The real LLM path and scan pipeline have no tests. | TEST_GAP | `server/src/tests/*` | See test plan. | See test plan. |
+
+### P2
+
+| ID | Area | Finding | Evidence |
+|---|---|---|---|
+| F-021 | Backend | SSE endpoint writes to `reply.raw` without `reply.hijack()` (verify). Streams for cancelled or crashed scans never end, no heartbeat, no connection cap, a 500 ms DB poll per client. `scan_failed` is emitted nowhere. | `routes/scans.ts:273-349` |
+| F-022 | Auth | No refresh-token reuse detection. Rotation is not atomic with creating the new token. No purge, no password change or reset, and `revokeAllUserTokens` is unused. | `auth.service.ts:132-169` |
+| F-023 | Auth | Disabled users keep access for up to 15 minutes. Logout needs a valid access token. JWT has no `iss`/`aud`/type claim. | `middleware/auth.ts` |
+| F-024 | Auth | Login enumeration: a malformed dummy hash likely skips the bcrypt timing, `ACCOUNT_DISABLED` returns before the password check, and register returns 409. No password maximum (bcrypt truncates at 72 bytes). | `auth.service.ts:86` |
+| F-025 | Errors | Route-level catches turn any exception into a raw 4xx with `e.message`, possibly leaking DB text. A DB blip on refresh logs the user out. | `routes/auth.ts:64-67,94-96`, `routes/websites.ts:74-77,112-115` |
+| F-026 | Backend | Final scan update does not check the row count, so a worker with an expired lease still emits completion and audit. Persistence is not transactional. `finalizeMonitoringRun(...).catch(()=>undefined)` hides failures. | `scan.service.ts:678-687,955` |
+| F-027 | Backend | `runMonitoringNow` and the scheduler leave orphan `RUNNING` runs on admission errors and can lose a period's run. One serial worker loop runs scans, monitoring and notifications. | `monitoring.service.ts:415-424,460-481` |
+| F-028 | Backend | Cancel has no org or state guard (check-then-act race) and is not audited. Admission checks are check-then-insert, so concurrent requests all pass. Modules are not allowlisted. | `routes/scans.ts:257`, `scan.service.ts:274-289` |
+| F-029 | Backend | Monitoring snapshot key omits the title, so distinct findings collapse. The evidence query scans every row for the org. | `monitoring.service.ts:824-856` |
+| F-030 | Backend | SSL scanner reports a false critical on any transient error and marks the module completed. Wildcard matching is loose. It ignores the port and does not flag self-signed chains. | `scanner/ssl.ts:94-107` |
+| F-031 | AI | A provider timeout is mapped to a non-retryable `CANCELLED`, and `TIMEOUT` is never produced. The timeout test passes only because of its mock. | `openrouter.ts:128`, `ox-alpha.ts:109` |
+| F-032 | AI | Controls that have no effect: `max_attempts`, `require_cross_model_verification`, org model preferences. `recordReliabilityEvent` has no caller. `model_benchmarks` is never written. | `routing-policy.ts`, `registry.service.ts` |
+| F-033 | AI | Regeneration and adaptation are simulation-only. A single quality miss fails the specialist. `regeneration_runs` has no writer, so its GET endpoints always return empty. | `scan-pipeline.ts:101`, `routes/regeneration.ts` |
+| F-034 | AI | The routing LLM call has no org or scan, so it is untracked. Default model is hardcoded to a free Llama. | `router/index.ts:134-230`, `config.ts:61` |
+| F-035 | AI | Audit is best-effort and swallows DB failures. Attempt duration is measured from the start of the whole chain. Output validation silently drops bad findings and defaults confidence to 50. | `ox-alpha.ts:241`, `orchestrator.ts:274-322` |
+| F-036 | Database | Membership policy is `FOR ALL` with no role check. `users_self` exposes `password_hash`. | `022_phase9a_tenant_security.sql` |
+| F-037 | Database | `findings`, `evidence` and `monitoring_snapshots` have no policy. `adaptation_decisions` has no `org_id`. | `022` |
+| F-038 | Database | Routing tables have no org FK, with no per-org active-policy uniqueness. `model_history` cascades from `models`, deleting the "immutable" trail. `audit_log` is not append-only for the table owner. | `003`, `004`, `001` |
+| F-039 | Database | `UNIQUE(org_id, monitoring_id, signature, status)` blocks a second resolution of the same signature. | `020_monitoring_alerts.sql` |
+| F-040 | Database | Missing indexes: `scans(org_id, created_at)`, `monitoring_snapshots(website_id, captured_at)`, `refresh_tokens(expires_at)`, `domain`. | various |
+| F-041 | Frontend | 401 handling logs the user out when the retry returns any non-OK status. Concurrent 401s each call refresh, with no single-flight. | `src/services/api.ts:178-191` |
+| F-042 | Frontend | No role-based gating in the UI. Admin-only actions are shown to everyone, so users see raw 403s. | `AgentRegistry`, `MyWebsites`, `ModelRegistry` |
+| F-043 | Frontend | Swallowed errors in the website selector, agent toggles, router policy and logout. Top-bar website selection affects only Overview. | `Shell.tsx:282`, `AgentRegistry.tsx` |
+| F-044 | Frontend | Scan progress polls and has no cancel. The SSE client and `apiCancelScan` are unused. History shows only the latest scan per site. | `ScanProgress.tsx`, `ScanHistory.tsx` |
+| F-045 | Frontend | `api.ts` and two pages have space-separated type members that may fail strict `tsc` (verify). `dist/` may be stale. | `api.ts:195`, `MonitoringPage.tsx`, `AlertsPage.tsx` |
+| F-046 | Backend gaps | No scan list, org or membership endpoint, website delete, password reset or per-org role in `/auth/me`. Notification delivery always marks FAILED (an honest no-op). `alert_config` is stored but never read. | `routes/*`, `monitoring.service.ts:969` |
+| F-047 | Docs | SECURITY_AUDIT.md, ARCHITECTURE.md and AGENTS.md are stale. See the documentation gap table. | |
+
+### P3
+
+| ID | Finding |
+|---|---|
+| F-048 | 15 dead tables (`instructions`, `instruction_profiles` and versions, agent capability/tool/dependency tables, `evidence_requests`, `claims`, `quality_policies`, regeneration and diagnosis tables, `adaptation_decisions`, `routing_feedback`, `kv_store`). |
+| F-049 | No retention or purge for `scan_events`, `refresh_tokens`, `audit_log`, snapshots or evidence. No `DELETE FROM` anywhere in `server/src`. |
+| F-050 | Unused dependencies: `uuid`, `@vitest/ui`, `postcss`, `@anthropic-ai/claude-agent-sdk`. The `supabase/functions/server` Hono app and `utils/supabase/info.tsx` are unused. `assertProductionConfig()` is never called. |
+| F-051 | `supabase_setup.sql` stops at migration 011 and writes `schema_migrations` rows only for 001-011. |
+| F-052 | Non-UUID ids return 500, not 400. Error shapes are inconsistent across routes. Several lists are unpaginated. The CSP allows `unsafe-inline` styles. There is no explicit `bodyLimit` or request timeout. |
+| F-053 | Redundant indexes, `zn_*` SECURITY DEFINER functions with no EXECUTE revocation, `improvement_diagnoses.id` with no default. Catch-all route renders a "Construction" card, not a 404. Login marketing numbers are hardcoded. |
+| F-054 | A website's port and query are dropped when normalizing, so non-default-port sites cannot be scanned. `/models/*` auth lets any member read global registry data. |
+
+---
+
+## Required summary tables
+
+### 1. Feature inventory
+
+| Feature | Status |
+|---|---|
+| Register, login, refresh, logout | IMPLEMENTED_UNVERIFIED (F-012, F-022 to F-025) |
+| Website add, verify (meta, file, DNS) | IMPLEMENTED_UNVERIFIED. No edit or delete. |
+| QA bypass verification | SECURITY_GAP (F-003) |
+| Scan create, queue, worker, scoring, report | PARTIALLY_IMPLEMENTED. Blocked by F-001, and scans stall on F-015. |
+| SEO, security, performance and SSL scanners | IMPLEMENTED_UNVERIFIED. SSL has F-013 and F-030. |
+| SSRF-safe fetch | PARTIALLY_IMPLEMENTED (F-014) |
+| Dashboard, reports | IMPLEMENTED_UNVERIFIED. No export. |
+| Monitoring backend, alerts | PARTIALLY_IMPLEMENTED. No delivery provider. |
+| Monitoring UI management | BROKEN (F-004) |
+| Multi-agent AI pipeline | BROKEN on a fresh deployment (F-002) |
+| Model catalog, registry, router | PARTIALLY_IMPLEMENTED |
+| Instruction, evidence, quality layers | PARTIALLY_IMPLEMENTED (F-009) |
+| Regeneration, adaptation | DEAD_OR_UNUSED outside simulate |
+| Cross-domain, remediation | IMPLEMENTED_UNVERIFIED. No reject or expire writer. |
+| Settings, team, API keys, integrations | DUMMY_OR_MOCK |
+| Testing and infrastructure sections | PLACEHOLDER |
+
+### 2. Frontend functionality
+
+| Area | Status |
+|---|---|
+| Login, Overview, Websites, Add website | REAL |
+| Scan Progress, History | PARTIAL (F-044) |
+| Agent Registry | REAL, errors swallowed |
+| Model Router, Registry | PARTIAL: read-only policy, enable/disable not exposed |
+| Instructions, Evidence, Quality Control | REAL (lookup by task id) |
+| Reports | PARTIAL |
+| Monitoring | BROKEN (F-004) |
+| Changes, Alerts | PARTIAL, REAL |
+| Settings (5 pages) | DUMMY_OR_MOCK |
+| Intelligence (6), Testing (3), Infrastructure (3), Client Reports, Control Center, Benchmarks | PLACEHOLDER |
+
+### 3. Backend endpoint status
+
+All endpoints require auth except `/health`, `/ready`, register, login, refresh and the static SPA. They derive the org from a membership-checked `x-org-id`, so the body `orgId` is ignored. Queries are parameterized.
+
+Roles vary: viewers can read, members can create, owners and admins can administer.
+
+No endpoint has an HTTP-level test.
+
+Endpoints with **no frontend consumer** (consistent across the agents; the second group sits on routes the frontend does consume under other names): `/websites/:id`, `/websites/:id/scans`, `/scans/:id/{status,evidence,report,quality}`, `/:scanId/cross-domain`, `/:scanId/remediation`, remediation approve and reject, `/ai/evidence/*`, `/ai/regeneration/*`, `/ai/quality/*`, `/models/preferences/:orgId`, `/models/eligible`, `/agents/types`, `/agents/:type/{versions,executions}`.
+
+Also unused by the UI are `/auth/me`, `/scans/:id/{cancel,events,findings}`, `/models/catalog/status`, enable/disable model, `/routing/policy` POST, `/agents/plan`, the monitoring rules endpoints and `/monitoring/alert/:id`.
+
+**Frontend calls with no backend route:** `GET /websites/:id/monitoring` (`apiGetMonitoringHistory`). It is unused.
+
+### 4. Database feature mapping
+
+The full table-by-table map from the docs agent is long, so this summary lists the main groups:
+- **Full or near-full CRUD (C/R/U, no D):** users, organizations, memberships, websites, scans, scan_modules, scan_events, findings, evidence, scores, reports, finding_evidence, stage claims, agent_executions, all cross-domain tables, all monitoring tables, routing_policies, routing_decisions, models, model_preferences, instruction_plans and quality_assessments.
+- **Read-only or effectively dead:** `model_benchmarks` (never written), `regeneration_runs` (never written).
+- **Orphans:** the 15 tables in F-048.
+- **Consumers without schema:** none found.
+- **Delete behavior:** nothing is ever deleted by the application, so cascade risk is latent. An organization delete would cascade through websites, scans, findings and monitoring but is blocked by `audit_log.org_id`.
+
+### 5. AI and agent status
+
+| Component | Status |
+|---|---|
+| OpenRouter provider (the only provider) | IMPLEMENTED_VERIFIED (mocked fetch) |
+| OX Alpha executor (retry, fallback, JSON retry) | IMPLEMENTED_VERIFIED. Timeout and audit are PARTIAL. |
+| Model catalog | IMPLEMENTED, promotion missing (F-002) |
+| Model registry | PARTIAL (F-032) |
+| Router (filter, scorer, policy) | IMPLEMENTED_UNVERIFIED. Some policy fields are inert. |
+| Agent registry, orchestrator, policy gate | IMPLEMENTED. The real run path is UNVERIFIED. |
+| Scan pipeline | IMPLEMENTED_UNVERIFIED (no test) |
+| Instruction layer | IMPLEMENTED, deterministic |
+| Evidence store | IMPLEMENTED. `validateGrounding` and adapters are DEAD. |
+| Quality evaluator | PARTIALLY_IMPLEMENTED (F-009) |
+| Regeneration, adaptation | DEAD_OR_UNUSED outside simulate |
+| GEO, QA, SSL and REMEDIATION agents | DEAD (defined, never executed) |
+| Prompts | Hardcoded in code, with no versioning |
+| Usage tracking | PARTIAL (tokens only, no cost or budget) |
+
+### 6. Integration status
+
+| Integration | Status |
+|---|---|
+| OpenRouter (`OPENROUTER_API_KEY`) | Real. Unavailable behavior is honest: 503 on refresh, `unavailable` in the pipeline. Single provider. |
+| PostgreSQL / Supabase | Real. `SUPABASE_*` variables are validated but unused. |
+| Notification providers | INTEGRATION_REQUIRED. Deliveries always marked FAILED. |
+| Report PDF export | MISSING |
+| CI/CD, API keys, team, MFA (settings UI) | DUMMY_OR_MOCK |
+| Supabase edge function | DEAD_OR_UNUSED |
+
+Credentials were not read or exposed.
+
+### 7. Security findings
+F-003, F-008, F-011, F-012, F-013, F-014, F-017, F-022, F-023, F-024, F-036, F-038, plus F-025 (info leak).
+
+Verified good: bcrypt 12, hashed rotating refresh tokens in an HttpOnly, SameSite=strict cookie, a real membership check per request, parameterized SQL, DNS-pinned and re-validated redirects in `fetch.ts`, and a generic 500 handler.
+
+Token storage in `sessionStorage` is XSS-readable.
+
+### 8. Error-handling findings
+F-010, F-015, F-016, F-021, F-025, F-026, F-027, F-031, F-035, F-041, F-043.
+
+### 9. Test gaps
+- **F-020:** no `inject()` tests for auth, RBAC, rate limits or SSE. Tenancy and integration suites are skipped by default, and the tenancy suite covers service functions, not routes.
+- Several tests prove the wrong thing:
+  - `ssrf.test.ts`: the IPv6-mapped case passes for the wrong reason.
+  - `production-security-config.test.ts`: locks in an unsafe pair.
+  - `scan-lease.test.ts`: mocks `query`, so it checks SQL call patterns, not lease behavior.
+  - `reliability.integration.test.ts`: masks F-001.
+  - `deploy-config.test.ts`: matches strings in files.
+  - `production-data.test.ts`: greps source for removed fixtures.
+- Frontend: vitest runs in a node environment, so no component renders. `scoring.test.ts` covers dead code, and `api-org-context.test.ts` covers header building only. One Playwright spec exercises two login-page behaviors.
+- Untested: the real LLM path and scan pipeline, `migrate.ts`, and all pages.
+
+### 10. Documentation gaps
+- **AGENTS.md and CLAUDE.md:** describe a bare Vite scaffold. They omit `server/`, migrations, tests and deployment. CLAUDE.md is only `@AGENTS.md`.
+- **ARCHITECTURE.md:**
+  - It says "no cron", but the scheduler runs inside the scan worker.
+  - It says "No Playwright config", but one exists.
+  - It says the SSE token goes in a query parameter, but it uses a header.
+  - It says "every WHERE has org_id", but unscoped statements exist.
+  - It says "11 agents", but there are 13 in code and 12 seeded.
+  - Its dependency versions are stale.
+  - Its test counts disagree with SECURITY_AUDIT.md.
+  - It both claims and denies a live-database test run.
+  - It says routing policy uniqueness is per scope, but only the global scope is enforced.
+  - It overstates the regeneration and adaptation migrations.
+  - It refers to `.env.example`, but the file is `server.env.example`.
+- **SECURITY_AUDIT.md:**
+  - Dated 2026-09-03 and predates migrations 020-022.
+  - It says RLS policies were not added, but 021 and 022 add them.
+  - Its lease-recovery risk is out of date.
+  - Its "no vulnerabilities" claim was not verified here.
+
+### 11. Dummy, mock and placeholder findings
+F-005, F-006, F-046 (notifications), F-048, the hardcoded Login marketing numbers, the hardcoded "Disabled by administrator" reason, and the Instructions simulator's hardcoded `taskId`/`evidenceReferences`.
+
+Simulate endpoints are labelled `simulate: true` and never return a fake success on a real path.
+
+### 12. Cross-layer mismatches
+- F-001: the code and the schema disagree on `evidence.type`.
+- F-002: the registry has no promotion path although the router needs eligible models.
+- F-004: the frontend management calls for monitoring exist, but the UI can't reach them.
+- Scan history and findings: the backend exposes them, but the UI shows the latest scan only and never calls `/findings`.
+- F-021: SSE terminal events do not match the statuses the server can produce.
+- `/monitoring/alert/:id` is singular while the rest are `/alerts/`.
+- Error response shapes differ across routes.
+- `/auth/me` returns org ids only, so the UI shows no org name or role.
+- F-017: the policy generations 021 and 022 conflict.
+- The `supabase_setup.sql` snapshot disagrees with the migration set.
+- `app.yaml` and `Procfile` disagree.
+
+### 13. Backlog
+Counts: P0 has 3, P1 has 17 (F-004 to F-020), and P2 and P3 are in the tables above.
+
+---
+
+## Recommended execution order
+
+1. **P0 blockers:** F-001, F-003, F-002. Add a minimal seeded or approved model.
+2. **P1 core functionality:** F-004, F-015, F-016, F-018 and F-019, F-009.
+3. **Cross-layer integration:** F-005, F-006 (wire the findings and report endpoints), F-044, F-046, F-021, F-042.
+4. **Error handling and resilience:** F-010, F-025 to F-028, F-031, F-035, F-041, F-043.
+5. **Security and tenancy hardening:** F-007, F-008, F-011 to F-014, F-017, F-022 to F-024, F-036 to F-038.
+6. **Tests:** the F-020 `inject()` suite, a cross-org matrix, SSRF and SSL cases, config parsing, a real-provider-path test with a fake server, jsdom component tests, and a runner test.
+7. **Documentation:** rewrite SECURITY_AUDIT.md, reconcile ARCHITECTURE.md, and replace AGENTS.md and CLAUDE.md with a description of the real repo.
+8. **P3 polish:** the dead tables, unused dependencies, indexes, retention, error-shape consistency, and the 404 route.
+
+---
+
+## Limits of this audit
+- **Static only:** nothing was executed. Items marked "verify" need runtime checks: F-012, F-014, F-018, F-021, F-045 and parts of F-024.
+- **Only F-001 independently verified by me.**
+- **Agent disagreement:** the docs agent reported lease heartbeats exist in `scan.service.ts`, while the AI agent says the pipeline's stage lease has none. These may be different leases (scan and stage). Confirm before acting on F-010.
+- **Coverage:** the docs agent did not trace every unscoped query to its caller. The backend agent did not audit routing-policy or orchestrator internals.
+- **Git status not re-checked:** my final `git status` check was blocked, so I could not re-confirm that the working tree is unchanged. No write tools were used by me, and the agents were instructed read-only.
+
+AUDIT COMPLETE: YES
+FILES MODIFIED: NONE (by me. The final `git status` check was blocked, so this is not re-confirmed)
+DATABASE MODIFIED: NO
+DEPLOYMENT PERFORMED: NO
+SECRETS EXPOSED: NO

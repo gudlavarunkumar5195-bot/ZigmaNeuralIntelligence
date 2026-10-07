@@ -1,0 +1,71 @@
+Sep 02 07:39:19  [WARN] Tarball download average speed 25 KiB/s (size 87 KiB) is below 50 KiB/s: https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz (GET)
+Sep 02 07:39:20  Progress: resolved 180, reused 0, downloaded 145, added 57
+Sep 02 07:39:21  [WARN] Request took 10108ms: https://registry.npmjs.org/@esbuild%2Flinux-loong64
+Sep 02 07:39:21  [WARN] Tarball download average speed 14 KiB/s (size 29 KiB) is below 50 KiB/s: https://registry.npmjs.org/chai/-/chai-6.2.2.tgz (GET)
+Sep 02 07:39:21  Progress: resolved 180, reused 0, downloaded 167, added 71
+Sep 02 07:39:21  [WARN] Tarball download average speed 20 KiB/s (size 34 KiB) is below 50 KiB/s: https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz (GET)
+Sep 02 07:39:21  [WARN] Request took 10976ms: https://registry.npmjs.org/@esbuild%2Flinux-x64
+Sep 02 07:39:22  [WARN] Request took 11394ms: https://registry.npmjs.org/@rolldown%2Fbinding-linux-x64-gnu
+Sep 02 07:39:22  [WARN] Request took 11490ms: https://registry.npmjs.org/@rolldown%2Fbinding-win32-arm64-msvc
+Sep 02 07:39:22  Progress: resolved 180, reused 0, downloaded 170, added 117
+Sep 02 07:39:22  [WARN] Request took 11586ms: https://registry.npmjs.org/@rolldown%2Fbinding-linux-arm64-musl
+Sep 02 07:39:22  [WARN] Request took 11593ms: https://registry.npmjs.org/@rolldown%2Fbinding-linux-x64-musl
+Sep 02 07:39:23  [WARN] Request took 11986ms: https://registry.npmjs.org/@rolldown%2Fbinding-freebsd-x64
+Sep 02 07:39:23  [WARN] Request took 12292ms: https://registry.npmjs.org/@rolldown%2Fbinding-linux-arm64-gnu
+Sep 02 07:39:23  [WARN] Request took 12383ms: https://registry.npmjs.org/@rolldown%2Fbinding-win32-x64-msvc
+Sep 02 07:39:23  [WARN] Request took 12486ms: https://registry.npmjs.org/@rolldown%2Fbinding-darwin-x64
+Sep 02 07:39:23  [WARN] Request took 12497ms: https://registry.npmjs.org/@rolldown%2Fbinding-darwin-arm64
+Sep 02 07:39:23  [WARN] Request took 12583ms: https://registry.npmjs.org/@rolldown%2Fbinding-linux-arm-gnueabihf
+Sep 02 07:39:23  Progress: resolved 180, reused 0, downloaded 170, added 164
+Sep 02 07:39:24  [WARN] Tarball download average speed 33 KiB/s (size 212 KiB) is below 50 KiB/s: https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz (GET)
+Sep 02 07:39:24  [WARN] Request took 14005ms: https://registry.npmjs.org/pnpm
+Sep 02 07:39:24  [WARN] Tarball download average speed 33 KiB/s (size 191 KiB) is below 50 KiB/s: https://registry.npmjs.org/rolldown/-/rolldown-1.2.6.tgz (GET)
+Sep 02 07:39:24  Progress: resolved 180, reused 0, downloaded 170, added 170
+Sep 02 07:39:25  Progress: resolved 180, reused 0, downloaded 172, added 172
+Sep 02 07:39:27  [WARN] Tarball download average speed 0 KiB/s (size 4 KiB) is below 50 KiB/s: https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz (GET)
+Sep 02 07:39:28  Progress: resolved 180, reused 0, downloaded 173, added 172
+Sep 02 07:39:28  [WARN] Request took 17183ms: https://registry.npmjs.org/@esbuild%2Flinux-ia32
+Sep 02 07:39:29  Progress: resolved 180, reused 0, downloaded 175, added 175
+Sep 02 07:39:29  [WARN] Tarball download average speed 29 KiB/s (size 436 KiB) is below 50 KiB/s: https://registry.npmjs.org/@types/node/-/node-22.20.1.tgz (GET)
+Sep 02 07:39:30  Progress: resolved 180, reused 0, downloaded 178, added 178
+Sep 02 07:39:31  Progress: resolved 180, reused 0, downloaded 179, added 179
+Sep 02 07:39:32  [WARN] Request took 19070ms: https://registry.npmjs.org/@types%2Fnode
+Sep 02 07:39:33  [WARN] Tarball download average speed 6 KiB/s (size 109 KiB) is below 50 KiB/s: https://registry.npmjs.org/entities/-/entities-6.0.1.tgz (GET)
+Sep 02 07:39:33  Progress: resolved 180, reused 0, downloaded 180, added 179
+Sep 02 07:39:33  Progress: resolved 180, reused 0, downloaded 180, added 180, done
+Sep 02 07:39:41  [WARN] Request took 30733ms: https://registry.npmjs.org/@rolldown%2Fbinding-linux-s390x-gnu
+Sep 02 07:39:41  ✓ Lockfile passes supply-chain policies (230 entries in 31s)
+Sep 02 07:39:41  .../esbuild@0.28.2/node_modules/esbuild postinstall$ node install.js
+Sep 02 07:39:42  .../esbuild@0.28.2/node_modules/esbuild postinstall: Done
+Sep 02 07:39:42  
+Sep 02 07:39:42  dependencies:
+Sep 02 07:39:42  + @fastify/cookie 11.1.2
+Sep 02 07:39:42  + @fastify/cors 11.3.0
+Sep 02 07:39:42  + @fastify/jwt 10.2.2
+Sep 02 07:39:42  + @fastify/rate-limit 11.2.0
+Sep 02 07:39:42  + @fastify/static 10.1.3
+Sep 02 07:39:42  + bcryptjs 2.4.3
+Sep 02 07:39:42  + cheerio 1.2.0
+Sep 02 07:39:42  + fastify 5.12.1
+Sep 02 07:39:42  + pg 8.23.0
+Sep 02 07:39:42  + uuid 11.1.1
+Sep 02 07:39:42  + zod 3.25.76
+Sep 02 07:39:42  
+Sep 02 07:39:42  devDependencies:
+Sep 02 07:39:42  + @types/bcryptjs 2.4.6
+Sep 02 07:39:42  + @types/node 22.20.1
+Sep 02 07:39:42  + @types/pg 8.23.1
+Sep 02 07:39:42  + @types/uuid 10.0.0
+Sep 02 07:39:42  + tsx 4.23.12
+Sep 02 07:39:42  + typescript 5.9.3
+Sep 02 07:39:42  + vitest 4.1.11
+Sep 02 07:39:42  
+Sep 02 07:39:42  Done in 33.6s using pnpm v11.25.0
+Sep 02 07:39:43  $ tsx src/db/migrate.ts
+Sep 02 07:39:44  [migrate] Fatal: connect EHOSTUNREACH 2406:da1a:314:7100:2148:127e:b6f5:e50c:5432 - Local (:::0)
+Sep 02 07:39:44  [ELIFECYCLE] Command failed with exit code 1.
+Sep 02 07:39:29  ERROR failed health checks after 4 attempts with error Readiness probe failed: Get "http://100.127.30.220:8080/ready": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+Sep 02 07:40:00  ERROR failed health checks after 9 attempts with error Readiness probe failed: Get "http://100.127.30.220:8080/ready": dial tcp 100.127.30.220:8080: connect: connection refused
+Sep 02 07:40:06  ERROR failed health checks after 13 attempts with error Readiness probe failed: Get "http://100.127.22.69:8080/ready": dial tcp 100.127.22.69:8080: connect: connection refused
+Sep 02 07:40:07  ERROR component terminated with non-zero exit code: 1,
+Sep 02 07:39:45  ERROR component terminated with non-zero exit code: 1,

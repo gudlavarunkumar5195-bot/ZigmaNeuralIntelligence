@@ -1,0 +1,358 @@
+import { createHash, randomUUID } from "node:crypto";
+import { query } from "../../db/client.js";
+import { assessQuality } from "../quality/evaluator.js";
+import { loadEvidenceCheck } from "../quality/evidence-check.js";
+import { AI_SCAN_DEADLINE_MS, AI_STAGE_HEARTBEAT_MS, AI_STAGE_LEASE_MS, AiAbortedError, raceAbort, withDeadline } from "../limits.js";
+import { AiBudgetError, assertOrgAiBudget } from "../budget.js";
+import { runDiscovery } from "./discovery.js";
+import { agentExecutor } from "./executor.js";
+import { getOxAlphaExecutor } from "../ox-alpha.js";
+import { getAgentDefinition } from "./registry.js";
+import { findScanEvidence } from "../evidence/store.js";
+import { buildCrossDomainFinding, buildProposal, persistCrossDomainFinding, persistRemediationProposal } from "../../services/cross-domain.service.js";
+import type { AgentFinding, AgentResult, AgentType } from "./types.js";
+import type { NewFinding } from "../../types.js";
+
+export interface ScanIntelligenceResult {
+  discoveryCount: number;
+  seoResult: AgentResult | null;
+  agentResults: Partial<Record<AgentType, AgentResult>>;
+  reportResult: AgentResult | null;
+  status: "completed" | "partial" | "unavailable" | "failed";
+  error?: string;
+}
+
+const SPECIALISTS: Array<{ agentType: AgentType; riskLevel: "MEDIUM" | "HIGH"; allowedTools: string[]; category: string }> = [
+  { agentType: "SEO_ANALYSIS", riskLevel: "MEDIUM", allowedTools: ["HTML_PARSER", "STRUCTURED_DATA_PARSER", "SITEMAP_PARSER", "ROBOTS_PARSER"], category: "seo" },
+  { agentType: "AEO_ANALYSIS", riskLevel: "MEDIUM", allowedTools: ["HTML_PARSER", "STRUCTURED_DATA_PARSER"], category: "aiVisibility" },
+  { agentType: "SECURITY_ANALYSIS", riskLevel: "HIGH", allowedTools: ["SECURITY_SCANNER_OUTPUT"], category: "security" },
+  { agentType: "PERFORMANCE_ANALYSIS", riskLevel: "MEDIUM", allowedTools: ["PERFORMANCE_DATA_PARSER", "HTML_PARSER"], category: "performance" },
+  { agentType: "ACCESSIBILITY_ANALYSIS", riskLevel: "MEDIUM", allowedTools: ["ACCESSIBILITY_SCANNER_OUTPUT", "HTML_PARSER"], category: "accessibility" },
+  { agentType: "TECHNICAL_HEALTH_ANALYSIS", riskLevel: "MEDIUM", allowedTools: ["TECHNICAL_SCANNER_OUTPUT", "HTML_PARSER"], category: "technicalHealth" },
+];
+
+function key(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function emptyResult(status: ScanIntelligenceResult["status"], error: string): ScanIntelligenceResult {
+  return { discoveryCount: 0, seoResult: null, agentResults: {}, reportResult: null, status, error };
+}
+
+export async function runScanIntelligence(input: {
+  scanId: string;
+  organizationId: string;
+  websiteId: string;
+  target: string;
+  deterministicFindings: NewFinding[];
+  /** Absolute epoch-ms deadline for all AI work in this scan; defaults to now + AI_SCAN_DEADLINE_MS. */
+  deadlineAt?: number;
+  /** Optional cooperative cancellation (e.g. lost scan lease). Backward compatible: omit to disable. */
+  signal?: AbortSignal;
+  /** Optional polled predicate (e.g. () => hasLostScanLease(scanId)); polled every `abortPollMs` while AI work runs. */
+  isAborted?: () => boolean;
+  abortPollMs?: number;
+}): Promise<ScanIntelligenceResult> {
+  const abortController = new AbortController();
+  const abortFrom = (): void => { if (!abortController.signal.aborted) abortController.abort(new DOMException("Scan intelligence aborted", "AbortError")); };
+  if (input.signal?.aborted) abortFrom();
+  input.signal?.addEventListener("abort", abortFrom, { once: true });
+  const poll = input.isAborted ? setInterval(() => { try { if (input.isAborted?.()) abortFrom(); } catch { abortFrom(); } }, input.abortPollMs ?? 1_000) : undefined;
+  try {
+    return await runScanIntelligenceInner(input, abortController.signal);
+  } finally {
+    if (poll) clearInterval(poll);
+    input.signal?.removeEventListener("abort", abortFrom);
+  }
+}
+
+function abortedResult(discoveryCount = 0, agentResults: Partial<Record<AgentType, AgentResult>> = {}): ScanIntelligenceResult {
+  return { discoveryCount, seoResult: agentResults.SEO_ANALYSIS ?? null, agentResults, reportResult: null, status: "failed", error: "AI_ABORTED: scan intelligence aborted (cancelled or lease lost); no further provider calls were made" };
+}
+
+async function runScanIntelligenceInner(input: {
+  scanId: string;
+  organizationId: string;
+  websiteId: string;
+  target: string;
+  deterministicFindings: NewFinding[];
+  deadlineAt?: number;
+}, signal: AbortSignal): Promise<ScanIntelligenceResult> {
+  const deadlineAt = Math.min(input.deadlineAt ?? Number.POSITIVE_INFINITY, Date.now() + AI_SCAN_DEADLINE_MS);
+  const existing = await query<{ intelligence_status: string }>("SELECT intelligence_status FROM scans WHERE id=$1 AND org_id=$2", [input.scanId, input.organizationId]);
+  if (existing.rows[0]?.intelligence_status === "COMPLETED") {
+    return { discoveryCount: 0, seoResult: null, agentResults: {}, reportResult: null, status: "completed" };
+  }
+  await query("UPDATE scans SET intelligence_status = 'RUNNING', intelligence_error = NULL WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId]);
+  await query(
+    `INSERT INTO reports (org_id, website_id, scan_id, report_version, status, summary)
+     VALUES ($1, $2, $3, 1, 'GENERATING', $4)
+     ON CONFLICT (scan_id, report_version) DO UPDATE SET status = 'GENERATING', error = NULL, updated_at = NOW()`,
+    [input.organizationId, input.websiteId, input.scanId, JSON.stringify({ deterministic: true, intelligence: "GENERATING" })]
+  );
+
+  try {
+    await assertOrgAiBudget(input.organizationId);
+  } catch (error: unknown) {
+    if (!(error instanceof AiBudgetError)) throw error;
+    await failIntelligence(input, error.message);
+    return emptyResult("failed", error.message);
+  }
+  if (signal.aborted) return abortedResult();
+
+  const discoveryExecutionId = await startDiscoveryExecution(input);
+  let discovery;
+  try {
+    discovery = await runDiscovery({
+      scanId: input.scanId,
+      organizationId: input.organizationId,
+      websiteId: input.websiteId,
+      target: input.target,
+      signal,
+    });
+    await finishDiscoveryExecution(discoveryExecutionId, "completed");
+  } catch (error: unknown) {
+    const message = (error as Error).message;
+    await finishDiscoveryExecution(discoveryExecutionId, "failed", message);
+    await failIntelligence(input, `DISCOVERY_FAILURE: ${message}`);
+    return emptyResult("failed", message);
+  }
+
+  if (signal.aborted) return abortedResult(discovery.pages.length);
+  if (discovery.pages.length === 0 || discovery.evidence.length === 0) {
+    const message = "Discovery produced no usable evidence";
+    await failIntelligence(input, `DISCOVERY_FAILURE: ${message}`);
+    return { ...emptyResult("failed", message), discoveryCount: discovery.pages.length };
+  }
+
+  if (!getOxAlphaExecutor()) {
+    await failIntelligence(input, "MODEL_UNAVAILABLE: OPENROUTER_API_KEY is not configured");
+    return { ...emptyResult("unavailable", "OPENROUTER_API_KEY is not configured"), discoveryCount: discovery.pages.length };
+  }
+
+  const evidenceReferences = discovery.evidence.map((record) => record.evidenceId);
+  const deterministicEvidence = await findScanEvidence(input.organizationId, input.scanId, input.websiteId);
+  const allEvidence = [...new Map([...discovery.evidence, ...deterministicEvidence].map((record) => [record.evidenceId, record])).values()];
+  const allEvidenceReferences = allEvidence.map((record) => record.evidenceId);
+  const sharedContext = { discoveryPages: discovery.pages, deterministicFindings: input.deterministicFindings, deterministicEvidence, discoveryWarnings: discovery.warnings, evidenceState: "Canonical discovery and deterministic scanner evidence; external visibility and unavailable measurements are NOT_MEASURED." };
+  const settled = await Promise.all(SPECIALISTS.map(async (spec) => {
+    const definition = getAgentDefinition(spec.agentType)!;
+    const stageOwner = randomUUID();
+    let stopHeartbeat: (() => void) | undefined;
+    try {
+      const claimed = await claimStage(input, spec.agentType, stageOwner);
+      if (claimed === "completed") return [spec.agentType, await completedStageResult(input, spec.agentType)] as const;
+      if (claimed === "busy") return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, "Stage is being executed by another worker")] as const;
+      stopHeartbeat = startStageHeartbeat(input, spec.agentType, stageOwner);
+      if (signal.aborted) throw new AiAbortedError(`${spec.agentType} aborted before provider call`);
+      if (await isCancelled(input)) return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, "Scan was cancelled before specialist execution")] as const;
+      if (signal.aborted) throw new AiAbortedError(`${spec.agentType} aborted before provider call`);
+      const result = await raceAbort(withDeadline(agentExecutor.execute({ signal, taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: spec.agentType, agentVersion: definition.version, evidenceReferences: allEvidenceReferences, riskLevel: spec.riskLevel, satisfiedDependencies: ["DISCOVERY"], allowedTools: spec.allowedTools, context: sharedContext, deadlineAt }), deadlineAt, spec.agentType), signal, spec.agentType);
+      if (signal.aborted) throw new AiAbortedError(`${spec.agentType} aborted after execution`);
+      if (await isCancelled(input)) return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, "Scan was cancelled after specialist execution")] as const;
+      await assertQuality(input, result);
+      await persistAgentFindings(input, spec.category, spec.agentType, result.findings);
+      await finishStage(input, spec.agentType, stageOwner, "COMPLETED");
+      return [spec.agentType, result] as const;
+    } catch (error: unknown) {
+      await finishStage(input, spec.agentType, stageOwner, "FAILED", (error as Error).message);
+      return [spec.agentType, failedAgentResult(input.scanId, spec.agentType, (error as Error).message)] as const;
+    } finally {
+      stopHeartbeat?.();
+    }
+  }));
+  if (signal.aborted) return abortedResult(discovery.pages.length, Object.fromEntries(settled) as Partial<Record<AgentType, AgentResult>>);
+  const agentResults = Object.fromEntries(settled) as Partial<Record<AgentType, AgentResult>>;
+  const successfulResults = settled.filter(([, result]) => result.status !== "FAILED");
+  const failedResults = settled.filter(([, result]) => result.status === "FAILED");
+  const seoResult = agentResults.SEO_ANALYSIS ?? null;
+  const crossDomainResult = await runCrossDomainStage(input);
+  let reportResult: AgentResult | null = null;
+  if (successfulResults.length > 0) {
+    try {
+      if (await isCancelled(input)) {
+        await markCancelled(input);
+        return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult: null, status: "failed", error: "Scan was cancelled before report synthesis" };
+      }
+      const definition = getAgentDefinition("REPORT_SYNTHESIS")!;
+      const agentFindings = Object.fromEntries(successfulResults.map(([type, result]) => [type, result.findings]));
+      // Claim keyed by the synthesis inputs: a retry with identical inputs reuses the stored report, changed inputs re-run it.
+      const synthesisStage = `REPORT_SYNTHESIS:${key({ statuses: settled.map(([type, result]) => [type, result.status]), findings: Object.entries(agentFindings).map(([type, list]) => [type, (list as AgentFinding[]).map((f) => [f.category, f.title, f.severity, f.affectedResource ?? null])]) , cross: crossDomainResult.findings.length }).slice(0, 24)}`;
+      const synthesisOwner = randomUUID();
+      const claimed = await claimStage(input, synthesisStage, synthesisOwner);
+      if (claimed === "completed") {
+        reportResult = await loadStoredSynthesis(input);
+        if (!reportResult) throw new Error("Synthesis stage already completed but no stored result is available");
+      } else if (claimed === "busy") {
+        throw new Error("Synthesis stage is being executed by another worker");
+      } else {
+        const stopSynthesisHeartbeat = startStageHeartbeat(input, synthesisStage, synthesisOwner);
+        try {
+          if (signal.aborted) throw new AiAbortedError("REPORT_SYNTHESIS aborted before provider call");
+          reportResult = await raceAbort(withDeadline(agentExecutor.execute({ signal, deadlineAt, taskId: input.scanId, scanId: input.scanId, tenantId: input.organizationId, websiteId: input.websiteId, target: input.target, agentType: "REPORT_SYNTHESIS", agentVersion: definition.version, evidenceReferences: allEvidenceReferences, riskLevel: "MEDIUM", satisfiedDependencies: ["DISCOVERY"], allowedTools: ["FINDING_AGGREGATOR"], context: { ...sharedContext, agentStatuses: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), agentFindings, crossDomainFindings: crossDomainResult.findings, remediationProposals: crossDomainResult.proposals } }), deadlineAt, "REPORT_SYNTHESIS"), signal, "REPORT_SYNTHESIS");
+          await assertQuality(input, reportResult);
+          await finishStage(input, synthesisStage, synthesisOwner, "COMPLETED");
+        } catch (error: unknown) {
+          await finishStage(input, synthesisStage, synthesisOwner, "FAILED", (error as Error).message);
+          throw error;
+        } finally {
+          stopSynthesisHeartbeat();
+        }
+      }
+    } catch (error: unknown) {
+      reportResult = failedAgentResult(input.scanId, "REPORT_SYNTHESIS", (error as Error).message);
+    }
+  }
+  if (signal.aborted) return abortedResult(discovery.pages.length, agentResults);
+  const status = failedResults.length === 0 && reportResult?.status !== "FAILED" ? "completed" : successfulResults.length > 0 ? "partial" : "failed";
+  const error = failedResults.length > 0 ? `${failedResults.length} specialist agent(s) failed` : reportResult?.status === "FAILED" ? "Report synthesis failed" : undefined;
+  const reportStatus = status === "completed" && reportResult?.status !== "FAILED" ? "READY" : "FAILED";
+  const reportArtifact = { synthesis: reportResult, crossDomainFindings: crossDomainResult.findings, remediationProposals: crossDomainResult.proposals };
+  await query("UPDATE reports SET status = $4, summary = $5, synthesis_artifact = $6, synthesis_execution_id = $7, synthesis_quality_status = $8, error = $9, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportStatus, JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), JSON.stringify(reportArtifact), reportResult?.executionId ?? null, reportResult?.status === "FAILED" ? "REJECTED" : "ACCEPTED", error]);
+  await query("UPDATE scans SET intelligence_status = $3, intelligence_error = $4 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, status === "completed" ? "COMPLETED" : status === "partial" ? "PARTIAL" : "FAILED", error]);
+  return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult, status, error };
+}
+
+async function loadStoredSynthesis(input: { scanId: string; organizationId: string }): Promise<AgentResult | null> {
+  const { rows } = await query<{ synthesis_artifact: { synthesis?: AgentResult | null } | string | null }>("SELECT synthesis_artifact FROM reports WHERE scan_id=$1 AND org_id=$2 AND report_version=1", [input.scanId, input.organizationId]);
+  const raw = rows[0]?.synthesis_artifact;
+  const artifact = typeof raw === "string" ? (JSON.parse(raw) as { synthesis?: AgentResult | null }) : raw;
+  return artifact?.synthesis && artifact.synthesis.status !== "FAILED" ? artifact.synthesis : null;
+}
+
+async function runCrossDomainStage(input: { scanId: string; organizationId: string; websiteId: string }): Promise<{ findings: unknown[]; proposals: unknown[] }> {
+  const { rows } = await query<{ id: string; category: string; module_name: string; severity: string; title: string; description: string; recommendation: string; affected_urls: string[]; evidence_ids: string[] }>(`SELECT f.id, f.category, f.module_name, f.severity, f.title, f.description, f.recommendation, f.affected_urls, COALESCE(array_agg(fe.evidence_id) FILTER (WHERE fe.evidence_id IS NOT NULL), '{}') AS evidence_ids
+    FROM findings f LEFT JOIN finding_evidence fe ON fe.finding_id=f.id AND fe.org_id=f.org_id
+    WHERE f.scan_id=$1 AND f.org_id=$2 AND f.website_id=$3 AND f.module_name IN ('SEO_ANALYSIS','AEO_ANALYSIS','SECURITY_ANALYSIS','PERFORMANCE_ANALYSIS','ACCESSIBILITY_ANALYSIS','TECHNICAL_HEALTH_ANALYSIS')
+    GROUP BY f.id`, [input.scanId, input.organizationId, input.websiteId]);
+  const source = rows.filter((finding) => Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0);
+  const finding = buildCrossDomainFinding(source);
+  if (!finding) return { findings: [], proposals: [] };
+  await persistCrossDomainFinding({ orgId: input.organizationId, websiteId: input.websiteId, scanId: input.scanId, finding });
+  const proposal = buildProposal(finding, source.map((item) => item.recommendation));
+  await persistRemediationProposal({ orgId: input.organizationId, websiteId: input.websiteId, scanId: input.scanId, proposal });
+  return { findings: [finding], proposals: [proposal] };
+}
+
+async function failIntelligence(input: { scanId: string; organizationId: string; websiteId: string }, error: string): Promise<void> {
+  await query("UPDATE scans SET intelligence_status = 'FAILED', intelligence_error = $3 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, error]);
+  await query("UPDATE reports SET status = 'FAILED', error = $4, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, error]);
+}
+
+async function isCancelled(input: { scanId: string; organizationId: string }): Promise<boolean> {
+  const { rows } = await query<{ status: string }>("SELECT status FROM scans WHERE id=$1 AND org_id=$2", [input.scanId, input.organizationId]);
+  return rows[0]?.status === "cancelled";
+}
+
+/** Evaluates quality against stored evidence (reusing the orchestrator's assessment when present) and rejects anything but ACCEPT. */
+async function assertQuality(input: { scanId: string; organizationId: string }, result: AgentResult): Promise<void> {
+  const quality = result.quality ?? assessQuality({ result, evidenceCheck: await loadEvidenceCheck(result, { tenantId: input.organizationId, taskId: input.scanId }), policyGate: { passed: true } });
+  if (quality.status !== "ACCEPT") throw new Error(`QC_REJECTED: ${quality.status} [${quality.reasonCodes.join(",")}] policy v${quality.policyVersion}`);
+}
+
+type StageClaim = "claimed" | "completed" | "busy";
+
+async function claimStage(input: { scanId: string; organizationId: string }, stageName: string, ownerId: string): Promise<StageClaim> {
+  const { rows } = await query<{ stage_name: string }>(`INSERT INTO agent_stage_claims (scan_id, org_id, stage_name, owner_id, status, attempt_number, claimed_at, lease_until)
+    VALUES ($1,$2,$3,$4,'RUNNING',1,NOW(),NOW()+($5 || ' milliseconds')::interval)
+    ON CONFLICT (scan_id, stage_name) DO UPDATE SET owner_id=EXCLUDED.owner_id, status='RUNNING', attempt_number=agent_stage_claims.attempt_number+1, claimed_at=NOW(), lease_until=NOW()+($5 || ' milliseconds')::interval, error=NULL
+    WHERE agent_stage_claims.status <> 'COMPLETED' AND agent_stage_claims.lease_until < NOW()
+    RETURNING stage_name`, [input.scanId, input.organizationId, stageName, ownerId, AI_STAGE_LEASE_MS]);
+  if (rows.length > 0) return "claimed";
+  const current = await query<{ status: string }>("SELECT status FROM agent_stage_claims WHERE scan_id=$1 AND org_id=$2 AND stage_name=$3", [input.scanId, input.organizationId, stageName]);
+  return current.rows[0]?.status === "COMPLETED" ? "completed" : "busy";
+}
+
+/** Renews the stage lease while bounded AI work is running so it cannot expire mid-execution. */
+export function startStageHeartbeat(input: { scanId: string; organizationId: string }, stageName: string, ownerId: string): () => void {
+  const timer = setInterval(() => {
+    query("UPDATE agent_stage_claims SET lease_until=NOW()+($5 || ' milliseconds')::interval WHERE scan_id=$1 AND org_id=$2 AND stage_name=$3 AND owner_id=$4 AND status='RUNNING'", [input.scanId, input.organizationId, stageName, ownerId, AI_STAGE_LEASE_MS])
+      .catch((err: unknown) => console.warn(`[scan-pipeline] stage heartbeat failed for ${stageName}: ${(err as Error).message}`));
+  }, AI_STAGE_HEARTBEAT_MS);
+  return () => clearInterval(timer);
+}
+
+/** A stage that already completed (e.g. scan recovered/requeued) is never re-run; its persisted findings are reused. */
+async function completedStageResult(input: { scanId: string; organizationId: string }, agentType: AgentType): Promise<AgentResult> {
+  const { rows } = await query<{ id: string; title: string; category: string; severity: string; description: string; recommendation: string; affected_urls: string[]; confidence: number; evidence_ids: string[] }>(
+    `SELECT f.id, f.title, f.category, f.severity, f.description, f.recommendation, f.affected_urls, f.confidence,
+            COALESCE(array_agg(fe.evidence_id::text) FILTER (WHERE fe.evidence_id IS NOT NULL), '{}') AS evidence_ids
+     FROM findings f LEFT JOIN finding_evidence fe ON fe.finding_id=f.id AND fe.org_id=f.org_id
+     WHERE f.scan_id=$1 AND f.org_id=$2 AND f.module_name=$3 GROUP BY f.id`, [input.scanId, input.organizationId, agentType]);
+  const findings: AgentFinding[] = rows.map((row) => ({ findingId: row.id, title: row.title, category: row.category, severity: String(row.severity).toUpperCase() as AgentFinding["severity"], description: row.description, affectedResource: row.affected_urls?.[0], evidenceIds: row.evidence_ids, confidence: Number(row.confidence), recommendation: row.recommendation, status: "OPEN" }));
+  return { status: "SUCCESS", agentType, agentVersion: getAgentDefinition(agentType)?.version ?? "1", taskId: input.scanId, findings, evidenceReferences: [...new Set(findings.flatMap((finding) => finding.evidenceIds))], recommendations: [], confidence: 100, warnings: ["Stage already completed; persisted result reused without a model call"], limitations: [] };
+}
+
+async function finishStage(input: { scanId: string; organizationId: string }, stageName: string, ownerId: string | undefined, status: "COMPLETED" | "FAILED", error?: string): Promise<void> {
+  if (ownerId) await query("UPDATE agent_stage_claims SET status=$4, completed_at=NOW(), error=$5 WHERE scan_id=$1 AND org_id=$2 AND stage_name=$3 AND owner_id=$6", [input.scanId, input.organizationId, stageName, status, error ?? null, ownerId]);
+}
+
+async function markCancelled(input: { scanId: string; organizationId: string; websiteId: string }): Promise<void> {
+  await query("UPDATE scans SET intelligence_status='CANCELLED', intelligence_error='Scan cancelled' WHERE id=$1 AND org_id=$2 AND status='cancelled'", [input.scanId, input.organizationId]);
+  await query("UPDATE reports SET status='FAILED', error='Scan cancelled', updated_at=NOW() WHERE scan_id=$1 AND org_id=$2 AND website_id=$3 AND report_version=1", [input.scanId, input.organizationId, input.websiteId]);
+}
+
+async function startDiscoveryExecution(input: { scanId: string; organizationId: string }): Promise<string> {
+  const executionId = randomUUID();
+  await query(
+    `INSERT INTO agent_executions (scan_id, org_id, agent_type, task, status, attempt_number, execution_id, started_at)
+     VALUES ($1, $2, 'DISCOVERY', 'Discover authorized website resources', 'running', 1, $3, NOW())`,
+    [input.scanId, input.organizationId, executionId]
+  );
+  return executionId;
+}
+
+async function finishDiscoveryExecution(executionId: string, status: "completed" | "failed", error?: string): Promise<void> {
+  await query("UPDATE agent_executions SET status = $2, completed_at = NOW(), error = $3 WHERE execution_id = $1", [executionId, status, error ?? null]);
+}
+
+function failedAgentResult(taskId: string, agentType: AgentType, message: string): AgentResult {
+  return {
+    status: "FAILED",
+    agentType,
+    agentVersion: getAgentDefinition(agentType)?.version ?? "1",
+    taskId,
+    findings: [],
+    evidenceReferences: [],
+    recommendations: [],
+    confidence: 0,
+    warnings: [message],
+    limitations: ["Agent execution did not produce a validated result"],
+  };
+}
+
+async function persistAgentFindings(
+  input: { scanId: string; organizationId: string; websiteId: string },
+  category: string,
+  agentType: AgentType,
+  findings: AgentFinding[],
+): Promise<void> {
+  for (const finding of findings) {
+    const findingKey = key({ agent: agentType, category: finding.category, title: finding.title, affectedResource: finding.affectedResource ?? null });
+    const { rows } = await query<{ id: string }>(
+      `INSERT INTO findings (scan_id, website_id, org_id, logical_key, module_name, category, severity, title, description, recommendation, affected_urls, confidence, provenance)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'INFERRED')
+       ON CONFLICT (org_id, scan_id, logical_key) DO UPDATE SET description=EXCLUDED.description, recommendation=EXCLUDED.recommendation, affected_urls=EXCLUDED.affected_urls, confidence=EXCLUDED.confidence
+       RETURNING id`,
+      [input.scanId, input.websiteId, input.organizationId, findingKey, agentType, category, finding.severity.toLowerCase(), finding.title, finding.description, finding.recommendation ?? "", finding.affectedResource ? [finding.affectedResource] : [], finding.confidence]
+    );
+    await query("INSERT INTO finding_evidence (finding_id, evidence_id, org_id) SELECT $1, id, $3 FROM evidence WHERE id = ANY($2::uuid[]) AND org_id = $3 AND task_id = $4 ON CONFLICT DO NOTHING", [rows[0].id, finding.evidenceIds, input.organizationId, input.scanId]);
+  }
+}
+
+async function persistSeoFindings(input: { scanId: string; organizationId: string; websiteId: string }, findings: AgentFinding[]): Promise<void> {
+  for (const finding of findings) {
+    const findingKey = key({ agent: "SEO_ANALYSIS", category: finding.category, title: finding.title, affectedResource: finding.affectedResource ?? null });
+    const { rows } = await query<{ id: string }>(
+      `INSERT INTO findings (scan_id, website_id, org_id, logical_key, module_name, category, severity, title, description, recommendation, affected_urls, confidence, provenance)
+       VALUES ($1,$2,$3,$4,'SEO_ANALYSIS',$5,$6,$7,$8,$9,$10,$11,'INFERRED')
+       ON CONFLICT (org_id, scan_id, logical_key) DO UPDATE SET description=EXCLUDED.description, recommendation=EXCLUDED.recommendation, affected_urls=EXCLUDED.affected_urls, confidence=EXCLUDED.confidence
+       RETURNING id`,
+      [input.scanId, input.websiteId, input.organizationId, findingKey, finding.category, finding.severity.toLowerCase(), finding.title, finding.description, finding.recommendation ?? "", finding.affectedResource ? [finding.affectedResource] : [], finding.confidence]
+    );
+    await query(
+      "UPDATE evidence SET finding_id = $1 WHERE id = ANY($2::uuid[]) AND org_id = $3 AND task_id = $4",
+      [rows[0].id, finding.evidenceIds, input.organizationId, input.scanId]
+    );
+  }
+}
