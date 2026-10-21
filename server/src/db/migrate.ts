@@ -148,18 +148,35 @@ export async function runMigrations(
   }
 }
 
+/**
+ * DDL should not go through a transaction-mode pooler (Neon's `-pooler`
+ * endpoint / PgBouncer). Prefer the direct, non-pooled connection when it is
+ * configured; fall back to DATABASE_URL. Only the variable name is logged.
+ */
+export function migrationConnectionString(
+  env: NodeJS.ProcessEnv,
+): { url: string; source: "DIRECT_DATABASE_URL" | "DATABASE_URL" } | null {
+  const direct = env.DIRECT_DATABASE_URL?.trim();
+  if (direct) return { url: direct, source: "DIRECT_DATABASE_URL" };
+  const pooled = env.DATABASE_URL?.trim();
+  if (pooled) return { url: pooled, source: "DATABASE_URL" };
+  return null;
+}
+
 export function defaultMigrationsDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "migrations");
 }
 
 async function main() {
-  const { validateProductionSecurityConfig } = await import("../config-security.js");
-  const DATABASE_URL = process.env.DATABASE_URL;
-  validateProductionSecurityConfig(process.env);
-  if (!DATABASE_URL) {
-    console.error("DATABASE_URL is required");
+  const { validateMigrationSecurityConfig } = await import("../config-security.js");
+  validateMigrationSecurityConfig(process.env);
+  const target = migrationConnectionString(process.env);
+  if (!target) {
+    console.error("DATABASE_URL (or DIRECT_DATABASE_URL) is required");
     process.exit(1);
   }
+  console.log(`[migrate] Using ${target.source} connection.`);
+  const DATABASE_URL = target.url;
   const ssl =
     process.env.NODE_ENV === "production"
       ? { rejectUnauthorized: true, ...(process.env.DB_SSL_CA ? { ca: process.env.DB_SSL_CA } : {}) }

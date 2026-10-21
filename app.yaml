@@ -4,9 +4,14 @@ services:
     github:
       repo: gudlavarunkumar5195-bot/ZigmaNeuralIntelligence
       branch: main
-      deploy_on_push: true
+      # Auto-deploy is off until CI (.github/workflows/ci.yml) is required on
+      # main: App Platform cannot wait for a GitHub check, so deploy_on_push
+      # would ship commits CI has not passed. Deploy manually after CI is green.
+      deploy_on_push: false
     build_command: pnpm install --frozen-lockfile && pnpm --dir server install --frozen-lockfile && pnpm build
-    run_command: pnpm --dir server migrate:prod && pnpm --dir server start
+    # Migrations are NOT run here: they run once per release in the PRE_DEPLOY
+    # job below, so scaling or restarting web instances never re-runs DDL.
+    run_command: pnpm --dir server start
     instance_count: 1
     instance_size_slug: basic-xxs
     health_check:
@@ -78,3 +83,31 @@ services:
       - key: CORS_ORIGIN
         scope: RUN_TIME
         value: "${APP_URL}"
+
+# One-off release job: applies pending migrations once per deployment, before
+# the new web instances start. Uses the direct (non-pooled) Neon endpoint when
+# DIRECT_DATABASE_URL is set; DDL should not go through a transaction pooler.
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    github:
+      repo: gudlavarunkumar5195-bot/ZigmaNeuralIntelligence
+      branch: main
+      deploy_on_push: false
+    build_command: pnpm install --frozen-lockfile && pnpm --dir server install --frozen-lockfile && pnpm --dir server build
+    run_command: pnpm --dir server migrate:prod
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: NODE_ENV
+        scope: RUN_TIME
+        value: "production"
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: DIRECT_DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: DB_SSL_REJECT_UNAUTHORIZED
+        scope: RUN_TIME
+        value: "true"

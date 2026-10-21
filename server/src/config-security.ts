@@ -48,6 +48,19 @@ export function validateProductionSecurityConfig(env: NodeJS.ProcessEnv): void {
   }
 }
 
+/**
+ * The migration job only needs database settings, so it validates only what
+ * protects the database connection (verified TLS in production). It must not
+ * require the web process's JWT/cookie/CORS secrets, which the release job
+ * does not receive.
+ */
+export function validateMigrationSecurityConfig(env: NodeJS.ProcessEnv): void {
+  if (env.NODE_ENV !== "production") return;
+  if (env.DB_SSL_REJECT_UNAUTHORIZED !== "true") {
+    throw new Error("Production requires DB_SSL_REJECT_UNAUTHORIZED=true");
+  }
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**

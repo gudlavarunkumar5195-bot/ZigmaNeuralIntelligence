@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.34.3"
+
+jobs:
+  verify:
+    name: Type check, test, build, audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      # A fresh cluster with ONLY the default roles (no Supabase roles), so the
+      # migration step proves a brand-new Neon/PostgreSQL database migrates.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: zni_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d zni_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CI_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/zni_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            server/pnpm-lock.yaml
+
+      - name: Install (frozen lockfiles)
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir server install --frozen-lockfile
+
+      - name: Applied migrations are immutable
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          changed=$(git diff --name-status "origin/${{ github.base_ref }}...HEAD" -- server/src/db/migrations | grep -v '^A' || true)
+          if [ -n "$changed" ]; then
+            echo "Existing migration files were modified, renamed or deleted:"
+            echo "$changed"
+            echo "Add a new numbered migration instead."
+            exit 1
+          fi
+
+      - name: Type check (frontend)
+        run: pnpm exec tsc --noEmit
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Server build
+        run: pnpm --dir server build
+
+      - name: Migrate a fresh database (no pre-created Supabase roles)
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: |
+          pnpm --dir server migrate
+          # Second run must be a no-op (checksums verified, nothing re-applied).
+          pnpm --dir server migrate
+
+      - name: Server tests (unit + PostgreSQL integration)
+        env:
+          RUN_INTEGRATION: "1"
+          TEST_DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: pnpm --dir server test
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Dependency audit (production dependencies)
+        run: |
+          pnpm audit --prod --audit-level high
+          pnpm --dir server audit --prod --audit-level high
+
+      - name: Whitespace check
+        if: github.event_name == 'pull_request'
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"
+
+  e2e:
+    name: Browser smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          CI: "true"

@@ -10,7 +10,17 @@ describe("deployment startup configuration", () => {
 
     expect(rootPackage.scripts.start).toBe("pnpm --dir server start");
     const appYaml = readFileSync(resolve(__dirname, "../../app.yaml"), "utf-8");
-    expect(appYaml).toContain("run_command: pnpm --dir server migrate:prod && pnpm --dir server start");
+    // Web instances only start the server; migrations run once per release in
+    // a PRE_DEPLOY job (never on every container start or scale-out).
+    expect(appYaml).toContain("run_command: pnpm --dir server start");
+    expect(appYaml).not.toContain("migrate:prod && pnpm --dir server start");
+    const jobs = appYaml.slice(appYaml.indexOf("\njobs:"));
+    expect(jobs).toContain("kind: PRE_DEPLOY");
+    expect(jobs).toContain("run_command: pnpm --dir server migrate:prod");
+    expect(jobs).toContain("key: DIRECT_DATABASE_URL");
+    expect(jobs).toContain('key: DB_SSL_REJECT_UNAUTHORIZED\n        scope: RUN_TIME\n        value: "true"');
+    // No commit reaches production without CI passing first.
+    expect(appYaml).not.toMatch(/deploy_on_push:\s*true/);
     expect(appYaml).toContain("http_path: /ready");
     expect(rootPackage.scripts.start).toBe("pnpm --dir server start");
   });

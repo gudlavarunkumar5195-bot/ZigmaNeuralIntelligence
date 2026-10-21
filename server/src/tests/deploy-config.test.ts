@@ -76,4 +76,29 @@ describe("deploy configuration (F-018)", () => {
   });
 });
 
+describe("migrations run once per release on the direct connection (P0-8)", () => {
+  it("prefers DIRECT_DATABASE_URL and reports only the variable name", async () => {
+    const { migrationConnectionString } = await import("../db/migrate.js");
+    expect(migrationConnectionString({ DATABASE_URL: "postgres://pooled", DIRECT_DATABASE_URL: "postgres://direct" } as NodeJS.ProcessEnv))
+      .toEqual({ url: "postgres://direct", source: "DIRECT_DATABASE_URL" });
+    expect(migrationConnectionString({ DATABASE_URL: "postgres://pooled", DIRECT_DATABASE_URL: "  " } as NodeJS.ProcessEnv))
+      .toEqual({ url: "postgres://pooled", source: "DATABASE_URL" });
+    expect(migrationConnectionString({} as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it("migration job requires verified TLS in production but not web secrets", async () => {
+    const { validateMigrationSecurityConfig } = await import("../config-security.js");
+    expect(() => validateMigrationSecurityConfig({ NODE_ENV: "production" } as NodeJS.ProcessEnv)).toThrow(/DB_SSL_REJECT_UNAUTHORIZED/);
+    expect(() => validateMigrationSecurityConfig({ NODE_ENV: "production", DB_SSL_REJECT_UNAUTHORIZED: "false" } as NodeJS.ProcessEnv)).toThrow();
+    expect(() => validateMigrationSecurityConfig({ NODE_ENV: "production", DB_SSL_REJECT_UNAUTHORIZED: "true" } as NodeJS.ProcessEnv)).not.toThrow();
+  });
+
+  it("the web service does not run migrations; a PRE_DEPLOY job does", () => {
+    const y = read(join(rootDir, "app.yaml"));
+    const web = y.slice(y.indexOf("services:"), y.indexOf("\njobs:"));
+    expect(web).not.toMatch(/migrate/);
+    expect(y.slice(y.indexOf("\njobs:"))).toMatch(/kind: PRE_DEPLOY[\s\S]*run_command: pnpm --dir server migrate:prod/);
+  });
+});
+
 function pathToUrl(p: string) { return new URL(`file://${p}`).href; }
