@@ -143,22 +143,25 @@ export async function verifyOwnership(websiteId: string, orgId: string): Promise
     // Both HTTP methods prove control of the ORIGIN (the crawl scope), so the
     // token is read from the origin root, never from a deeper path that a
     // shared host might let another tenant control.
-    const origin = new URL(website.url).origin;
-    const target = website.verification_method === "file"
-      ? `${origin}/zignaneural-verify.txt`
-      : `${origin}/`;
-    const response = await safeFetch(target);
-    // safeFetch follows redirects (each hop is SSRF-checked). The token only
-    // counts if the document that carries it was served by the claimed host:
-    // otherwise an open redirect on the victim's site would let an attacker
-    // "verify" it with a token hosted elsewhere.
-    if (response.ok && isClaimedHost(website.domain, response.finalUrl)) {
-      if (website.verification_method === "file") {
-        verified = response.body.trim() === token;
-      } else {
-        const document = cheerio.load(response.body);
-        verified = document('meta[name="zignaneural-site-verification"]').toArray()
-          .some((element) => document(element).attr("content")?.trim() === token);
+    const origin = verificationOrigin(website.url, website.domain);
+    if (origin) {
+      const target = website.verification_method === "file"
+        ? `${origin}/zignaneural-verify.txt`
+        : `${origin}/`;
+      // safeFetch follows redirects (each hop is SSRF-checked). The token only
+      // counts if the document that carries it was served by the claimed site:
+      // otherwise an open redirect on the victim's site would let an attacker
+      // "verify" it with a token hosted elsewhere. Blocked, unreachable or
+      // timed-out fetches fail verification instead of surfacing as a 500.
+      const response = await safeFetch(target).catch(() => null);
+      if (response?.ok && isClaimedFinalUrl(website.domain, target, response.finalUrl)) {
+        if (website.verification_method === "file") {
+          verified = response.body.trim() === token;
+        } else {
+          const document = cheerio.load(response.body);
+          verified = document('meta[name="zignaneural-site-verification"]').toArray()
+            .some((element) => document(element).attr("content")?.trim() === token);
+        }
       }
     }
   }
@@ -186,6 +189,44 @@ export function isClaimedHost(claimedDomain: string, finalUrl: string): boolean 
   const claimed = claimedDomain.toLowerCase().replace(/\.$/, "");
   const bare = (h: string) => (h.startsWith("www.") ? h.slice(4) : h);
   return host === claimed || bare(host) === bare(claimed);
+}
+
+/**
+ * The origin whose root carries the HTTP verification token, or null when the
+ * stored URL is malformed, not http(s), or not on the claimed domain.
+ */
+export function verificationOrigin(storedUrl: string, claimedDomain: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(storedUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  return isClaimedHost(claimedDomain, url.href) ? url.origin : null;
+}
+
+/**
+ * The document that served the token must come from the claimed site: same
+ * host or its www/apex twin, http(s) only, never downgraded from https to
+ * http, and on the requested port or the scheme's default port (so
+ * http://example.com -> https://example.com still passes).
+ */
+export function isClaimedFinalUrl(claimedDomain: string, requestedUrl: string, finalUrl: string): boolean {
+  let requested: URL;
+  let final: URL;
+  try {
+    requested = new URL(requestedUrl);
+    final = new URL(finalUrl);
+  } catch {
+    return false;
+  }
+  if (final.protocol !== "http:" && final.protocol !== "https:") return false;
+  if (requested.protocol === "https:" && final.protocol !== "https:") return false;
+  if (final.username || final.password) return false;
+  if (final.port !== "" && final.port !== requested.port) return false;
+  return isClaimedHost(claimedDomain, final.href);
 }
 
 export async function markVerified(websiteId: string, orgId: string): Promise<void> {
