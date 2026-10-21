@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../config.js", () => ({ config: { OX_ALPHA_MODEL: "primary", OX_ALPHA_TIMEOUT_MS: 5_000, OX_ALPHA_MAX_RETRIES: 3, OX_ALPHA_MAX_OUTPUT_TOKENS: 4_096, OPENROUTER_API_KEY: "k", SCANNER_MAX_PAGES: 200, SCANNER_MAX_SCAN_DURATION_MS: 300_000, AI_MAX_EXECUTIONS_PER_ORG_PER_DAY: 3 } }));
 const queryMock = vi.hoisted(() => vi.fn());
-vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: vi.fn() }));
+vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }) }));
 vi.mock("../services/audit.service.js", () => ({ audit: vi.fn(async () => {}) }));
 const safeFetchMock = vi.hoisted(() => vi.fn());
 vi.mock("../scanner/fetch.js", () => ({ safeFetch: safeFetchMock }));
@@ -19,13 +19,13 @@ import { AiAbortedError, raceAbort } from "../ai/limits.js";
 import type { ModelProvider, ModelResponse } from "../ai/provider.js";
 
 const resp = (content: string, finishReason: ModelResponse["finishReason"] = "stop"): ModelResponse => ({ executionId: "x", model: "m", provider: "mock", content, finishReason, usage: null, durationMs: 1 });
-const req = { messages: [{ role: "user" as const, content: "hi" }], requireJson: true };
+const req = { messages: [{ role: "user" as const, content: "hi" }], requireJson: true, orgId: "org-1", scanId: "scan-1" };
 const fake = (impl: (call: number, model: string) => Promise<ModelResponse>): ModelProvider & { calls: number } => {
   const p = { name: "mock", calls: 0, isAvailable: async () => true, execute: vi.fn(async (r: { model: string }) => { p.calls++; return impl(p.calls, r.model); }) };
   return p as unknown as ModelProvider & { calls: number };
 };
 
-beforeEach(() => { queryMock.mockReset(); queryMock.mockResolvedValue({ rows: [{ id: "db", count: "0" }] }); });
+beforeEach(() => { queryMock.mockReset(); queryMock.mockResolvedValue({ rows: [{ id: "db", count: "0", free_status: "FREE" }] }); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("A1 abort semantics in OxAlphaExecutor", () => {
@@ -87,7 +87,7 @@ describe("A7 per-org daily budget", () => {
     expect(queryMock.mock.calls[0][1]).toEqual(["org-1"]);
   });
   it("executor makes no provider call once the org budget is exhausted", async () => {
-    queryMock.mockImplementation(async (sql: string) => String(sql).includes("COUNT(*)") ? { rows: [{ count: "3" }] } : { rows: [{ id: "db" }] });
+    queryMock.mockImplementation(async (sql: string) => String(sql).includes("COUNT(*)") ? { rows: [{ count: "3" }] } : { rows: [{ id: "db", free_status: "FREE" }] });
     const p = fake(async () => resp("{}"));
     const r = await new OxAlphaExecutor(p).execute({ ...req, orgId: "org-1", scanId: "scan-1" });
     expect(p.calls).toBe(0);

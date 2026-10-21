@@ -9,6 +9,7 @@
 // OX Alpha CANNOT override hard eligibility or security constraints.
 // Website/user content is NEVER included in the routing prompt (prompt injection defense).
 
+import { config } from "../../config.js";
 import { query } from "../../db/client.js";
 import { getEligibleModels } from "../registry.service.js";
 import type { ModelRow, BenchmarkRow, ReliabilityRow } from "../registry.service.js";
@@ -45,9 +46,12 @@ export async function resolveRouting(
   const policy = await getActivePolicy(orgId ?? requirements.orgId);
 
   // Apply policy defaults to requirements
+  // Platform ceiling: until AI_ALLOW_PAID_MODELS is explicitly enabled, no
+  // request or org policy can widen routing to paid models.
+  const paidAllowed = (config as { AI_ALLOW_PAID_MODELS?: boolean }).AI_ALLOW_PAID_MODELS === true;
   const effectiveReq: TaskRequirements = {
     ...requirements,
-    freeOnly: requirements.freeOnly ?? policy.freeOnly,
+    freeOnly: paidAllowed ? (requirements.freeOnly ?? policy.freeOnly) : true,
     minimumReliability: requirements.minimumReliability ?? (policy.minReliability > 0 ? policy.minReliability : undefined),
     minimumQualityScore: requirements.minimumQualityScore ?? (policy.minQuality > 0 ? policy.minQuality : undefined),
     excludedModels: [
@@ -103,7 +107,7 @@ export async function resolveRouting(
   let confidence = baseConfidence;
   let source: DecisionSource = "DETERMINISTIC";
 
-  if (!simulate) {
+  if (!simulate && (config as { AI_ROUTER_LLM_ENABLED?: boolean }).AI_ROUTER_LLM_ENABLED === true) {
     const oxResult = await tryOxAlphaRouting(scored, effectiveReq, baseConfidence);
     if (oxResult) {
       selected = oxResult.selected;

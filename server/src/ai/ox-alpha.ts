@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { ModelProvider, ModelResponse } from "./provider.js";
 import { ProviderError } from "./provider.js";
 import { OpenRouterProvider } from "./providers/openrouter.js";
-import { query } from "../db/client.js";
+import { query, type Queryable } from "../db/client.js";
 import { audit } from "../services/audit.service.js";
 import { config } from "../config.js";
-import { assertOrgAiBudget, AiBudgetError } from "./budget.js";
+import { AiBudgetError, isModelCallable, reserveOrgAiAttempt } from "./budget.js";
 import { AI_AGENT_DEADLINE_MS, AI_MAX_ATTEMPTS_PER_MODEL, AI_MAX_CALL_TIMEOUT_MS, AI_MAX_TOTAL_ATTEMPTS, clampInt } from "./limits.js";
 
 // ─── Public API ────────────────────────────────────────────────────────────────
@@ -85,16 +85,24 @@ export class OxAlphaExecutor {
           lastError = new ProviderError("CANCELLED", "AI_ABORTED: execution cancelled before provider call", false);
           break attempts;
         }
-        if (req.orgId) {
+        // Every provider call must be attributable to an organization and a
+        // scan, so it is counted against that organization's budget.
+        if (!req.orgId || !req.scanId) {
+          lastError = new ProviderError("PROVIDER_ERROR", "AI_UNATTRIBUTED: provider calls require an organization and scan context", false);
+          break attempts;
+        }
+        if (modelAttempt === 1) {
+          let callable = false;
           try {
-            await assertOrgAiBudget(req.orgId);
+            callable = await isModelCallable(model);
           } catch (err: unknown) {
-            lastError = err instanceof AiBudgetError ? err : new ProviderError("PROVIDER_ERROR", `BUDGET_CHECK_FAILED: ${(err as Error).message}`, false);
+            lastError = new ProviderError("PROVIDER_ERROR", `MODEL_CHECK_FAILED: ${(err as Error).message}`, false);
             break attempts;
           }
-          if (req.signal?.aborted) {
-            lastError = new ProviderError("CANCELLED", "AI_ABORTED: execution cancelled before provider call", false);
-            break attempts;
+          if (!callable) {
+            // Not verified FREE in the registry: skip to the next fallback.
+            lastError = new ProviderError("MODEL_UNAVAILABLE", `MODEL_NOT_ALLOWED: ${model} is not a verified free model (paid models are disabled)`, false);
+            continue attempts;
           }
         }
         const remainingMs = deadlineAt - Date.now();
@@ -102,20 +110,31 @@ export class OxAlphaExecutor {
           lastError = new ProviderError("TIMEOUT", "AI_DEADLINE_EXCEEDED: execution deadline reached", false);
           break attempts;
         }
-        globalAttempt++;
         const executionId = randomUUID();
+        let dbId: string;
+        try {
+          // Budget check and attempt row commit atomically (P0-6).
+          dbId = await reserveOrgAiAttempt(req.orgId, (tx) => this.recordStart(tx, {
+            executionId,
+            correlationId,
+            model,
+            agentType: req.agentType ?? "ox_alpha",
+            taskDescription: req.taskDescription ?? "",
+            scanId: req.scanId!,
+            orgId: req.orgId!,
+            attemptNumber: globalAttempt + 1,
+          }));
+        } catch (err: unknown) {
+          lastError = err instanceof AiBudgetError ? err : new ProviderError("PROVIDER_ERROR", `BUDGET_CHECK_FAILED: ${(err as Error).message}`, false);
+          break attempts;
+        }
+        if (req.signal?.aborted) {
+          lastError = new ProviderError("CANCELLED", "AI_ABORTED: execution cancelled before provider call", false);
+          await this.recordEnd(dbId, "failed", null, 0, lastError.message);
+          break attempts;
+        }
+        globalAttempt++;
         executionIds.push(executionId);
-
-        const dbId = await this.recordStart({
-          executionId,
-          correlationId,
-          model,
-          agentType: req.agentType ?? "ox_alpha",
-          taskDescription: req.taskDescription ?? "",
-          scanId: req.scanId,
-          orgId: req.orgId,
-          attemptNumber: globalAttempt,
-        });
 
         const controller = new AbortController();
         const attemptTimeoutMs = Math.min(timeoutMs, remainingMs);
@@ -237,36 +256,31 @@ export class OxAlphaExecutor {
 
   // ─── DB helpers ─────────────────────────────────────────────────────────────
 
-  private async recordStart(params: {
+  private async recordStart(db: Queryable, params: {
     executionId: string;
     correlationId: string;
     model: string;
     agentType: string;
     taskDescription: string;
-    scanId?: string;
-    orgId?: string;
+    scanId: string;
+    orgId: string;
     attemptNumber: number;
   }): Promise<string> {
-    if (!params.scanId || !params.orgId) return "";
-    try {
-      const { rows } = await query<{ id: string }>(
-        `INSERT INTO agent_executions
-            (scan_id, org_id, agent_type, model_id, task, status,
-            attempt_number, execution_kind, logical_execution_id, started_at, correlation_id, execution_id, provider)
-          VALUES ($1, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
-         RETURNING id`,
-        [
-          params.scanId, params.orgId, params.agentType, params.model,
-          params.taskDescription, params.attemptNumber,
-          params.correlationId, params.executionId, this.provider.name,
-        ]
-      );
-      return rows[0]?.id ?? "";
-    } catch (err: unknown) {
-      // DB errors must never crash AI execution, but must not vanish either.
-      console.warn(`[ox-alpha] failed to record execution start: ${(err as Error).message}`);
-      return "";
-    }
+    // Runs inside the budget reservation transaction; errors propagate so no
+    // provider call is made without a recorded (and therefore counted) attempt.
+    const { rows } = await db.query<{ id: string }>(
+      `INSERT INTO agent_executions
+          (scan_id, org_id, agent_type, model_id, task, status,
+          attempt_number, execution_kind, logical_execution_id, started_at, correlation_id, execution_id, provider)
+        VALUES ($1, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
+       RETURNING id`,
+      [
+        params.scanId, params.orgId, params.agentType, params.model,
+        params.taskDescription, params.attemptNumber,
+        params.correlationId, params.executionId, this.provider.name,
+      ]
+    );
+    return rows[0]?.id ?? "";
   }
 
   private async recordEnd(

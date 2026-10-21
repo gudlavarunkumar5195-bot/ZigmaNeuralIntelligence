@@ -375,7 +375,8 @@ describe("calculateRoutingConfidence", () => {
 describe("defaultPolicy", () => {
   it("returns a valid policy with correct defaults", () => {
     const p = defaultPolicy();
-    expect(p.freeOnly).toBe(false);
+    // Free-only until pricing/spend limits are verified (P0-6).
+    expect(p.freeOnly).toBe(true);
     expect(p.minReliability).toBe(0);
     expect(p.maxAttempts).toBe(5);
     expect(p.weights.benchmark).toBeCloseTo(0.3);

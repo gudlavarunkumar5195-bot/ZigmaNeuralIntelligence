@@ -84,7 +84,8 @@ export function defaultPolicy(): RoutingPolicy {
     id: "default",
     orgId: null,
     version: 1,
-    freeOnly: false,
+    // Free-only until model pricing and spend limits are verified (P0-6).
+    freeOnly: true,
     minReliability: 0,
     minQuality: 0,
     maxAttempts: 5,

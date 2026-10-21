@@ -123,6 +123,13 @@ const envSchema = z.object({
   OX_ALPHA_MAX_OUTPUT_TOKENS: z.coerce.number().default(4_096),
   // Hard per-organization ceiling on AI model attempts per rolling 24h.
   AI_MAX_EXECUTIONS_PER_ORG_PER_DAY: z.coerce.number().int().min(0).default(500),
+  // Paid models stay disabled until per-token pricing and spend limits are
+  // verified. While false, only models the registry records as FREE are
+  // callable and every routing decision is forced to free-only.
+  AI_ALLOW_PAID_MODELS: strictBoolean("AI_ALLOW_PAID_MODELS"),
+  // The optional LLM "routing advisor" call is an extra provider call per
+  // agent run. Off by default: deterministic scoring selects the model.
+  AI_ROUTER_LLM_ENABLED: strictBoolean("AI_ROUTER_LLM_ENABLED"),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
