@@ -226,13 +226,31 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
         .send({ error: { code: "NOT_FOUND", message: "Scan not found" } })
     }
 
-    // Attach scores
-    const { rows: scores } = await query(
-      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category",
-      [id, request.orgId],
-    )
+    // Attach scores, per-module status and the latest crawl progress
+    // (scan_events has no org_id; the scan was already resolved in this org).
+    const [{ rows: scores }, { rows: moduleRows }, { rows: progress }] = await Promise.all([
+      query(
+        "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category",
+        [id, request.orgId],
+      ),
+      query(
+        "SELECT module_name, status, error, retry_count, started_at, completed_at FROM scan_modules WHERE scan_id = $1 ORDER BY module_name",
+        [id],
+      ),
+      query(
+        "SELECT payload, created_at FROM scan_events WHERE scan_id = $1 AND type = 'crawl_progress' ORDER BY id DESC LIMIT 1",
+        [id],
+      ),
+    ])
 
-    return reply.send({ data: { ...scan, scores } })
+    return reply.send({
+      data: {
+        ...scan,
+        scores,
+        module_statuses: moduleRows,
+        crawl_progress: progress[0] ? { ...(progress[0].payload as object), at: progress[0].created_at } : null,
+      },
+    })
   })
 
   fastify.get("/:id/status", { preHandler }, async (request, reply) => {

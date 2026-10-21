@@ -12,6 +12,8 @@ interface ScanRecord {
   error: string | null;
   modules: string[];
   scores: Array<{ category: string; score: number | null; status: string }>;
+  module_statuses?: Array<{ module_name: string; status: string; error: string | null }>;
+  crawl_progress?: { pagesCrawled?: number; pagesDiscovered?: number; queued?: number } | null;
 }
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
@@ -23,6 +25,7 @@ const RESULT_LINKS: Array<[module: string, label: string, path: string]> = [
   ["security", "Security findings", "/intelligence/security"],
   ["performance", "Performance findings", "/intelligence/performance"],
   ["ssl", "SSL findings", "/infrastructure/ssl"],
+  ["crawl", "Technical health", "/intelligence/technical-health"],
 ];
 
 /** Only network failures and 5xx responses are worth retrying; 4xx (404/403/...) will not fix themselves. */
@@ -117,6 +120,17 @@ export function ScanProgress() {
     {cancelError && <p role="alert" className="mt-4 rounded bg-red-50 p-3 text-sm text-red-800">{cancelError}</p>}
     {error && <p role="alert" className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-900">Could not refresh scan status: {error.message}{isTransient(error) ? " Retrying…" : ""} <button onClick={retry} className="font-700 underline">Retry</button></p>}
     {scan?.error && <p className="mt-6 rounded bg-red-50 p-3 text-sm text-red-800">{scan.error}</p>}
+    <p role="status" aria-live="polite" className="mt-4 min-h-5 text-sm text-slate-700">
+      {active && scan?.crawl_progress
+        ? `Crawling: ${scan.crawl_progress.pagesCrawled ?? 0} pages fetched, ${scan.crawl_progress.pagesDiscovered ?? 0} URLs discovered.`
+        : scan ? `Scan ${scan.status}.` : ""}
+    </p>
+    {scan?.module_statuses?.length ? <section className="mt-4" aria-labelledby="modules-heading">
+      <h3 id="modules-heading" className="text-sm font-800 text-slate-900">Modules</h3>
+      <ul className="mt-2 grid gap-1 text-sm">
+        {scan.module_statuses.map((m) => <li key={m.module_name} className="flex flex-wrap gap-2"><span className="font-600 text-slate-800">{m.module_name}</span><span className="text-slate-600">{m.status}</span>{m.error ? <span className="text-red-700">{m.error}</span> : null}</li>)}
+      </ul>
+    </section> : null}
     <section className="mt-8">
       <h3 className="flex items-center gap-2 text-sm font-800 text-slate-900"><Activity size={16} />Measured dimensions</h3>
       {scan?.scores.length ? <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">{scan.scores.map((score) => <div key={score.category} className="border-b border-slate-200 py-3"><p className="text-xs font-600 text-slate-500">{score.category}</p><strong className="mt-1 text-2xl text-slate-900">{score.score ?? "—"}</strong><p className="text-[11px] text-slate-400">{score.status}</p></div>)}</div> : <p className="mt-4 text-sm text-slate-500">No measured scores are available for this scan yet.</p>}

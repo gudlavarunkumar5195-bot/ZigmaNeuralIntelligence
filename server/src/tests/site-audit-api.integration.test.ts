@@ -182,13 +182,29 @@ describe.skipIf(!INTEGRATION)("technical audit lifecycle and API (PostgreSQL + H
       expect((await h.request("GET", `${base()}/crawl/pages?outcome=bogus`, as("viewer"))).statusCode).toBe(400);
     });
 
-    it("isolates tenants: another org's website or issue is 404 on every route, and viewers cannot mutate", async () => {
+    it("serves the rule catalog, and scan detail exposes module status and the latest crawl progress", async () => {
+    const rules = (await h.request("GET", `${base()}/issues/rules`, as("viewer"))).json().data;
+    expect(rules.length).toBeGreaterThan(25);
+    expect(rules.find((r: { id: string }) => r.id === "h1_missing")).toMatchObject({ category: "content", provenance: "MEASURED", source: "site_crawler" });
+
+    const scanId = (await db.query<{ id: string }>("INSERT INTO scans (website_id, org_id, status, modules) VALUES ($1,$2,'running','{crawl}') RETURNING id", [A.websiteId, A.id])).rows[0].id;
+    await db.query("INSERT INTO scan_modules (scan_id, module_name, status) VALUES ($1,'crawl','running')", [scanId]);
+    await db.query("INSERT INTO scan_events (scan_id, type, payload) VALUES ($1,'crawl_progress',$2),($1,'crawl_progress',$3)", [scanId, JSON.stringify({ pagesCrawled: 3, pagesDiscovered: 9 }), JSON.stringify({ pagesCrawled: 8, pagesDiscovered: 20 })]);
+    const scan = (await h.request("GET", `/api/v1/scans/${scanId}`, as("viewer"))).json().data;
+    expect(scan.module_statuses).toEqual([expect.objectContaining({ module_name: "crawl", status: "running" })]);
+    expect(scan.crawl_progress).toMatchObject({ pagesCrawled: 8, pagesDiscovered: 20 });
+    expect((await h.request("GET", `/api/v1/scans/${scanId}`, as("owner", B))).statusCode).toBe(404);
+    await db.query("UPDATE scans SET status='completed' WHERE id=$1", [scanId]);
+  });
+
+  it("isolates tenants: another org's website or issue is 404 on every route, and viewers cannot mutate", async () => {
       const id = (await db.query<{ id: string }>("SELECT id FROM site_issues WHERE org_id=$1 LIMIT 1", [A.id])).rows[0].id;
       const foreign = as("owner", B);
       for (const [method, url] of [
         ["GET", `${base()}/crawl`],
         ["GET", `${base()}/crawl/pages`],
         ["GET", `${base()}/issues`],
+        ["GET", `${base()}/issues/rules`],
         ["GET", `${base()}/issues/${id}`],
         ["GET", `${base()}/issues/${id}/history`],
         ["POST", `${base()}/issues/${id}/ignore`],

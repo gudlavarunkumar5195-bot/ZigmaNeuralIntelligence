@@ -4,6 +4,7 @@ import { authenticate, requireOrgMember, requireRole } from "../middleware/auth.
 import { uuidParams } from "../middleware/validate.js";
 import { parseCursorPagination } from "../http/pagination.js";
 import { getWebsite } from "../services/website.service.js";
+import { SEO_RULES } from "../scanner/crawl.js";
 import { audit } from "../services/audit.service.js";
 import {
   getCrawlOverview,
@@ -112,6 +113,17 @@ export async function siteAuditRoutes(fastify: FastifyInstance): Promise<void> {
       page,
     );
     return reply.send({ data: issues, meta: { limit: page.limit, nextCursor, counts, total } });
+  });
+
+  // GET /api/v1/websites/:id/issues/rules — the rule catalog (labels, categories, guidance)
+  fastify.get("/:id/issues/rules", { preHandler: read }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!(await getWebsite(id, request.orgId))) return notFound(reply);
+    const rules = Object.entries(SEO_RULES).map(([ruleId, r]) => ({
+      id: ruleId, category: r.category, severity: r.severity, title: r.groupTitle, explanation: r.explanation, remediation: r.remediation,
+      provenance: "MEASURED", source: "site_crawler",
+    }));
+    return reply.send({ data: rules });
   });
 
   // GET /api/v1/websites/:id/issues/:issueId

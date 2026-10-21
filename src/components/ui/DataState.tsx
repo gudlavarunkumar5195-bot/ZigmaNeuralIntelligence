@@ -26,7 +26,8 @@ export function EmptyState({
   icon?: ReactNode;
 }) {
   return (
-    <div role="alert" className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+    // Not an alert: an empty list is normal content, not an urgent message.
+    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
       <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-slate-100">
         {icon ?? <Inbox size={18} className="text-slate-400" />}
       </div>
@@ -51,7 +52,7 @@ export function ErrorState({
   onRetry?: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+    <div role="alert" className="flex flex-col items-center justify-center py-16 gap-3 text-center">
       <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-red-50">
         <AlertCircle size={18} className="text-red-400" />
       </div>
