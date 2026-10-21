@@ -32,6 +32,8 @@ export interface ResolveRoutingOptions {
   taskId?: string;
   agentId?: string;
   orgId?: string;
+  /** Scan the routing call is made for; with orgId it makes the optional LLM advisor call budgeted. */
+  scanId?: string;
   /** When true: run filter + score but do NOT call OX Alpha and do NOT persist. */
   simulate?: boolean;
 }
@@ -40,7 +42,7 @@ export async function resolveRouting(
   opts: ResolveRoutingOptions
 ): Promise<RoutingDecision> {
   const startMs = Date.now();
-  const { requirements, correlationId, taskId, agentId, orgId, simulate = false } = opts;
+  const { requirements, correlationId, taskId, agentId, orgId, scanId, simulate = false } = opts;
 
   // Merge org-level requirements (freeOnly etc.) from policy
   const policy = await getActivePolicy(orgId ?? requirements.orgId);
@@ -108,7 +110,7 @@ export async function resolveRouting(
   let source: DecisionSource = "DETERMINISTIC";
 
   if (!simulate && (config as { AI_ROUTER_LLM_ENABLED?: boolean }).AI_ROUTER_LLM_ENABLED === true) {
-    const oxResult = await tryOxAlphaRouting(scored, effectiveReq, baseConfidence);
+    const oxResult = orgId && scanId ? await tryOxAlphaRouting(scored, effectiveReq, baseConfidence, { orgId, scanId }) : null;
     if (oxResult) {
       selected = oxResult.selected;
       fallbacks = oxResult.fallbacks;
@@ -152,7 +154,8 @@ interface OxRoutingResult {
 async function tryOxAlphaRouting(
   candidates: ScoredCandidate[],
   requirements: TaskRequirements,
-  baseConfidence: number
+  baseConfidence: number,
+  attribution: { orgId: string; scanId: string },
 ): Promise<OxRoutingResult | null> {
   const executor = getOxAlphaExecutor();
   if (!executor) return null;
@@ -205,6 +208,9 @@ async function tryOxAlphaRouting(
       temperature: 0.1,
       agentType: "ROUTER",
       taskDescription: `Routing decision for ${requirements.taskType}`,
+      // Counted against the organization's AI budget like any other call.
+      orgId: attribution.orgId,
+      scanId: attribution.scanId,
     });
 
     if (!result.success || !result.response) return null;

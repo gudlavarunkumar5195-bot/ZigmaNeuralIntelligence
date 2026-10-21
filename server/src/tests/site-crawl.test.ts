@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedByRobots, parseRobotsTxt } from "../scanner/robots.js";
+import { isAllowedByRobots, parseRobotsTxt, robotsPatternMatches } from "../scanner/robots.js";
 import { parseSitemapXml } from "../scanner/sitemap.js";
-import { analyzeCrawl, crawlFindings, crawlSite, issueFingerprint, normalizeUrl, type Fetcher } from "../scanner/crawl.js";
+import { analyzeCrawl, crawlFindings, crawlSite, issueFingerprint, makeCrawlRunner, normalizeUrl, type Fetcher } from "../scanner/crawl.js";
 import type { SafeFetchResult } from "../scanner/fetch.js";
 
 // ─── Fixture site ────────────────────────────────────────────────────────────
@@ -68,6 +68,23 @@ describe("robots.txt (RFC 9309)", () => {
   it("falls back to * and treats an empty Disallow as allow-all", () => {
     const p = parseRobotsTxt("# c\nUser-agent: otherbot\nDisallow: /\nUser-agent: *\nDisallow:\n");
     expect(isAllowedByRobots(p, "https://x.example/anything")).toBe(true);
+  });
+});
+
+describe("robots.txt hardening", () => {
+  it("matches wildcards in linear time (hostile patterns cannot stall the event loop)", () => {
+    const t0 = Date.now();
+    const target = "/" + "a".repeat(5_000);
+    for (let i = 0; i < 1_000; i++) robotsPatternMatches("/*a*a*a*a*a*a*a*a*b$", target);
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(robotsPatternMatches("/*a*a*b$", "/xaxab")).toBe(true);
+    expect(robotsPatternMatches("/*a*a*b$", "/xaxabc")).toBe(false);
+    expect(robotsPatternMatches("/p*", "/p")).toBe(true);
+    expect(robotsPatternMatches("/p$", "/p/")).toBe(false);
+  });
+  it("ignores absurdly long or wildcard-heavy rules instead of evaluating them", () => {
+    const p = parseRobotsTxt(`User-agent: *\nDisallow: /${"*x".repeat(40)}\nDisallow: /${"y".repeat(600)}\n`);
+    expect(isAllowedByRobots(p, `https://x.example/${"x".repeat(50)}`)).toBe(true);
   });
 });
 
@@ -158,6 +175,29 @@ describe("site crawl", () => {
     expect(new Set(findings.map((f) => f.title)).size).toBe(findings.length);
     for (const f of findings) expect(f).toMatchObject({ category: "technicalHealth", provenance: "MEASURED", confidence: 100 });
     expect(findings.find((f) => f.title === "Pages return client errors")!.description).toMatch(/^2 occurrences/);
+  });
+
+  it("bounds per-page links and total discovered URLs, and reports truncation", async () => {
+    const huge: Record<string, Route> = { [`${S}/robots.txt`]: { status: 404 }, [`${S}/`]: { status: 200, body: html("Home", Array.from({ length: 5_000 }, (_, i) => `/x${i}`)) } };
+    const r = await crawlSite(`${S}/`, { maxPages: 3, maxDurationMs: 60_000, fetch: fixture(huge).fetch });
+    expect(r.summary.pagesDiscovered).toBeLessThanOrEqual(1_001);
+    expect(Object.keys(r.inlinks).length).toBeLessThanOrEqual(1_000);
+    expect(r.summary.truncated).toBe(true);
+  });
+
+  it("is only reconcilable when the start page was really re-checked", async () => {
+    const ok = await crawlSite(`${S}/`, { maxPages: 50, maxDurationMs: 60_000, fetch: fixture(SITE).fetch });
+    expect(ok.summary.reconcilable).toBe(true);
+    const down = await crawlSite(`${S}/`, { maxPages: 50, maxDurationMs: 60_000, fetch: fixture({ ...SITE, [`${S}/`]: { status: 503 } }).fetch });
+    expect(down.summary.reconcilable).toBe(false);
+    const robotsDown = await crawlSite(`${S}/`, { maxPages: 50, maxDurationMs: 60_000, fetch: fixture({ ...SITE, [`${S}/robots.txt`]: { status: 500 } }).fetch });
+    expect(robotsDown.summary.reconcilable).toBe(false);
+  });
+
+  it("refuses to start when the scan has no time left for a crawl", async () => {
+    const run = makeCrawlRunner({ maxPages: 10, maxDurationMs: 60_000 }, fixture(SITE).fetch);
+    const r = await run(`${S}/`, { deadlineAt: Date.now() + 1_000 });
+    expect(r).toMatchObject({ status: "failed", error: expect.stringMatching(/^CRAWL_TIME_BUDGET_EXHAUSTED/) });
   });
 
   it("normalizes URLs: no fragments, default ports, non-http schemes or userinfo", () => {

@@ -67,13 +67,19 @@ export interface CrawlSummary {
   sitemapUrlCount: number;
   durationMs: number;
   maxPages: number;
+  /**
+   * True only when the crawl actually re-checked the site: robots.txt was
+   * readable or absent, the start URL was allowed and answered 2xx. When
+   * false, the issue lifecycle must not mark page-level issues as FIXED.
+   */
+  reconcilable: boolean;
 }
 
 export interface CrawlResult {
   pages: CrawlPage[];
   summary: CrawlSummary;
-  /** Incoming internal links per normalized target URL (source page URLs). */
-  inlinks: Record<string, string[]>;
+  /** Incoming internal links per normalized target URL: total count + a bounded sample of source pages. */
+  inlinks: Record<string, { count: number; sample: string[] }>;
 }
 
 export interface CrawlIssue {
@@ -85,6 +91,10 @@ export interface CrawlIssue {
   title: string;
   details: Record<string, unknown>;
 }
+
+const MAX_LINKS_PER_PAGE = 1_000;
+const INLINK_SAMPLE = 20;
+const DISCOVERY_FACTOR = 20; // discovered URLs kept per page of budget
 
 const SKIP_EXTENSIONS = /\.(?:jpe?g|png|gif|webp|avif|svg|ico|bmp|tiff?|pdf|zip|gz|tgz|rar|7z|mp[34]|m4[av]|mov|avi|webm|ogg|wav|flac|woff2?|ttf|otf|eot|css|js|mjs|map|json|xml|txt|csv|xlsx?|docx?|pptx?|exe|dmg|apk)$/i;
 
@@ -137,6 +147,7 @@ function parsePage(html: string, pageUrl: string, siteHost: string) {
       if (/\bnofollow\b/.test(rel)) continue;
       const abs = normalizeUrl($(el).attr("href") ?? "", resolveBase);
       if (abs && isSameSite(siteHost, abs)) links.add(abs);
+      if (links.size >= MAX_LINKS_PER_PAGE) break;
     }
   }
   const title = $("head > title").first().text().trim() || $("title").first().text().trim() || null;
@@ -149,7 +160,8 @@ const isNoindex = (robotsMeta: string | null, xRobots: string | undefined) =>
 
 async function fetchRobots(origin: string, fetch: Fetcher): Promise<RobotsFetchOutcome> {
   const res = await fetch(`${origin}/robots.txt`);
-  if (res.status >= 200 && res.status < 300 && !res.limited) return { kind: "parsed", policy: parseRobotsTxt(res.body) };
+  // An oversized file is still parsed: RFC 9309 requires only the first 500 KiB.
+  if (res.status >= 200 && res.status < 300 && (res.ok || res.limited)) return { kind: "parsed", policy: parseRobotsTxt(res.body) };
   if (res.status >= 400 && res.status < 500) return { kind: "missing" };
   return { kind: "unreachable" };
 }
@@ -160,6 +172,7 @@ async function collectSitemapUrls(
   fetch: Fetcher,
   maxUrls: number,
   maxFiles: number,
+  hasTime: () => boolean = () => true,
 ): Promise<{ urls: string[]; files: CrawlSummary["sitemapFiles"]; status: CrawlSummary["sitemapStatus"] }> {
   const urls = new Set<string>();
   const files: CrawlSummary["sitemapFiles"] = [];
@@ -167,7 +180,7 @@ async function collectSitemapUrls(
   const seen = new Set<string>();
   let anyValid = false;
   let anyUnsupported = false;
-  while (queue.length > 0 && files.length < maxFiles && urls.size < maxUrls) {
+  while (queue.length > 0 && files.length < maxFiles && urls.size < maxUrls && hasTime()) {
     const target = queue.shift()!;
     if (seen.has(target) || !isSameSite(siteHost, target)) continue;
     seen.add(target);
@@ -218,20 +231,28 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
   const origin = new URL(start).origin;
 
   const robots = await fetchRobots(origin, fetch);
+  const timeLeft = () => deadline - now();
   const robotsSitemaps = robots.kind === "parsed" ? robots.policy.sitemaps.map((s) => normalizeUrl(s)).filter((s): s is string => !!s) : [];
-  const sitemap = await collectSitemapUrls(
-    robotsSitemaps.length > 0 ? robotsSitemaps : [`${origin}/sitemap.xml`],
-    siteHost,
-    fetch,
-    options.maxSitemapUrls ?? 5_000,
-    options.maxSitemapFiles ?? 10,
-  );
+  // Sitemap discovery gets at most a third of the budget's file allowance
+  // when time is short; it never starts after the deadline.
+  const sitemap = timeLeft() > 0
+    ? await collectSitemapUrls(
+        robotsSitemaps.length > 0 ? robotsSitemaps : [`${origin}/sitemap.xml`],
+        siteHost,
+        fetch,
+        options.maxSitemapUrls ?? 5_000,
+        options.maxSitemapFiles ?? 10,
+        () => timeLeft() > 0,
+      )
+    : { urls: [] as string[], files: [] as CrawlSummary["sitemapFiles"], status: "missing" as const };
   const sitemapSet = new Set(sitemap.urls);
   const crawlDelayMs = robots.kind === "parsed" && robots.policy.crawlDelay ? Math.min(robots.policy.crawlDelay, 5) * 1_000 : 0;
   const concurrency = crawlDelayMs > 0 ? 1 : Math.max(1, Math.min(options.concurrency ?? 3, 5));
 
   const pages = new Map<string, CrawlPage>();
-  const inlinks: Record<string, string[]> = {};
+  const inlinks: Record<string, { count: number; sample: string[] }> = {};
+  const maxDiscovered = Math.max(options.maxPages * DISCOVERY_FACTOR, 1_000);
+  let discoveryCapped = false;
   const discovered = new Set<string>([start]);
   const linkQueue: Array<{ url: string; depth: number; from: string | null }> = [{ url: start, depth: 0, from: null }];
   const sitemapQueue = sitemap.urls.map((url) => ({ url, depth: 1, from: "sitemap" as string | null }));
@@ -294,11 +315,17 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
     }
     // Links are attributed once, to the page whose content they came from.
     for (const link of !redirected || landingRecorded ? base.internalLinks : []) {
-      (inlinks[link] ??= []).push(finalUrl);
-      if (discovered.has(link)) continue;
-      discovered.add(link);
-      if (SKIP_EXTENSIONS.test(new URL(link).pathname)) continue;
-      linkQueue.push({ url: link, depth: item.depth + 1, from: finalUrl });
+      if (!discovered.has(link)) {
+        if (discovered.size >= maxDiscovered) {
+          discoveryCapped = true;
+          continue;
+        }
+        discovered.add(link);
+        if (!SKIP_EXTENSIONS.test(new URL(link).pathname)) linkQueue.push({ url: link, depth: item.depth + 1, from: finalUrl });
+      }
+      const entry = (inlinks[link] ??= { count: 0, sample: [] });
+      entry.count++;
+      if (entry.sample.length < INLINK_SAMPLE) entry.sample.push(finalUrl);
     }
   };
 
@@ -331,6 +358,10 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
     await Promise.allSettled(inFlight);
   }
 
+  if (discoveryCapped && !truncatedReason) truncatedReason = "page_limit";
+  const startPage = pages.get(start);
+  const reconcilable =
+    robots.kind !== "unreachable" && !startBlocked && !!startPage && startPage.finalStatus >= 200 && startPage.finalStatus < 300;
   return {
     pages: [...pages.values()],
     inlinks,
@@ -348,6 +379,7 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
       sitemapUrlCount: sitemap.urls.length,
       durationMs: now() - started,
       maxPages: options.maxPages,
+      reconcilable,
     },
   };
 }
@@ -402,12 +434,13 @@ export function analyzeCrawl(result: CrawlResult): CrawlIssue[] {
       issues.push({ ruleId: "redirect_chain", severity: "medium", url: p.url, title: `Redirect chain of ${hops} hops`, details: { chain: p.redirectChain, finalUrl: p.finalUrl } });
     }
 
-    if (p.redirectChain.length > 0 && (inlinks[p.url]?.length ?? 0) > 0) {
-      issues.push({ ruleId: "internal_link_to_redirect", severity: "low", url: p.url, title: "Internal links point at a redirecting URL", details: { finalUrl: p.finalUrl, linkedFrom: sample(inlinks[p.url]) } });
+    const incoming = inlinks[p.url];
+    if (p.redirectChain.length > 0 && incoming) {
+      issues.push({ ruleId: "internal_link_to_redirect", severity: "low", url: p.url, title: "Internal links point at a redirecting URL", details: { finalUrl: p.finalUrl, linkedFrom: incoming.sample, linkCount: incoming.count } });
     }
 
-    if (isBroken(p) && (inlinks[p.url]?.length ?? 0) > 0) {
-      issues.push({ ruleId: "broken_internal_link", severity: "high", url: p.url, title: `Broken internal link target (${p.finalStatus || "error"})`, details: { status: p.finalStatus, linkedFrom: sample(inlinks[p.url]), linkCount: inlinks[p.url].length } });
+    if (isBroken(p) && incoming) {
+      issues.push({ ruleId: "broken_internal_link", severity: "high", url: p.url, title: `Broken internal link target (${p.finalStatus || "error"})`, details: { status: p.finalStatus, linkedFrom: incoming.sample, linkCount: incoming.count } });
     }
 
     const htmlOk = p.redirectChain.length === 0 && p.finalStatus === 200 && p.h1Count !== null;
@@ -519,10 +552,16 @@ export interface CrawlModuleResult extends ModuleResult {
 }
 
 export function makeCrawlRunner(limits: { maxPages: number; maxDurationMs: number }, fetch?: Fetcher) {
-  return async (url: string): Promise<CrawlModuleResult> => {
+  return async (url: string, ctx: { deadlineAt?: number } = {}): Promise<CrawlModuleResult> => {
     const t0 = Date.now();
+    // Never outlive the scan: the crawl budget is the smaller of its own
+    // limit and the time left before the scan deadline.
+    const maxDurationMs = Math.max(0, Math.min(limits.maxDurationMs, (ctx.deadlineAt ?? Number.POSITIVE_INFINITY) - t0));
+    if (maxDurationMs < 5_000) {
+      return { moduleName: "crawl", status: "failed", durationMs: 0, findings: [], error: "CRAWL_TIME_BUDGET_EXHAUSTED: not enough scan time left to crawl" };
+    }
     try {
-      const result = await crawlSite(url, { ...limits, fetch });
+      const result = await crawlSite(url, { ...limits, maxDurationMs, fetch });
       const issues = analyzeCrawl(result);
       // A crawl that fetched nothing at all (start unreachable) still reports
       // what it observed, but is not a "completed" measurement of the site.

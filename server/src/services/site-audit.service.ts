@@ -26,9 +26,16 @@ const DUPLICATE_RULES = new Set(["title_duplicate", "meta_description_duplicate"
 
 export type IssueStatus = "OPEN" | "FIXED" | "IGNORED";
 
-function statusBucket(status: number): string {
-  if (status === 0) return "error";
-  return `${Math.floor(status / 100)}xx`;
+/**
+ * Inventory bucket of a crawled URL: failures are judged by the FINAL
+ * response (a redirect that ends in a 404 is a 4xx); a redirect that lands
+ * on a working page is a 3xx; otherwise the response class.
+ */
+function statusBucket(p: { status: number; finalStatus: number; redirectChain: unknown[] }): string {
+  if (p.finalStatus === 0) return "error";
+  if (p.finalStatus >= 400) return `${Math.floor(p.finalStatus / 100)}xx`;
+  if (p.redirectChain.length > 0) return "3xx";
+  return `${Math.floor(p.status / 100)}xx`;
 }
 
 export async function persistCrawl(
@@ -36,9 +43,9 @@ export async function persistCrawl(
   input: { scanId: string; orgId: string; websiteId: string; result: CrawlResult; issues: CrawlIssue[]; completed: boolean },
 ): Promise<{ detected: number; reopened: number; fixed: number }> {
   const { scanId, orgId, websiteId, result } = input;
-  const issues = input.issues.slice(0, MAX_ISSUES_PER_SCAN);
+  const issues = input.issues;
   const statusCounts: Record<string, number> = {};
-  for (const p of result.pages) statusCounts[statusBucket(p.status)] = (statusCounts[statusBucket(p.status)] ?? 0) + 1;
+  for (const p of result.pages) statusCounts[statusBucket(p)] = (statusCounts[statusBucket(p)] ?? 0) + 1;
   const issueCounts: Record<string, number> = {};
   for (const i of issues) issueCounts[i.severity] = (issueCounts[i.severity] ?? 0) + 1;
   const s = result.summary;
@@ -67,7 +74,7 @@ export async function persistCrawl(
       redirect_chain: p.redirectChain, depth: p.depth, discovered_from: p.discoveredFrom, content_type: p.contentType,
       title: p.title?.slice(0, 1000) ?? null, meta_description: p.metaDescription?.slice(0, 2000) ?? null,
       canonicals: p.canonicals.slice(0, 10), robots_meta: p.robotsMeta?.slice(0, 500) ?? null, h1_count: p.h1Count,
-      internal_links_out: p.internalLinks.length, inlinks: result.inlinks[p.url]?.length ?? 0, indexable: p.indexable,
+      internal_links_out: p.internalLinks.length, inlinks: result.inlinks[p.url]?.count ?? 0, indexable: p.indexable,
       in_sitemap: p.inSitemap, fetch_error: p.fetchError?.slice(0, 500) ?? null, response_ms: Math.max(0, Math.round(p.responseMs)),
     }));
     await tx.query(
@@ -110,6 +117,9 @@ export function observedScope(result: CrawlResult) {
   return {
     covers(issue: { rule_id: string; url: string; details: Record<string, unknown> }): boolean {
       if (SITE_LEVEL_RULES.has(issue.rule_id)) return true;
+      // robots.txt unreachable, start URL blocked or failing: the crawl did
+      // not re-check the site's pages, so it cannot declare any of them fixed.
+      if (!result.summary.reconcilable) return false;
       if (DUPLICATE_RULES.has(issue.rule_id)) {
         // Only a full (untruncated) crawl can say a duplicate group is gone.
         if (result.summary.truncated) return false;
@@ -136,12 +146,16 @@ async function reconcileIssues(
   const { scanId, orgId, websiteId } = input;
   let detected = 0;
   let reopened = 0;
-  const seen = new Set<string>();
+  // Every observed fingerprint counts as "seen" (so nothing observed is ever
+  // marked fixed), but at most MAX_ISSUES_PER_SCAN are written per scan.
+  const seen = new Set(input.issues.map((i) => issueFingerprint(i)));
+  const written = new Set<string>();
 
   for (const issue of input.issues) {
     const fingerprint = issueFingerprint(issue);
-    if (seen.has(fingerprint)) continue;
-    seen.add(fingerprint);
+    if (written.has(fingerprint)) continue;
+    if (written.size >= MAX_ISSUES_PER_SCAN) break;
+    written.add(fingerprint);
     const { rows: existing } = await tx.query<{ id: string; status: IssueStatus }>(
       "SELECT id, status FROM site_issues WHERE website_id = $1 AND org_id = $2 AND fingerprint = $3 FOR UPDATE",
       [websiteId, orgId, fingerprint],
@@ -217,10 +231,15 @@ export async function listCrawlPages(
 ) {
   const conditions = ["org_id = $1", "scan_id = $2"];
   const params: unknown[] = [orgId, scanId];
-  if (filters.statusClass === "error") conditions.push("status_code = 0");
-  else if (filters.statusClass) {
+  // Same buckets as the summary counts (failures by final status).
+  if (filters.statusClass === "error") conditions.push("final_status_code = 0");
+  else if (filters.statusClass === "4xx" || filters.statusClass === "5xx") {
     params.push(Number(filters.statusClass[0]) * 100);
-    conditions.push(`status_code >= $${params.length} AND status_code < $${params.length} + 100`);
+    conditions.push(`final_status_code >= $${params.length} AND final_status_code < $${params.length} + 100`);
+  } else if (filters.statusClass === "3xx") {
+    conditions.push("jsonb_array_length(redirect_chain) > 0 AND final_status_code BETWEEN 200 AND 399");
+  } else if (filters.statusClass === "2xx") {
+    conditions.push("jsonb_array_length(redirect_chain) = 0 AND final_status_code BETWEEN 200 AND 299");
   }
   params.push(page.pageSize, page.offset);
   const { rows } = await query(

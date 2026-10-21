@@ -64,7 +64,7 @@ export function MyWebsites() {
     setActionError(null);
     setBusyId(siteId);
     try {
-      const result = await apiCreateScan(siteId, ["seo", "security", "performance", "ssl"]);
+      const result = await apiCreateScan(siteId, ["seo", "security", "performance", "ssl", "crawl"]);
       if (result.error) throw new ApiCallError(0, result.error.code, result.error.message);
       if (result.data?.id) {
         navigate(`/websites/scan/${result.data.id}`);

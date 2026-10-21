@@ -80,11 +80,35 @@ export function parseRobotsTxt(text: string, token = CRAWLER_TOKEN): RobotsPolic
   };
 }
 
-function patternToRegExp(pattern: string): RegExp {
+// Bounds on hostile robots.txt files: longer patterns or more wildcards are
+// ignored (they cannot be matched in bounded time and no real site needs them).
+const MAX_PATTERN_LENGTH = 512;
+const MAX_WILDCARDS = 16;
+
+/**
+ * Linear-time `*` / `$` glob match (no regular expressions, so no
+ * catastrophic backtracking). Greedy-leftmost matching of the literal
+ * segments is exact for patterns whose only metacharacter is `*`.
+ */
+export function robotsPatternMatches(pattern: string, target: string): boolean {
   const anchored = pattern.endsWith("$");
   const body = anchored ? pattern.slice(0, -1) : pattern;
-  const escaped = body.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*");
-  return new RegExp(`^${escaped}${anchored ? "$" : ""}`);
+  const parts = body.split("*");
+  if (!target.startsWith(parts[0])) return false;
+  let pos = parts[0].length;
+  if (parts.length === 1) return anchored ? target.length === pos : true;
+  for (let i = 1; i < parts.length - 1; i++) {
+    const at = target.indexOf(parts[i], pos);
+    if (at < 0) return false;
+    pos = at + parts[i].length;
+  }
+  const last = parts[parts.length - 1];
+  if (anchored) return target.length - last.length >= pos && target.endsWith(last);
+  return target.indexOf(last, pos) >= 0;
+}
+
+function usablePattern(pattern: string): boolean {
+  return pattern.length <= MAX_PATTERN_LENGTH && pattern.split("*").length - 1 <= MAX_WILDCARDS;
 }
 
 /** Path + query of a URL, percent-encoding normalized for comparison. */
@@ -103,8 +127,8 @@ export function isAllowedByRobots(policy: RobotsPolicy, url: string): boolean {
   const target = matchTarget(parsed);
   let best: RobotsRule | null = null;
   for (const rule of policy.rules) {
-    if (!rule.pattern) continue;
-    if (!patternToRegExp(rule.pattern).test(target)) continue;
+    if (!rule.pattern || !usablePattern(rule.pattern)) continue;
+    if (!robotsPatternMatches(rule.pattern, target)) continue;
     if (
       !best ||
       rule.pattern.length > best.pattern.length ||

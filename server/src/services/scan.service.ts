@@ -144,11 +144,13 @@ export async function isScanCancelled(
   return rows[0]?.status === "cancelled"
 }
 
-const MODULE_RUNNERS: Record<string, (url: string) => Promise<ModuleResult>> = {
-  seo: runSEOScanner,
-  security: runSecurityScanner,
-  ssl: runSSLScanner,
-  performance: runPerformanceScanner,
+const MODULE_RUNNERS: Record<string, (url: string, ctx?: { deadlineAt?: number }) => Promise<ModuleResult>> = {
+  // Wrapped so the per-run context argument never reaches a scanner's own
+  // optional second parameter (runSSLScanner takes injectable deps there).
+  seo: (url) => runSEOScanner(url),
+  security: (url) => runSecurityScanner(url),
+  ssl: (url) => runSSLScanner(url),
+  performance: (url) => runPerformanceScanner(url),
   // Multi-page technical crawl (robots.txt, sitemaps, status inventory,
   // links, redirects, canonicals, duplicates). Scores "technicalHealth".
   crawl: makeCrawlRunner({
@@ -558,7 +560,8 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
     while (true) {
       if (Date.now() >= scanDeadline) throw new Error("SCAN_DEADLINE_EXCEEDED")
       try {
-        result = await runner(url)
+        // Leave headroom for the commit and scoring before the scan deadline.
+        result = await runner(url, { deadlineAt: scanDeadline - 15_000 })
       } catch (err: unknown) {
         result = {
           moduleName,
@@ -571,6 +574,9 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
       if (
         result.status !== "failed" ||
         !isRecoverableModuleFailure(result.error) ||
+        // A crawl is one long, budgeted measurement: re-running it would blow
+        // the scan deadline, so its failures are recorded, not retried.
+        moduleName === "crawl" ||
         attempt >= maxAttempts
       )
         break

@@ -50,7 +50,7 @@ describe("MyWebsites", () => {
     vi.mocked(api.apiCreateScan).mockResolvedValue({ data: { id: "scan-new" }, error: null });
     renderAt(<MyWebsites />);
     await userEvent.click(await screen.findByRole("button", { name: /New scan/ }));
-    await waitFor(() => expect(api.apiCreateScan).toHaveBeenCalledWith("s1", ["seo", "security", "performance", "ssl"]));
+    await waitFor(() => expect(api.apiCreateScan).toHaveBeenCalledWith("s1", ["seo", "security", "performance", "ssl", "crawl"]));
     expect((await screen.findByTestId("where")).textContent).toBe("/websites/scan/scan-new");
   });
 

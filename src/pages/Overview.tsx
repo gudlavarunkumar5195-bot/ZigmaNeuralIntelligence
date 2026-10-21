@@ -24,7 +24,7 @@ export function Overview() {
     setScanError(null);
     setStarting(true);
     try {
-      const result = await apiCreateScan(siteId, ["seo", "security", "performance", "ssl"]);
+      const result = await apiCreateScan(siteId, ["seo", "security", "performance", "ssl", "crawl"]);
       if (result.error) { setScanError(result.error.message); return; }
       if (result.data?.id) { navigate(`/websites/scan/${result.data.id}`); return; }
       setScanError("The scan was accepted but no scan id was returned.");

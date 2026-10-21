@@ -10,13 +10,13 @@ function page(path: string, over: Partial<CrawlPage> = {}): CrawlPage {
     internalLinks: [], indexable: true, inSitemap: false, fetchError: null, responseMs: 5, ...over,
   };
 }
-function crawl(pages: CrawlPage[], truncated = false): CrawlResult {
+function crawl(pages: CrawlPage[], truncated = false, reconcilable = true): CrawlResult {
   return {
     pages,
     inlinks: {},
     summary: {
       startUrl: `${S}/`, origin: S, pagesCrawled: pages.length, pagesDiscovered: pages.length, truncated, truncatedReason: truncated ? "page_limit" : null,
-      robotsStatus: "parsed", startBlockedByRobots: false, sitemapStatus: "found", sitemapFiles: [], sitemapUrlCount: 0, durationMs: 10, maxPages: 100,
+      robotsStatus: "parsed", startBlockedByRobots: false, sitemapStatus: "found", sitemapFiles: [], sitemapUrlCount: 0, durationMs: 10, maxPages: 100, reconcilable,
     },
   };
 }
@@ -31,10 +31,10 @@ describe.skipIf(!INTEGRATION)("persistent site issues (PostgreSQL + HTTP)", () =
 
   const newScan = async (org = A) =>
     (await db.query<{ id: string }>("INSERT INTO scans (website_id, org_id, status, modules) VALUES ($1,$2,'completed','{crawl}') RETURNING id", [org.websiteId, org.id])).rows[0].id;
-  const run = async (pages: CrawlPage[], issues: CrawlIssue[], opts: { truncated?: boolean; org?: SeededOrg } = {}) => {
+  const run = async (pages: CrawlPage[], issues: CrawlIssue[], opts: { truncated?: boolean; reconcilable?: boolean; org?: SeededOrg } = {}) => {
     const org = opts.org ?? A;
     const scanId = await newScan(org);
-    const out = await db.withTransaction((tx) => svc.persistCrawl(tx, { scanId, orgId: org.id, websiteId: org.websiteId, result: crawl(pages, opts.truncated), issues, completed: true }));
+    const out = await db.withTransaction((tx) => svc.persistCrawl(tx, { scanId, orgId: org.id, websiteId: org.websiteId, result: crawl(pages, opts.truncated, opts.reconcilable ?? true), issues, completed: true }));
     return { scanId, ...out };
   };
   const statuses = async (org = A) =>
@@ -55,6 +55,11 @@ describe.skipIf(!INTEGRATION)("persistent site issues (PostgreSQL + HTTP)", () =
   it("OPEN -> FIXED when re-checked and absent; FIXED -> OPEN (reopened) when it returns; unreached pages are left alone", async () => {
     const first = await run([page("/"), page("/a", { finalStatus: 404, status: 404 }), page("/b")], [issue("page_4xx", "/a"), issue("title_missing", "/b")]);
     expect(first).toMatchObject({ detected: 2, reopened: 0, fixed: 0 });
+    expect(await statuses()).toEqual({ "page_4xx /a": "OPEN", "title_missing /b": "OPEN" });
+
+    // A failed re-check (robots.txt down / start page erroring) fixes nothing.
+    const outage = await run([page("/", { status: 503, finalStatus: 503 })], [], { reconcilable: false });
+    expect(outage).toMatchObject({ fixed: 0 });
     expect(await statuses()).toEqual({ "page_4xx /a": "OPEN", "title_missing /b": "OPEN" });
 
     // /a fixed and re-crawled; /b not reached this time (budget): stays OPEN.
@@ -101,9 +106,17 @@ describe.skipIf(!INTEGRATION)("persistent site issues (PostgreSQL + HTTP)", () =
   });
 
   it("serves the latest crawl summary and status inventory, scoped to the org", async () => {
-    await run([page("/"), page("/x", { status: 500, finalStatus: 500 }), page("/r", { status: 301, finalStatus: 200, redirectChain: [{ url: `${S}/r`, status: 301 }] })], []);
+    await run([
+      page("/"),
+      page("/x", { status: 500, finalStatus: 500 }),
+      page("/r", { status: 301, finalStatus: 200, redirectChain: [{ url: `${S}/r`, status: 301 }] }),
+      page("/r404", { status: 301, finalStatus: 404, redirectChain: [{ url: `${S}/r404`, status: 301 }] }),
+    ], [], { truncated: true });
     const summary = await h.request("GET", `/api/v1/websites/${A.websiteId}/crawl`, { token: A.users.viewer.token, orgId: A.id });
-    expect(summary.json().data).toMatchObject({ pages_crawled: 3, robots_status: "parsed", status_counts: { "2xx": 1, "5xx": 1, "3xx": 1 } });
+    // A redirect that ends in a 404 is counted (and filtered) as a 4xx.
+    expect(summary.json().data).toMatchObject({ pages_crawled: 4, robots_status: "parsed", status_counts: { "2xx": 1, "5xx": 1, "3xx": 1, "4xx": 1 } });
+    const broken = await h.request("GET", `/api/v1/websites/${A.websiteId}/crawl/pages?status=4xx`, { token: A.users.viewer.token, orgId: A.id });
+    expect(broken.json().data.map((p: { url: string }) => p.url)).toEqual([`${S}/r404`]);
     const errors = await h.request("GET", `/api/v1/websites/${A.websiteId}/crawl/pages?status=5xx`, { token: A.users.viewer.token, orgId: A.id });
     expect(errors.json().data.map((p: { url: string }) => p.url)).toEqual([`${S}/x`]);
     expect((await h.request("GET", `/api/v1/websites/${A.websiteId}/crawl/pages`, { token: B.users.owner.token, orgId: B.id })).statusCode).toBe(404);
