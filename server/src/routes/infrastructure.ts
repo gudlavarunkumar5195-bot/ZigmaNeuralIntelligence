@@ -68,9 +68,9 @@ export async function infrastructureRoutes(fastify: FastifyInstance): Promise<vo
     },
   }));
 
-  // Real in-process counters from the analytics pipeline (reset on restart).
+  // Durable outbox counts from PostgreSQL plus in-process delivery counters.
   fastify.get("/event-pipeline", { preHandler }, async () => {
-    const m = getPipelineMetrics();
+    const m = await getPipelineMetrics();
     return { data: { ...m, processed: m.delivered, failed: m.failedBatches, ingestionLatencyMs: null } };
   });
 }

@@ -421,6 +421,7 @@ export async function runMonitoringNow(
   // Admission happens first: a rejected scan (ScanAdmissionError) must never
   // leave an orphaned RUNNING monitoring run holding a 10 minute lease.
   const scan = await createScan({
+    onActive: "reject",
     websiteId: config.website_id,
     orgId,
     triggeredBy: actorId,
@@ -460,6 +461,7 @@ export async function createScanForClaimedMonitoring(
   modules: string[],
 ): Promise<unknown> {
   const scan = await createScan({
+    onActive: "reject",
     websiteId,
     orgId,
     triggeredBy: null,

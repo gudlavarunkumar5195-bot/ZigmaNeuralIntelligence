@@ -156,6 +156,12 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
         throw error
       }
 
+      if (scan.deduplicated) {
+        // Double-submit / retry: the website already has an active scan.
+        const { deduplicated: _flag, ...existing } = scan
+        return reply.status(200).send({ data: existing, meta: { deduplicated: true } })
+      }
+
       await audit({
         userId: request.authUser.id,
         orgId: request.orgId,

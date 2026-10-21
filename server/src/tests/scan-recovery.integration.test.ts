@@ -13,9 +13,17 @@ describe.skipIf(!INTEGRATION)("scan crash recovery + monitoring resilience (Post
   let cleanOrgId: string; // scans are wiped before each test that uses it
   let cleanWebsiteId: string;
 
+  // Migration 028 allows one active scan per website, so each synthetic scan
+  // gets its own website unless a test pins one explicitly.
+  let siteSeq = 0;
+  async function freshWebsite(org: string) {
+    const n = `extra-${++siteSeq}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return (await query<{ id: string }>("INSERT INTO websites (org_id, url, domain, verified) VALUES ($1,$2,$3,TRUE) RETURNING id", [org, `https://${n}.example`, `${n}.example`])).rows[0].id;
+  }
   async function newScan(opts: { org?: string; website?: string; status?: string; leaseOffset?: string | null; attempts?: number; owner?: boolean }) {
     const org = opts.org ?? orgId;
-    const site = opts.website ?? websiteId;
+    const active = ["queued", "running"].includes(opts.status ?? "running");
+    const site = opts.website ?? (active ? await freshWebsite(org) : org === otherOrgId ? otherWebsiteId : websiteId);
     const lease = opts.leaseOffset === undefined ? "NOW() - interval '5 minutes'" : opts.leaseOffset === null ? "NULL" : `NOW() + interval '${opts.leaseOffset}'`;
     const { rows } = await query<{ id: string }>(
       `INSERT INTO scans (website_id, org_id, status, modules, execution_attempts, execution_owner, execution_claimed_at, execution_lease_until, started_at)

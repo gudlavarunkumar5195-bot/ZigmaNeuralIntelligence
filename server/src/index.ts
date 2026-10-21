@@ -2,7 +2,7 @@ import { buildApp } from "./app.js";
 import { config } from "./config.js";
 import { startScanWorker, stopScanWorker } from "./services/scan.service.js";
 import { closePool } from "./db/client.js";
-import { stopEventPipeline } from "./analytics/events.js";
+import { startEventPipeline, stopEventPipeline } from "./analytics/events.js";
 import { closeAllScanStreams } from "./routes/scans.js";
 
 async function start() {
@@ -18,6 +18,8 @@ async function start() {
 
   // Start background scan worker
   const workerTimer = startScanWorker(config.WORKER_POLL_INTERVAL_MS);
+  // Durable analytics outbox dispatcher (independent of the scan worker loop).
+  startEventPipeline();
 
   // Graceful shutdown
   let shuttingDown = false;

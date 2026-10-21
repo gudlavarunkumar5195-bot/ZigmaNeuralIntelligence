@@ -35,6 +35,14 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   }
 }
 
+/**
+ * Anything that can run a parameterized query: the pool helper or a client
+ * inside withTransaction. Lets writers join the caller's transaction.
+ */
+export interface Queryable {
+  query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<T>>;
+}
+
 export async function withTransaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> {
