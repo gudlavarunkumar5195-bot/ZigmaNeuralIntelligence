@@ -17,8 +17,11 @@ export const CLICKHOUSE_TABLES = [
 
 export type ClickHouseTable = (typeof CLICKHOUSE_TABLES)[number];
 
+// ReplacingMergeTree with event_id as the last sort column: an outbox batch
+// that is re-sent after a crash collapses to one row per event on merge
+// (queries that must be exact before a merge can use FINAL).
 const engine = (order: string, ttlDays = 400) =>
-  `ENGINE = MergeTree PARTITION BY toYYYYMM(event_time) ORDER BY (${order}) TTL toDateTime(event_time) + INTERVAL ${ttlDays} DAY`;
+  `ENGINE = ReplacingMergeTree PARTITION BY toYYYYMM(event_time) ORDER BY (${order}, event_id) TTL toDateTime(event_time) + INTERVAL ${ttlDays} DAY`;
 
 export const CLICKHOUSE_DDL: Record<ClickHouseTable, string> = {
   scan_events: `CREATE TABLE IF NOT EXISTS scan_events (

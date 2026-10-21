@@ -9,6 +9,7 @@
 // OX Alpha CANNOT override hard eligibility or security constraints.
 // Website/user content is NEVER included in the routing prompt (prompt injection defense).
 
+import { config } from "../../config.js";
 import { query } from "../../db/client.js";
 import { getEligibleModels } from "../registry.service.js";
 import type { ModelRow, BenchmarkRow, ReliabilityRow } from "../registry.service.js";
@@ -31,6 +32,8 @@ export interface ResolveRoutingOptions {
   taskId?: string;
   agentId?: string;
   orgId?: string;
+  /** Scan the routing call is made for; with orgId it makes the optional LLM advisor call budgeted. */
+  scanId?: string;
   /** When true: run filter + score but do NOT call OX Alpha and do NOT persist. */
   simulate?: boolean;
 }
@@ -39,15 +42,18 @@ export async function resolveRouting(
   opts: ResolveRoutingOptions
 ): Promise<RoutingDecision> {
   const startMs = Date.now();
-  const { requirements, correlationId, taskId, agentId, orgId, simulate = false } = opts;
+  const { requirements, correlationId, taskId, agentId, orgId, scanId, simulate = false } = opts;
 
   // Merge org-level requirements (freeOnly etc.) from policy
   const policy = await getActivePolicy(orgId ?? requirements.orgId);
 
   // Apply policy defaults to requirements
+  // Platform ceiling: until AI_ALLOW_PAID_MODELS is explicitly enabled, no
+  // request or org policy can widen routing to paid models.
+  const paidAllowed = (config as { AI_ALLOW_PAID_MODELS?: boolean }).AI_ALLOW_PAID_MODELS === true;
   const effectiveReq: TaskRequirements = {
     ...requirements,
-    freeOnly: requirements.freeOnly ?? policy.freeOnly,
+    freeOnly: paidAllowed ? (requirements.freeOnly ?? policy.freeOnly) : true,
     minimumReliability: requirements.minimumReliability ?? (policy.minReliability > 0 ? policy.minReliability : undefined),
     minimumQualityScore: requirements.minimumQualityScore ?? (policy.minQuality > 0 ? policy.minQuality : undefined),
     excludedModels: [
@@ -103,8 +109,8 @@ export async function resolveRouting(
   let confidence = baseConfidence;
   let source: DecisionSource = "DETERMINISTIC";
 
-  if (!simulate) {
-    const oxResult = await tryOxAlphaRouting(scored, effectiveReq, baseConfidence);
+  if (!simulate && (config as { AI_ROUTER_LLM_ENABLED?: boolean }).AI_ROUTER_LLM_ENABLED === true) {
+    const oxResult = orgId && scanId ? await tryOxAlphaRouting(scored, effectiveReq, baseConfidence, { orgId, scanId }) : null;
     if (oxResult) {
       selected = oxResult.selected;
       fallbacks = oxResult.fallbacks;
@@ -148,7 +154,8 @@ interface OxRoutingResult {
 async function tryOxAlphaRouting(
   candidates: ScoredCandidate[],
   requirements: TaskRequirements,
-  baseConfidence: number
+  baseConfidence: number,
+  attribution: { orgId: string; scanId: string },
 ): Promise<OxRoutingResult | null> {
   const executor = getOxAlphaExecutor();
   if (!executor) return null;
@@ -201,6 +208,9 @@ async function tryOxAlphaRouting(
       temperature: 0.1,
       agentType: "ROUTER",
       taskDescription: `Routing decision for ${requirements.taskType}`,
+      // Counted against the organization's AI budget like any other call.
+      orgId: attribution.orgId,
+      scanId: attribution.scanId,
     });
 
     if (!result.success || !result.response) return null;

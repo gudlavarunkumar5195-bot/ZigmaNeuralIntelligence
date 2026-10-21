@@ -14,7 +14,11 @@ const { queryMock, auditMock, finalizeMock } = vi.hoisted(() => ({
   auditMock: vi.fn(),
   finalizeMock: vi.fn(),
 }));
-vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: vi.fn(), createListenClient: vi.fn() }));
+vi.mock("../db/client.js", () => ({
+  query: queryMock,
+  withTransaction: async (fn: (tx: { query: typeof queryMock }) => unknown) => fn({ query: queryMock }),
+  createListenClient: vi.fn(),
+}));
 vi.mock("../services/audit.service.js", () => ({ audit: auditMock }));
 vi.mock("../services/monitoring.service.js", () => ({ finalizeMonitoringRun: finalizeMock }));
 vi.mock("../scanner/seo.js", () => ({

@@ -124,6 +124,7 @@ export async function executeAgent(input: AgentInput): Promise<AgentResult> {
     requirements: taskRequirements,
     correlationId,
     orgId: input.tenantId,
+    scanId: input.scanId,
     simulate: input.simulate ?? false,
   });
 

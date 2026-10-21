@@ -93,6 +93,9 @@ const envSchema = z.object({
   SCANNER_MAX_REDIRECTS: z.coerce.number().default(5),
   SCANNER_MAX_PAGES: z.coerce.number().default(200),
   SCANNER_MAX_SCAN_DURATION_MS: z.coerce.number().default(300_000),
+  // Multi-page technical crawl budget (capped by SCANNER_MAX_PAGES).
+  SCANNER_CRAWL_MAX_PAGES: z.coerce.number().int().min(1).max(1000).default(100),
+  SCANNER_CRAWL_MAX_DURATION_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
   MAX_CONCURRENT_SCANS_PER_TENANT: z.coerce.number().default(2),
   MAX_QUEUED_SCANS_PER_TENANT: z.coerce.number().default(10),
   MAX_SCAN_CREATIONS_PER_MINUTE: z.coerce.number().default(10),
@@ -123,6 +126,13 @@ const envSchema = z.object({
   OX_ALPHA_MAX_OUTPUT_TOKENS: z.coerce.number().default(4_096),
   // Hard per-organization ceiling on AI model attempts per rolling 24h.
   AI_MAX_EXECUTIONS_PER_ORG_PER_DAY: z.coerce.number().int().min(0).default(500),
+  // Paid models stay disabled until per-token pricing and spend limits are
+  // verified. While false, only models the registry records as FREE are
+  // callable and every routing decision is forced to free-only.
+  AI_ALLOW_PAID_MODELS: strictBoolean("AI_ALLOW_PAID_MODELS"),
+  // The optional LLM "routing advisor" call is an extra provider call per
+  // agent run. Off by default: deterministic scoring selects the model.
+  AI_ROUTER_LLM_ENABLED: strictBoolean("AI_ROUTER_LLM_ENABLED"),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {

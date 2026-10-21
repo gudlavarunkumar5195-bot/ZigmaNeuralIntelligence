@@ -15,6 +15,10 @@ const SecurityPage = lazy(() => import("./pages/intelligence/SecurityPage").then
 const AIVisibilityPage = lazy(() => import("./pages/intelligence/AIVisibilityPage").then(({ AIVisibilityPage }) => ({ default: AIVisibilityPage })));
 const PerformancePage = lazy(() => import("./pages/intelligence/PerformancePage").then(({ PerformancePage }) => ({ default: PerformancePage })));
 const AccessibilityPage = lazy(() => import("./pages/intelligence/AccessibilityPage").then(({ AccessibilityPage }) => ({ default: AccessibilityPage })));
+const KeywordsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ KeywordsPage }) => ({ default: KeywordsPage })));
+const RankingsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ RankingsPage }) => ({ default: RankingsPage })));
+const BacklinksPage = lazy(() => import("./pages/search/SearchDataPages").then(({ BacklinksPage }) => ({ default: BacklinksPage })));
+const CompetitorsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ CompetitorsPage }) => ({ default: CompetitorsPage })));
 const TechnicalHealthPage = lazy(() => import("./pages/intelligence/TechnicalHealthPage").then(({ TechnicalHealthPage }) => ({ default: TechnicalHealthPage })));
 const BrowserTestsPage = lazy(() => import("./pages/testing/BrowserTestsPage").then(({ BrowserTestsPage }) => ({ default: BrowserTestsPage })));
 const RegressionPage = lazy(() => import("./pages/testing/RegressionPage").then(({ RegressionPage }) => ({ default: RegressionPage })));
@@ -91,6 +95,10 @@ export const router = createBrowserRouter([
       { path: "intelligence/performance", Component: PerformancePage },
       { path: "intelligence/accessibility", Component: AccessibilityPage },
       { path: "intelligence/technical-health", Component: TechnicalHealthPage },
+      { path: "search/keywords", Component: KeywordsPage },
+      { path: "search/rankings", Component: RankingsPage },
+      { path: "search/backlinks", Component: BacklinksPage },
+      { path: "search/competitors", Component: CompetitorsPage },
       { path: "testing/browser", Component: BrowserTestsPage },
       { path: "testing/regression", Component: RegressionPage },
       { path: "testing/results", Component: TestResultsPage },

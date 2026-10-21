@@ -580,6 +580,96 @@ export async function apiGetFindings(scanId: string) {
   return apiFetch(`/scans/${scanId}/findings`)
 }
 
+// ─── Technical site audit (crawl + persistent issues) ─────────────────────────
+
+export type SiteIssueStatus = "OPEN" | "FIXED" | "IGNORED"
+
+export interface CrawlSummary {
+  scan_id: string
+  start_url: string
+  pages_crawled: number
+  pages_discovered: number
+  max_pages: number
+  truncated: boolean
+  truncated_reason: "page_limit" | "time_limit" | null
+  robots_status: "parsed" | "missing" | "unreachable"
+  start_blocked_by_robots: boolean
+  sitemap_status: "found" | "missing" | "invalid" | "unsupported"
+  sitemap_url_count: number
+  status_counts: Record<string, number>
+  issue_counts: Record<string, number>
+  duration_ms: number
+  created_at: string
+  scan_status: string
+}
+
+export interface SiteIssue {
+  id: string
+  rule_id: string
+  severity: string
+  url: string
+  title: string
+  details: Record<string, unknown>
+  status: SiteIssueStatus
+  first_seen_at: string
+  last_seen_at: string
+  fixed_at: string | null
+  ignored_at: string | null
+  ignore_reason: string | null
+  times_reopened: number
+}
+
+export interface CrawlPageRow {
+  url: string
+  final_url: string
+  status_code: number
+  final_status_code: number
+  redirect_chain: Array<{ url: string; status: number }>
+  title: string | null
+  indexable: boolean
+  in_sitemap: boolean
+  inlinks: number
+  fetch_error: string | null
+}
+
+export async function apiGetCrawlSummary(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("crawl.summary")
+  return apiFetch<CrawlSummary | null>(`/websites/${encodeURIComponent(websiteId)}/crawl`)
+}
+
+export async function apiListCrawlPages(websiteId: string, params: { status?: string; page?: number; pageSize?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("crawl.pages")
+  const q = new URLSearchParams()
+  if (params.status) q.set("status", params.status)
+  q.set("page", String(params.page ?? 1))
+  q.set("pageSize", String(params.pageSize ?? 50))
+  return apiFetch<CrawlPageRow[]>(`/websites/${encodeURIComponent(websiteId)}/crawl/pages?${q}`)
+}
+
+export async function apiListSiteIssues(websiteId: string, params: { status?: SiteIssueStatus; page?: number; pageSize?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("issues.list")
+  const q = new URLSearchParams()
+  if (params.status) q.set("status", params.status)
+  q.set("page", String(params.page ?? 1))
+  q.set("pageSize", String(params.pageSize ?? 50))
+  return apiFetch<SiteIssue[]>(`/websites/${encodeURIComponent(websiteId)}/issues?${q}`) as Promise<
+    ApiResponse<SiteIssue[]> & { meta?: { counts?: Record<SiteIssueStatus, number> } }
+  >
+}
+
+export async function apiIgnoreSiteIssue(websiteId: string, issueId: string, reason: string) {
+  if (IS_DEMO) throw new IntegrationRequired("issues.ignore")
+  return apiFetch<SiteIssue>(`/websites/${encodeURIComponent(websiteId)}/issues/${encodeURIComponent(issueId)}/ignore`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export async function apiReopenSiteIssue(websiteId: string, issueId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("issues.reopen")
+  return apiFetch<SiteIssue>(`/websites/${encodeURIComponent(websiteId)}/issues/${encodeURIComponent(issueId)}/reopen`, { method: "POST" })
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
 export async function apiGetReport(scanId: string) {

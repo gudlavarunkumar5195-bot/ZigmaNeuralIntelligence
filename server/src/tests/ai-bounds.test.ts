@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../config.js", () => ({ config: { OX_ALPHA_MODEL: "primary", OX_ALPHA_TIMEOUT_MS: 5_000, OX_ALPHA_MAX_RETRIES: 50, OX_ALPHA_MAX_OUTPUT_TOKENS: 4_096, OPENROUTER_API_KEY: "k" } }));
 const queryMock = vi.hoisted(() => vi.fn());
-vi.mock("../db/client.js", () => ({ query: queryMock }));
+vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }) }));
 vi.mock("../services/audit.service.js", () => ({ audit: vi.fn(async () => {}) }));
 const executeMock = vi.hoisted(() => vi.fn());
 vi.mock("../ai/agents/executor.js", () => ({ agentExecutor: { execute: executeMock } }));
@@ -21,10 +21,10 @@ const provider = (impl: (model: string) => Promise<ModelResponse>): ModelProvide
   const calls: string[] = [];
   return { name: "mock", calls, isAvailable: async () => true, execute: vi.fn(async (req) => { calls.push(req.model); return impl(req.model); }) };
 };
-const req = { messages: [{ role: "user" as const, content: "hi" }] };
+const req = { messages: [{ role: "user" as const, content: "hi" }], orgId: "org-1", scanId: "scan-1" };
 
 describe("bounded AI attempts (F-010)", () => {
-  beforeEach(() => { vi.useFakeTimers(); queryMock.mockResolvedValue({ rows: [{ id: "db" }] }); });
+  beforeEach(() => { vi.useFakeTimers(); queryMock.mockResolvedValue({ rows: [{ id: "db", count: "0", free_status: "FREE" }] }); });
   afterEach(() => vi.useRealTimers());
 
   it("never exceeds the hard total attempt cap with an always-failing provider, even with huge maxRetries and many fallbacks", async () => {

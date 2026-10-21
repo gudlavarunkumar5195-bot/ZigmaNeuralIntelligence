@@ -1,4 +1,4 @@
-import { query } from "../db/client.js";
+import { query, withTransaction, type Queryable } from "../db/client.js";
 import { config } from "../config.js";
 
 /** Default hard ceiling on provider calls per organization per rolling 24h. */
@@ -33,4 +33,46 @@ export async function assertOrgAiBudget(organizationId: string): Promise<void> {
   const limit = aiDailyLimit();
   const used = await countOrgAiExecutions(organizationId);
   if (used >= limit) throw new AiBudgetError(organizationId, used, limit);
+}
+
+/**
+ * P0-6: atomic budget reservation. Under a per-organization transaction-scoped
+ * advisory lock, counts the rolling-24h attempts and, only if below the limit,
+ * inserts the attempt row (via `insertAttempt`, which must write the
+ * agent_executions MODEL_ATTEMPT row with the given client) in the SAME
+ * transaction. Concurrent callers for one org serialise on the lock, so N
+ * parallel agents can never overshoot the limit. Returns the inserted row id.
+ */
+export async function reserveOrgAiAttempt(
+  organizationId: string,
+  insertAttempt: (tx: Queryable) => Promise<string>,
+): Promise<string> {
+  const limit = aiDailyLimit();
+  return withTransaction(async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`ai-budget:${organizationId}`]);
+    const { rows } = await tx.query<{ count: string | number }>(
+      "SELECT COUNT(*) AS count FROM agent_executions WHERE org_id=$1 AND execution_kind='MODEL_ATTEMPT' AND started_at > NOW() - INTERVAL '24 hours'",
+      [organizationId],
+    );
+    const used = Number(rows[0]?.count);
+    const usedSafe = Number.isFinite(used) ? used : 0;
+    if (usedSafe >= limit) throw new AiBudgetError(organizationId, usedSafe, limit);
+    const id = await insertAttempt(tx);
+    if (!id) throw new Error("AI attempt was not recorded; refusing an unbudgeted provider call");
+    return id;
+  });
+}
+
+/**
+ * Paid models stay disabled until pricing and spend limits are verified
+ * (AI_ALLOW_PAID_MODELS=true). A model is callable only when the registry
+ * records it as FREE; unknown models fail closed.
+ */
+export async function isModelCallable(modelId: string): Promise<boolean> {
+  if ((config as { AI_ALLOW_PAID_MODELS?: boolean }).AI_ALLOW_PAID_MODELS === true) return true;
+  const { rows } = await query<{ free_status: string }>(
+    "SELECT free_status FROM models WHERE openrouter_id = $1 LIMIT 1",
+    [modelId],
+  );
+  return rows[0]?.free_status === "FREE";
 }

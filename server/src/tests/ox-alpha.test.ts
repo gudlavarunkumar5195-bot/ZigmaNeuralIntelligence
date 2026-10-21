@@ -11,8 +11,10 @@ vi.mock("../config.js", () => ({
     OPENROUTER_API_KEY: undefined,
   },
 }));
+const queryMock = vi.hoisted(() => vi.fn(async () => ({ rows: [{ id: "test-db-id", count: "0", free_status: "FREE" }] })));
 vi.mock("../db/client.js", () => ({
-  query: vi.fn(async () => ({ rows: [{ id: "test-db-id" }] })),
+  query: queryMock,
+  withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }),
 }));
 vi.mock("../services/audit.service.js", () => ({
   audit: vi.fn(async () => {}),
@@ -47,6 +49,8 @@ function mockProvider(execute: () => Promise<ModelResponse>): ModelProvider {
 
 const BASE_REQUEST = {
   messages: [{ role: "user" as const, content: "Hello" }],
+  orgId: "org-1",
+  scanId: "scan-1",
 };
 
 // ─── Provider error types ─────────────────────────────────────────────────────

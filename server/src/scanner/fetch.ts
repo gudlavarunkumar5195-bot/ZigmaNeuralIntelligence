@@ -13,6 +13,8 @@ export interface SafeFetchResult {
   body: string;
   finalUrl: string;
   redirectCount: number;
+  /** Every redirect hop followed, in order: the URL requested and the 3xx it returned. */
+  redirectChain?: Array<{ url: string; status: number }>;
   durationMs: number;
   limited?: boolean;
   contentType?: string;
@@ -33,20 +35,21 @@ export async function safeFetch(
   const start = Date.now();
   let currentUrl = rawUrl;
   let redirectCount = 0;
+  const redirectChain: Array<{ url: string; status: number }> = [];
 
   while (true) {
     const safety = await checkUrlSafety(currentUrl);
     if (!safety.safe) {
       return {
         ok: false, status: 0, headers: {}, body: "", finalUrl: currentUrl,
-        redirectCount, durationMs: Date.now() - start,
+        redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start,
         error: `SSRF: ${safety.reason}`,
       };
     }
 
     const parsedCurrentUrl = new URL(currentUrl);
     if (parsedCurrentUrl.username || parsedCurrentUrl.password) {
-      return { ok: false, status: 0, headers: {}, body: "", finalUrl: currentUrl, redirectCount, durationMs: Date.now() - start, error: "Userinfo in URL is not permitted" };
+      return { ok: false, status: 0, headers: {}, body: "", finalUrl: currentUrl, redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start, error: "Userinfo in URL is not permitted" };
     }
 
     const controller = new AbortController();
@@ -62,7 +65,7 @@ export async function safeFetch(
       clearTimeout(connectTimer);
       return {
         ok: false, status: 0, headers: {}, body: "", finalUrl: currentUrl,
-        redirectCount, durationMs: Date.now() - start,
+        redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start,
         error: (err as Error).message,
       };
     }
@@ -75,7 +78,7 @@ export async function safeFetch(
         res.destroy();
         return {
           ok: false, status: res.statusCode ?? 0, headers: headersToObject(res.headers),
-          body: "", finalUrl: currentUrl, redirectCount,
+          body: "", finalUrl: currentUrl, redirectCount, redirectChain: [...redirectChain],
           durationMs: Date.now() - start, error: "Redirect with no Location header",
         };
       }
@@ -84,7 +87,7 @@ export async function safeFetch(
         res.destroy();
         return {
           ok: false, status: 0, headers: {}, body: "", finalUrl: currentUrl,
-          redirectCount, durationMs: Date.now() - start,
+          redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start,
           error: `Too many redirects (max ${config.SCANNER_MAX_REDIRECTS})`,
         };
       }
@@ -96,9 +99,10 @@ export async function safeFetch(
         currentUrl = redirectUrl.href;
       } catch (error) {
         res.destroy();
-        return { ok: false, status: res.statusCode ?? 0, headers: headersToObject(res.headers), body: "", finalUrl: currentUrl, redirectCount, durationMs: Date.now() - start, error: `Invalid redirect: ${(error as Error).message}` };
+        return { ok: false, status: res.statusCode ?? 0, headers: headersToObject(res.headers), body: "", finalUrl: currentUrl, redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start, error: `Invalid redirect: ${(error as Error).message}` };
       }
       res.destroy();
+      redirectChain.push({ url: parsedCurrentUrl.href, status: res.statusCode ?? 0 });
       redirectCount++;
       continue;
     }
@@ -149,6 +153,7 @@ export async function safeFetch(
       body,
       finalUrl: currentUrl,
       redirectCount,
+      redirectChain: [...redirectChain],
       durationMs: Date.now() - start,
       limited,
       contentType,

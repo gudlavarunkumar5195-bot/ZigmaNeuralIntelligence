@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto"
-import { query, withTransaction, createListenClient } from "../db/client.js"
+import { query, withTransaction, createListenClient, type Queryable } from "../db/client.js"
 import { runSEOScanner } from "../scanner/seo.js"
 import { runSecurityScanner } from "../scanner/security.js"
 import { runSSLScanner } from "../scanner/ssl.js"
 import { runPerformanceScanner } from "../scanner/performance.js"
+import { makeCrawlRunner, type CrawlModuleResult } from "../scanner/crawl.js"
+import { persistCrawl } from "./site-audit.service.js"
 import { calculateCategoryScore } from "../types.js"
 import type {
   ScanRow,
@@ -19,7 +21,7 @@ import { AI_SCAN_DEADLINE_MS } from "../ai/limits.js"
 import { runScanIntelligence } from "../ai/agents/scan-pipeline.js"
 import { randomUUID } from "node:crypto"
 import { config } from "../config.js"
-import { trackEvent } from "../analytics/events.js"
+import { enqueueAnalyticsEvent, type AnalyticsEvent } from "../analytics/events.js"
 
 export const SCAN_LEASE_MS = 120_000
 export const SCAN_HEARTBEAT_MS = 40_000
@@ -142,14 +144,25 @@ export async function isScanCancelled(
   return rows[0]?.status === "cancelled"
 }
 
-const MODULE_RUNNERS: Record<string, (url: string) => Promise<ModuleResult>> = {
-  seo: runSEOScanner,
-  security: runSecurityScanner,
-  ssl: runSSLScanner,
-  performance: runPerformanceScanner,
+const MODULE_RUNNERS: Record<string, (url: string, ctx?: { deadlineAt?: number }) => Promise<ModuleResult>> = {
+  // Wrapped so the per-run context argument never reaches a scanner's own
+  // optional second parameter (runSSLScanner takes injectable deps there).
+  seo: (url) => runSEOScanner(url),
+  security: (url) => runSecurityScanner(url),
+  ssl: (url) => runSSLScanner(url),
+  performance: (url) => runPerformanceScanner(url),
+  // Multi-page technical crawl (robots.txt, sitemaps, status inventory,
+  // links, redirects, canonicals, duplicates). Scores "technicalHealth".
+  crawl: makeCrawlRunner({
+    maxPages: Math.min(config.SCANNER_CRAWL_MAX_PAGES ?? 100, config.SCANNER_MAX_PAGES ?? 200),
+    maxDurationMs: config.SCANNER_CRAWL_MAX_DURATION_MS ?? 120_000,
+  }),
 }
 
-export const SCAN_MODULE_NAMES = ["seo", "security", "ssl", "performance"] as const
+/** Score categories produced by a module whose name differs from the category. */
+const CATEGORY_PRODUCER: Record<string, string> = { technicalHealth: "crawl" }
+
+export const SCAN_MODULE_NAMES = ["seo", "security", "ssl", "performance", "crawl"] as const
 export type ScanModuleName = (typeof SCAN_MODULE_NAMES)[number]
 
 export function logicalKey(value: unknown): string {
@@ -283,6 +296,22 @@ export interface CreateScanInput {
   orgId: string
   triggeredBy: string | null
   modules?: string[]
+  /**
+   * What to do when the website already has a queued or running scan:
+   * "return" hands back that scan (idempotent double-submit, the API default);
+   * "reject" throws ActiveScanExistsError (scheduled monitoring, which needs
+   * its own module set).
+   */
+  onActive?: "return" | "reject"
+}
+
+export class ActiveScanExistsError extends Error {
+  readonly statusCode = 409
+  readonly code = "SCAN_ALREADY_ACTIVE"
+  constructor(readonly scanId: string) {
+    super("This website already has a queued or running scan")
+    this.name = "ActiveScanExistsError"
+  }
 }
 
 export class ScanAdmissionError extends Error {
@@ -293,7 +322,6 @@ export class ScanAdmissionError extends Error {
   }
 }
 
-type Queryable = { query: (text: string, params?: unknown[]) => Promise<{ rows: any[] }> }
 
 async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void> {
   // Serialise admission per tenant for the duration of the transaction so
@@ -319,11 +347,25 @@ async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void>
  * Creates the scan, its module rows and the scan_queued event atomically so a
  * crash cannot leave a scan without modules/events (F-015).
  */
-export async function createScan(input: CreateScanInput): Promise<ScanRow> {
-  const modules = input.modules ?? ["seo", "security", "ssl", "performance"]
+export async function createScan(input: CreateScanInput): Promise<ScanRow & { deduplicated?: true }> {
+  const modules = input.modules ?? ["seo", "security", "ssl", "performance", "crawl"]
 
   return withTransaction(async (client) => {
     await enforceScanAdmission(client, input.orgId)
+
+    // P0-7: at most one active scan per website. Checked under the per-org
+    // admission lock taken above (websites belong to exactly one org), and
+    // backed by the partial unique index from migration 028.
+    const { rows: active } = await client.query<ScanRow>(
+      `SELECT * FROM scans
+        WHERE website_id = $1 AND org_id = $2 AND status IN ('queued','running')
+        ORDER BY created_at DESC LIMIT 1`,
+      [input.websiteId, input.orgId],
+    )
+    if (active[0]) {
+      if (input.onActive === "reject") throw new ActiveScanExistsError(active[0].id)
+      return Object.assign(active[0], { deduplicated: true as const })
+    }
 
     const { rows } = await client.query<ScanRow>(
       `INSERT INTO scans (website_id, org_id, triggered_by, modules)
@@ -384,6 +426,14 @@ export async function runScan(scanId: string, preClaimedOwner?: string): Promise
         () => undefined,
       )
     stopScanLeaseHeartbeat(scanId)
+  }
+}
+
+/** Thrown inside the module commit transaction when this worker no longer owns the scan. */
+class ModuleCommitLostError extends Error {
+  constructor(scanId: string, moduleName: string) {
+    super(`Lost ownership of scan ${scanId} before committing module ${moduleName}`)
+    this.name = "ModuleCommitLostError"
   }
 }
 
@@ -510,7 +560,8 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
     while (true) {
       if (Date.now() >= scanDeadline) throw new Error("SCAN_DEADLINE_EXCEEDED")
       try {
-        result = await runner(url)
+        // Leave headroom for the commit and scoring before the scan deadline.
+        result = await runner(url, { deadlineAt: scanDeadline - 15_000 })
       } catch (err: unknown) {
         result = {
           moduleName,
@@ -523,6 +574,9 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
       if (
         result.status !== "failed" ||
         !isRecoverableModuleFailure(result.error) ||
+        // A crawl is one long, budgeted measurement: re-running it would blow
+        // the scan deadline, so its failures are recorded, not retried.
+        moduleName === "crawl" ||
         attempt >= maxAttempts
       )
         break
@@ -539,25 +593,63 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
       })
     }
 
-    await query(
-      `UPDATE scan_modules
-         SET status = $3, completed_at = NOW(), duration_ms = $4, error = $5
-       WHERE scan_id = $1 AND module_name = $2`,
-      [
-        scanId,
-        moduleName,
-        result.status,
-        result.durationMs,
-        result.error ?? null,
-      ],
-    )
-
-    if (result.status === "completed" || result.findings.length > 0) {
-      for (const f of result.findings) {
-        await persistFinding(scanId, url, org_id, moduleName, f)
+    // P0-5: findings, their evidence and the module's terminal status commit
+    // in ONE transaction, and only while this worker still owns the scan. A
+    // crash or lost lease therefore leaves the module re-runnable with no
+    // partial findings, instead of "completed" with findings missing.
+    const persistFindings = result.status === "completed" || result.findings.length > 0
+    const committed = await withTransaction(async (tx) => {
+      const pendingEvents: AnalyticsEvent[] = []
+      if (persistFindings) {
+        for (const f of result.findings) {
+          pendingEvents.push(await persistFinding(scanId, url, org_id, moduleName, f, tx))
+        }
       }
-      allFindings.push(...result.findings)
+      const { rows: moduleRows } = await tx.query(
+        `UPDATE scan_modules
+           SET status = $3, completed_at = NOW(), duration_ms = $4, error = $5
+         WHERE scan_id = $1 AND module_name = $2
+           AND EXISTS (SELECT 1 FROM scans
+                        WHERE id = $1 AND org_id = $6 AND execution_owner = $7 AND status = 'running')
+         RETURNING id`,
+        [
+          scanId,
+          moduleName,
+          result.status,
+          result.durationMs,
+          result.error ?? null,
+          org_id,
+          ownerId,
+        ],
+      )
+      if (moduleRows.length === 0) throw new ModuleCommitLostError(scanId, moduleName)
+      const crawl = (result as CrawlModuleResult).crawl
+      if (moduleName === "crawl" && crawl) {
+        // Crawl pages, summary and the issue lifecycle commit with the module.
+        await persistCrawl(tx, {
+          scanId,
+          orgId: org_id,
+          websiteId: website_id,
+          result: crawl.result,
+          issues: crawl.issues,
+          completed: result.status === "completed",
+        })
+      }
+      // Analytics events commit with the findings they describe (outbox).
+      for (const event of pendingEvents) await enqueueAnalyticsEvent(tx, event)
+      return pendingEvents
+    }).catch((err: unknown) => {
+      if (err instanceof ModuleCommitLostError) return null
+      throw err
+    })
+    if (committed === null) {
+      // Lease lost or scan cancelled mid-module: nothing from this module was
+      // written; the new owner (or nobody, if cancelled) re-runs it.
+      console.warn(JSON.stringify({ event: "module_commit_skipped_lease_lost", scanId, module: moduleName }))
+      await releaseScanExecution(scanId, org_id, ownerId)
+      return
     }
+    if (persistFindings) allFindings.push(...result.findings)
 
     moduleStatuses[moduleName] =
       result.status === "completed" ? "completed" : "failed"
@@ -638,9 +730,10 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
 
   for (const cat of categories) {
     const catFindings = allFindings.filter((f) => f.category === cat)
+    const producer = CATEGORY_PRODUCER[cat] ?? cat
     const moduleRan =
-      Object.prototype.hasOwnProperty.call(MODULE_RUNNERS, cat) &&
-      (modules.includes(cat) || modules.includes(cat.toLowerCase()))
+      Object.prototype.hasOwnProperty.call(MODULE_RUNNERS, producer) &&
+      (modules.includes(producer) || modules.includes(producer.toLowerCase()))
 
     if (!moduleRan) {
       const row = {
@@ -652,7 +745,7 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
       }
       categoryRows.push(row)
       await upsertScore(scanId, org_id, cat, null, "not_measured", 0, 0)
-    } else if (moduleStatuses[cat] === "failed") {
+    } else if (moduleStatuses[producer] === "failed") {
       const row = {
         category: cat,
         score: null,
@@ -726,10 +819,20 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
     await releaseScanExecution(scanId, org_id, ownerId)
     return
   }
-  const finalized = await query(
-    "UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1 AND org_id = $3 AND execution_owner = $4 AND execution_lease_until > NOW() AND status = 'running' RETURNING id",
-    [scanId, finalStatus, org_id, ownerId],
-  )
+  const finalized = await withTransaction(async (tx) => {
+    const result = await tx.query(
+      "UPDATE scans SET status = $2, completed_at = NOW() WHERE id = $1 AND org_id = $3 AND execution_owner = $4 AND execution_lease_until > NOW() AND status = 'running' RETURNING id",
+      [scanId, finalStatus, org_id, ownerId],
+    )
+    if (result.rows.length > 0) {
+      await enqueueAnalyticsEvent(tx, {
+        table: "scan_events",
+        orgId: org_id,
+        row: { scan_id: scanId, website_id, status: finalStatus, modules, duration_ms: null },
+      })
+    }
+    return result
+  })
   if (finalized.rows.length === 0) {
     // F-026: we lost the lease (expired/requeued/cancelled). Another owner or
     // the sweeper decides the outcome; do not emit completion or audit.
@@ -740,7 +843,6 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
   // The terminal event is emitted first so a failure in any follow-up can
   // never leave a completed scan without scan_completed (SSE would hang).
   await emitScanEvent(scanId, "scan_completed", { scanId, status: finalStatus })
-  trackEvent("scan_events", org_id, { scan_id: scanId, website_id, status: finalStatus, modules, duration_ms: null })
 
   const followUp = async (step: string, fn: () => Promise<unknown>) => {
     try {
@@ -784,15 +886,16 @@ async function persistFinding(
   orgId: string,
   moduleName: string,
   f: NewFinding,
-): Promise<string> {
+  db: Queryable,
+): Promise<AnalyticsEvent> {
   // Get website_id from scan
-  const { rows: scanRows } = await query<{ website_id: string }>(
+  const { rows: scanRows } = await db.query<{ website_id: string }>(
     "SELECT website_id FROM scans WHERE id = $1 AND org_id = $2",
     [scanId, orgId],
   )
   const websiteId = scanRows[0]?.website_id
 
-  const { rows: findingRows } = await query<{ id: string }>(
+  const { rows: findingRows } = await db.query<{ id: string }>(
     `INSERT INTO findings
        (scan_id, website_id, org_id, logical_key, module_name, category, severity, title,
         description, recommendation, affected_urls, confidence, provenance)
@@ -828,7 +931,11 @@ async function persistFinding(
   )
 
   const findingId = findingRows[0].id
-  trackEvent("scan_findings", orgId, { scan_id: scanId, website_id: websiteId, finding_id: findingId, module_name: moduleName, category: f.category, severity: f.severity })
+  const analyticsEvent: AnalyticsEvent = {
+    table: "scan_findings",
+    orgId,
+    row: { scan_id: scanId, website_id: websiteId, finding_id: findingId, module_name: moduleName, category: f.category, severity: f.severity },
+  }
 
   for (const ev of f.evidence) {
     const evidenceType: EvidenceType =
@@ -874,8 +981,8 @@ async function persistFinding(
       agentId: moduleName.toUpperCase(),
       agentVersion: "scanner",
       metadata: { legacyType: ev.type, tool: ev.tool },
-    })
-    await query(
+    }, db)
+    await db.query(
       `UPDATE evidence SET type=$2, url=$3, observed_value=$4, expected_value=$5, rule=$6, tool=$7, metadata = metadata || $8::jsonb WHERE id=$1`,
       [
         record.evidenceId,
@@ -888,13 +995,13 @@ async function persistFinding(
         JSON.stringify({ websiteId: websiteId }),
       ],
     )
-    await query(
+    await db.query(
       "INSERT INTO finding_evidence (finding_id, evidence_id, org_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
       [findingId, record.evidenceId, orgId],
     )
   }
 
-  return findingId
+  return analyticsEvent
 }
 
 async function upsertScore(

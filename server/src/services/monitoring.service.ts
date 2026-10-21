@@ -320,7 +320,7 @@ export async function createMonitoringConfig(
     throw Object.assign(new Error("Verified website not found"), {
       statusCode: 404,
     })
-  const modules = input.modules ?? ["seo", "security", "ssl", "performance"]
+  const modules = input.modules ?? ["seo", "security", "ssl", "performance", "crawl"]
   const { rows } = await query(
     "INSERT INTO monitoring_configs (org_id, website_id, frequency, modules, alert_config, next_run_at) VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING *",
     [
@@ -421,6 +421,7 @@ export async function runMonitoringNow(
   // Admission happens first: a rejected scan (ScanAdmissionError) must never
   // leave an orphaned RUNNING monitoring run holding a 10 minute lease.
   const scan = await createScan({
+    onActive: "reject",
     websiteId: config.website_id,
     orgId,
     triggeredBy: actorId,
@@ -460,6 +461,7 @@ export async function createScanForClaimedMonitoring(
   modules: string[],
 ): Promise<unknown> {
   const scan = await createScan({
+    onActive: "reject",
     websiteId,
     orgId,
     triggeredBy: null,

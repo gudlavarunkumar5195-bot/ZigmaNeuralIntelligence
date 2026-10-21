@@ -21,7 +21,7 @@ function verificationInstructions(site: WebsiteRecord): string {
   const token = site.verification_token ?? "<token>";
   if (site.verification_method === "dns") return `Create a DNS TXT record at _zignaneural-verify.${site.domain} with the value ${token}`;
   if (site.verification_method === "file") return `Serve a text file at ${new URL(site.url).origin}/zignaneural-verify.txt containing exactly ${token}`;
-  return `Add <meta name="zignaneural-site-verification" content="${token}"> to the <head> of ${site.url}`;
+  return `Add <meta name="zignaneural-site-verification" content="${token}"> to the <head> of your home page at ${new URL(site.url).origin}/`;
 }
 
 export function MyWebsites() {
@@ -64,7 +64,7 @@ export function MyWebsites() {
     setActionError(null);
     setBusyId(siteId);
     try {
-      const result = await apiCreateScan(siteId, ["seo", "security", "performance", "ssl"]);
+      const result = await apiCreateScan(siteId, ["seo", "security", "performance", "ssl", "crawl"]);
       if (result.error) throw new ApiCallError(0, result.error.code, result.error.message);
       if (result.data?.id) {
         navigate(`/websites/scan/${result.data.id}`);

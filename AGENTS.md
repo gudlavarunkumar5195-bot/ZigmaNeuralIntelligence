@@ -49,4 +49,6 @@ The repository is a two-package app: the Vite frontend (root) and a Fastify API 
 - Tenancy: every tenant request carries `x-org-id`; `requireOrgMember` re-reads membership/role (and `users.active`) from the database. Global resources (model catalog, global agents, global routing policy) additionally require `PLATFORM_ADMIN_USER_IDS` (user UUIDs; unset = nobody).
 - Proxy trust for rate limiting is explicit: `TRUST_PROXY` (default off).
 - Tests: `pnpm test` (frontend), `pnpm --dir server test` (backend). Database-backed suites run only with `RUN_INTEGRATION=1` and `TEST_DATABASE_URL` pointing at an isolated throwaway database. Never point them at production.
-- Quality gate: `pnpm exec tsc --noEmit && pnpm test && pnpm --dir server build && pnpm --dir server test && pnpm build && git diff --check`.
+- Quality gate: `pnpm exec tsc --noEmit && pnpm test && pnpm --dir server build && pnpm --dir server test && pnpm build && git diff --check`. CI (`.github/workflows/ci.yml`) runs the same gate plus a fresh-database migration, the integration suites and `audit --prod`. Server unit tests need no `.env.test`.
+- Migrations run once per release (App Platform `PRE_DEPLOY` job, `DIRECT_DATABASE_URL` preferred), never from the web `run_command`.
+- Paid AI models stay off until `AI_ALLOW_PAID_MODELS=true` is explicitly approved. Keyword, ranking, backlink and competitor data must come from an authorized source; never show estimated figures.

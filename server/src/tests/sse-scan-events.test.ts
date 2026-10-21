@@ -25,6 +25,7 @@ const state = {
   events: [] as { id: number; type: string; payload: unknown }[],
   failEventsQuery: false,
   scanInserts: [] as unknown[][],
+  activeScan: null as string | null,
 };
 const { queryMock, txMock } = vi.hoisted(() => ({ queryMock: vi.fn(), txMock: vi.fn() }));
 vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: txMock, createListenClient: vi.fn() }));
@@ -47,6 +48,7 @@ beforeEach(async () => {
   state.events = [{ id: 1, type: "scan_queued", payload: { scanId: SCAN } }];
   state.failEventsQuery = false;
   state.scanInserts = [];
+  state.activeScan = null;
   queryMock.mockReset();
   queryMock.mockImplementation(async (sql: string, params: unknown[] = []) => {
     if (sql.includes("FROM memberships")) return { rows: [{ role: "member" }] };
@@ -63,6 +65,8 @@ beforeEach(async () => {
     cb({
       query: async (sql: string, params: unknown[] = []) => {
         if (sql.includes("INSERT INTO scans")) state.scanInserts.push(params);
+        if (sql.includes("WHERE website_id = $1 AND org_id = $2 AND status IN ('queued','running')"))
+          return { rows: state.activeScan ? [{ id: state.activeScan, org_id: ORG, website_id: WEBSITE, status: "running" }] : [] };
         return { rows: [{ id: SCAN, org_id: ORG, active_count: 0, queued_count: 0, recent_count: 0 }] };
       },
     }),
@@ -273,5 +277,14 @@ describe("scan route validation", () => {
     const res = await app.inject({ method: "POST", url: "/api/v1/scans", headers: auth("u1"), payload: { websiteId: WEBSITE, modules: ["seo", "seo", "ssl"] } });
     expect(res.statusCode).toBe(201);
     expect(state.scanInserts[0][3]).toEqual(["seo", "ssl"]);
+  });
+
+  it("P0-7: a double submit returns the active scan instead of creating another", async () => {
+    state.activeScan = "33333333-3333-4333-8333-333333333333";
+    const res = await app.inject({ method: "POST", url: "/api/v1/scans", headers: auth("u1"), payload: { websiteId: WEBSITE } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ data: { id: state.activeScan }, meta: { deduplicated: true } });
+    expect(res.json().data.deduplicated).toBeUndefined();
+    expect(state.scanInserts).toHaveLength(0);
   });
 });

@@ -140,11 +140,19 @@ export async function verifyOwnership(websiteId: string, orgId: string): Promise
       verified = false;
     }
   } else {
+    // Both HTTP methods prove control of the ORIGIN (the crawl scope), so the
+    // token is read from the origin root, never from a deeper path that a
+    // shared host might let another tenant control.
+    const origin = new URL(website.url).origin;
     const target = website.verification_method === "file"
-      ? `${new URL(website.url).origin}/zignaneural-verify.txt`
-      : website.url;
+      ? `${origin}/zignaneural-verify.txt`
+      : `${origin}/`;
     const response = await safeFetch(target);
-    if (response.ok) {
+    // safeFetch follows redirects (each hop is SSRF-checked). The token only
+    // counts if the document that carries it was served by the claimed host:
+    // otherwise an open redirect on the victim's site would let an attacker
+    // "verify" it with a token hosted elsewhere.
+    if (response.ok && isClaimedHost(website.domain, response.finalUrl)) {
       if (website.verification_method === "file") {
         verified = response.body.trim() === token;
       } else {
@@ -161,6 +169,23 @@ export async function verifyOwnership(websiteId: string, orgId: string): Promise
 
   await markVerified(websiteId, orgId);
   return true;
+}
+
+/**
+ * True when `finalUrl` is served by the claimed domain itself or its www/apex
+ * twin (example.com <-> www.example.com). Any other host, including other
+ * subdomains, fails closed.
+ */
+export function isClaimedHost(claimedDomain: string, finalUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(finalUrl).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  const claimed = claimedDomain.toLowerCase().replace(/\.$/, "");
+  const bare = (h: string) => (h.startsWith("www.") ? h.slice(4) : h);
+  return host === claimed || bare(host) === bare(claimed);
 }
 
 export async function markVerified(websiteId: string, orgId: string): Promise<void> {
