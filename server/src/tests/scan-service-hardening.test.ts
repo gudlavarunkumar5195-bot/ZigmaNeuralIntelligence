@@ -122,6 +122,6 @@ describe("S8/S10 shared definitions", () => {
     expect(new ScanAdmissionError("x").statusCode).toBe(429);
   });
   it("exposes the known runner names", () => {
-    expect([...SCAN_MODULE_NAMES].sort()).toEqual(["performance", "security", "seo", "ssl"]);
+    expect([...SCAN_MODULE_NAMES].sort()).toEqual(["crawl", "performance", "security", "seo", "ssl"]);
   });
 });

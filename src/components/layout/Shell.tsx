@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Globe, Search,
   FlaskConical, Server, Bot, FileBarChart, Activity, BarChart3,
   ChevronDown, ChevronRight, Plus, Bell, User,
-  Lock, Network, FileText, Cog, ChevronLeft, ShieldCheck,
+  Lock, Network, FileText, Cog, ChevronLeft, ShieldCheck, LineChart,
 } from "lucide-react";
 import { apiGetMe, apiListAlerts, apiListWebsites, apiLogout, clearToken, isAuthenticated } from "../../services/api";
 import { getSelectedWebsiteId, setSelectedWebsiteId } from "../../lib/selectedWebsite";
@@ -47,6 +47,17 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Performance", path: "/intelligence/performance" },
       { label: "Accessibility", path: "/intelligence/accessibility" },
       { label: "Technical Health", path: "/intelligence/technical-health" },
+    ],
+  },
+  {
+    label: "Search Data",
+    icon: <LineChart size={15} />,
+    basePath: "/search",
+    items: [
+      { label: "Keywords", path: "/search/keywords" },
+      { label: "Rankings", path: "/search/rankings" },
+      { label: "Backlinks", path: "/search/backlinks" },
+      { label: "Competitors", path: "/search/competitors" },
     ],
   },
   {
@@ -376,6 +387,10 @@ function TopBar() {
     if (path === "/intelligence/performance") return "Performance";
     if (path === "/intelligence/accessibility") return "Accessibility";
     if (path === "/intelligence/technical-health") return "Technical Health";
+    if (path === "/search/keywords") return "Keywords";
+    if (path === "/search/rankings") return "Rankings";
+    if (path === "/search/backlinks") return "Backlinks";
+    if (path === "/search/competitors") return "Competitors";
     if (path === "/agents/control-center") return "AI Agent Control Center";
     if (path === "/agents/agent-registry") return "Agent Registry";
     if (path === "/agents/model-router") return "Model Router";

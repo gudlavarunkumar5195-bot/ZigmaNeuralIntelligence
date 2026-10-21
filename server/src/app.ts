@@ -14,6 +14,7 @@ import { infrastructureRoutes } from "./routes/infrastructure.js";
 import { analyticsRoutes } from "./routes/analytics.js";
 import { authRoutes } from "./routes/auth.js";
 import { websiteRoutes } from "./routes/websites.js";
+import { siteAuditRoutes } from "./routes/site-audit.js";
 import { scanRoutes } from "./routes/scans.js";
 import { modelRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
@@ -99,6 +100,7 @@ export async function buildApp() {
 
   await fastify.register(authRoutes, { prefix: "/api/v1/auth" });
   await fastify.register(websiteRoutes, { prefix: "/api/v1/websites" });
+  await fastify.register(siteAuditRoutes, { prefix: "/api/v1/websites" });
   await fastify.register(scanRoutes, { prefix: "/api/v1/scans" });
   await fastify.register(modelRoutes, { prefix: "/api/v1/models" });
   await fastify.register(routingRoutes, { prefix: "/api/v1/routing" });

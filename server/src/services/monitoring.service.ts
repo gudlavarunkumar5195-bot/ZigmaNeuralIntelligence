@@ -320,7 +320,7 @@ export async function createMonitoringConfig(
     throw Object.assign(new Error("Verified website not found"), {
       statusCode: 404,
     })
-  const modules = input.modules ?? ["seo", "security", "ssl", "performance"]
+  const modules = input.modules ?? ["seo", "security", "ssl", "performance", "crawl"]
   const { rows } = await query(
     "INSERT INTO monitoring_configs (org_id, website_id, frequency, modules, alert_config, next_run_at) VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING *",
     [

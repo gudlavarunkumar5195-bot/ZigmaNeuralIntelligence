@@ -4,6 +4,8 @@ import { runSEOScanner } from "../scanner/seo.js"
 import { runSecurityScanner } from "../scanner/security.js"
 import { runSSLScanner } from "../scanner/ssl.js"
 import { runPerformanceScanner } from "../scanner/performance.js"
+import { makeCrawlRunner, type CrawlModuleResult } from "../scanner/crawl.js"
+import { persistCrawl } from "./site-audit.service.js"
 import { calculateCategoryScore } from "../types.js"
 import type {
   ScanRow,
@@ -147,9 +149,18 @@ const MODULE_RUNNERS: Record<string, (url: string) => Promise<ModuleResult>> = {
   security: runSecurityScanner,
   ssl: runSSLScanner,
   performance: runPerformanceScanner,
+  // Multi-page technical crawl (robots.txt, sitemaps, status inventory,
+  // links, redirects, canonicals, duplicates). Scores "technicalHealth".
+  crawl: makeCrawlRunner({
+    maxPages: Math.min(config.SCANNER_CRAWL_MAX_PAGES ?? 100, config.SCANNER_MAX_PAGES ?? 200),
+    maxDurationMs: config.SCANNER_CRAWL_MAX_DURATION_MS ?? 120_000,
+  }),
 }
 
-export const SCAN_MODULE_NAMES = ["seo", "security", "ssl", "performance"] as const
+/** Score categories produced by a module whose name differs from the category. */
+const CATEGORY_PRODUCER: Record<string, string> = { technicalHealth: "crawl" }
+
+export const SCAN_MODULE_NAMES = ["seo", "security", "ssl", "performance", "crawl"] as const
 export type ScanModuleName = (typeof SCAN_MODULE_NAMES)[number]
 
 export function logicalKey(value: unknown): string {
@@ -335,7 +346,7 @@ async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void>
  * crash cannot leave a scan without modules/events (F-015).
  */
 export async function createScan(input: CreateScanInput): Promise<ScanRow & { deduplicated?: true }> {
-  const modules = input.modules ?? ["seo", "security", "ssl", "performance"]
+  const modules = input.modules ?? ["seo", "security", "ssl", "performance", "crawl"]
 
   return withTransaction(async (client) => {
     await enforceScanAdmission(client, input.orgId)
@@ -606,6 +617,18 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
         ],
       )
       if (moduleRows.length === 0) throw new ModuleCommitLostError(scanId, moduleName)
+      const crawl = (result as CrawlModuleResult).crawl
+      if (moduleName === "crawl" && crawl) {
+        // Crawl pages, summary and the issue lifecycle commit with the module.
+        await persistCrawl(tx, {
+          scanId,
+          orgId: org_id,
+          websiteId: website_id,
+          result: crawl.result,
+          issues: crawl.issues,
+          completed: result.status === "completed",
+        })
+      }
       // Analytics events commit with the findings they describe (outbox).
       for (const event of pendingEvents) await enqueueAnalyticsEvent(tx, event)
       return pendingEvents
@@ -701,9 +724,10 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
 
   for (const cat of categories) {
     const catFindings = allFindings.filter((f) => f.category === cat)
+    const producer = CATEGORY_PRODUCER[cat] ?? cat
     const moduleRan =
-      Object.prototype.hasOwnProperty.call(MODULE_RUNNERS, cat) &&
-      (modules.includes(cat) || modules.includes(cat.toLowerCase()))
+      Object.prototype.hasOwnProperty.call(MODULE_RUNNERS, producer) &&
+      (modules.includes(producer) || modules.includes(producer.toLowerCase()))
 
     if (!moduleRan) {
       const row = {
@@ -715,7 +739,7 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
       }
       categoryRows.push(row)
       await upsertScore(scanId, org_id, cat, null, "not_measured", 0, 0)
-    } else if (moduleStatuses[cat] === "failed") {
+    } else if (moduleStatuses[producer] === "failed") {
       const row = {
         category: cat,
         score: null,
