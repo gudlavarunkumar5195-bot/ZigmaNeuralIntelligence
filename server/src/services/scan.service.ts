@@ -303,6 +303,21 @@ export interface CreateScanInput {
    * its own module set).
    */
   onActive?: "return" | "reject"
+  /**
+   * Client-supplied Idempotency-Key (scoped to the organization). A repeat of
+   * the same request returns the scan the first one produced, even after it
+   * finished; the same key with a different request is rejected.
+   */
+  idempotencyKey?: string
+}
+
+export class IdempotencyKeyReusedError extends Error {
+  readonly statusCode = 422
+  readonly code = "IDEMPOTENCY_KEY_REUSED"
+  constructor() {
+    super("This Idempotency-Key was already used for a different scan request")
+    this.name = "IdempotencyKeyReusedError"
+  }
 }
 
 export class ActiveScanExistsError extends Error {
@@ -323,10 +338,14 @@ export class ScanAdmissionError extends Error {
 }
 
 
-async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void> {
+async function lockScanAdmission(db: Queryable, orgId: string): Promise<void> {
   // Serialise admission per tenant for the duration of the transaction so
   // concurrent requests cannot all pass the check-then-insert race.
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`scan-admission:${orgId}`])
+}
+
+async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void> {
+  await lockScanAdmission(db, orgId)
   const { rows } = await db.query(
     `SELECT COUNT(*) FILTER (WHERE status IN ('queued','running')) AS active_count,
             COUNT(*) FILTER (WHERE status = 'queued') AS queued_count,
@@ -347,15 +366,45 @@ async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void>
  * Creates the scan, its module rows and the scan_queued event atomically so a
  * crash cannot leave a scan without modules/events (F-015).
  */
-export async function createScan(input: CreateScanInput): Promise<ScanRow & { deduplicated?: true }> {
+export async function createScan(
+  input: CreateScanInput,
+): Promise<ScanRow & { deduplicated?: true; idempotentReplay?: true }> {
   const modules = input.modules ?? ["seo", "security", "ssl", "performance", "crawl"]
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ websiteId: input.websiteId, modules }))
+    .digest("hex")
 
   return withTransaction(async (client) => {
-    await enforceScanAdmission(client, input.orgId)
+    // Everything below runs under the per-org admission lock, so a key, the
+    // active-scan check and the insert are decided one request at a time.
+    await lockScanAdmission(client, input.orgId)
+
+    if (input.idempotencyKey) {
+      const { rows: prior } = await client.query<ScanRow & { request_fingerprint: string }>(
+        `SELECT s.*, k.request_fingerprint FROM scan_idempotency_keys k
+           JOIN scans s ON s.id = k.scan_id AND s.org_id = k.org_id
+          WHERE k.org_id = $1 AND k.idempotency_key = $2`,
+        [input.orgId, input.idempotencyKey],
+      )
+      if (prior[0]) {
+        const { request_fingerprint, ...scan } = prior[0]
+        if (request_fingerprint !== fingerprint) throw new IdempotencyKeyReusedError()
+        return Object.assign(scan as ScanRow, { idempotentReplay: true as const })
+      }
+    }
+    const rememberKey = async (scanId: string) => {
+      if (!input.idempotencyKey) return
+      await client.query(
+        `INSERT INTO scan_idempotency_keys (org_id, idempotency_key, request_fingerprint, scan_id)
+         VALUES ($1, $2, $3, $4)`,
+        [input.orgId, input.idempotencyKey, fingerprint, scanId],
+      )
+    }
 
     // P0-7: at most one active scan per website. Checked under the per-org
-    // admission lock taken above (websites belong to exactly one org), and
-    // backed by the partial unique index from migration 028.
+    // lock (websites belong to exactly one org) and backed by the partial
+    // unique index from migration 028. A double submit is answered before
+    // admission limits, so a retry is never refused with 429.
     const { rows: active } = await client.query<ScanRow>(
       `SELECT * FROM scans
         WHERE website_id = $1 AND org_id = $2 AND status IN ('queued','running')
@@ -364,8 +413,11 @@ export async function createScan(input: CreateScanInput): Promise<ScanRow & { de
     )
     if (active[0]) {
       if (input.onActive === "reject") throw new ActiveScanExistsError(active[0].id)
+      await rememberKey(active[0].id)
       return Object.assign(active[0], { deduplicated: true as const })
     }
+
+    await enforceScanAdmission(client, input.orgId)
 
     const { rows } = await client.query<ScanRow>(
       `INSERT INTO scans (website_id, org_id, triggered_by, modules)
@@ -384,6 +436,7 @@ export async function createScan(input: CreateScanInput): Promise<ScanRow & { de
       "INSERT INTO scan_events (scan_id, type, payload) VALUES ($1, $2, $3)",
       [scan.id, "scan_queued", JSON.stringify({ scanId: scan.id, modules })],
     )
+    await rememberKey(scan.id)
     return scan
   })
 }

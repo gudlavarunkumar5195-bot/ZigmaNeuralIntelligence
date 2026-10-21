@@ -6,7 +6,7 @@ import {
   requireOrgMember,
   requireRole,
 } from "../middleware/auth.js"
-import { createScan, getScan, emitScanEvent, ScanAdmissionError, SCAN_MODULE_NAMES } from "../services/scan.service.js"
+import { createScan, getScan, emitScanEvent, IdempotencyKeyReusedError, ScanAdmissionError, SCAN_MODULE_NAMES } from "../services/scan.service.js"
 import { getWebsite } from "../services/website.service.js"
 import { query } from "../db/client.js"
 import { audit } from "../services/audit.service.js"
@@ -21,6 +21,16 @@ const createScanSchema = z.object({
     .transform((modules) => [...new Set(modules)])
     .optional(),
 })
+
+/**
+ * Optional Idempotency-Key header: undefined when absent, false when invalid
+ * (repeated, empty, too long or containing non-visible characters).
+ */
+export function parseIdempotencyKey(header: string | string[] | undefined): string | undefined | false {
+  if (header === undefined) return undefined
+  if (typeof header !== "string") return false
+  return /^[!-~]{1,255}$/.test(header) ? header : false
+}
 
 const idParam = z.object({ id: z.string().uuid() })
 
@@ -122,6 +132,15 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
             error: { code: "VALIDATION_ERROR", message: parsed.error.message },
           })
       }
+      const idempotencyKey = parseIdempotencyKey(request.headers["idempotency-key"])
+      if (idempotencyKey === false) {
+        return reply.status(400).send({
+          error: {
+            code: "INVALID_IDEMPOTENCY_KEY",
+            message: "Idempotency-Key must be 1-255 visible ASCII characters",
+          },
+        })
+      }
 
       const website = await getWebsite(parsed.data.websiteId, request.orgId)
       if (!website) {
@@ -148,12 +167,22 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
           orgId: request.orgId,
           triggeredBy: request.authUser.id,
           modules: parsed.data.modules,
+          idempotencyKey,
         })
       } catch (error) {
         if (error instanceof ScanAdmissionError) {
           return reply.status(429).header("Retry-After", "60").send({ error: { code: "SCAN_LIMIT_REACHED", message: error.message } })
         }
+        if (error instanceof IdempotencyKeyReusedError) {
+          return reply.status(422).send({ error: { code: error.code, message: error.message } })
+        }
         throw error
+      }
+
+      if (scan.idempotentReplay) {
+        // Same Idempotency-Key and request as an earlier call: return what it produced.
+        const { idempotentReplay: _flag, ...existing } = scan
+        return reply.status(200).send({ data: existing, meta: { idempotentReplay: true } })
       }
 
       if (scan.deduplicated) {
