@@ -96,6 +96,11 @@ const envSchema = z.object({
   // Multi-page technical crawl budget (capped by SCANNER_MAX_PAGES).
   SCANNER_CRAWL_MAX_PAGES: z.coerce.number().int().min(1).max(1000).default(100),
   SCANNER_CRAWL_MAX_DURATION_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
+  // Conservative defaults for a basic-xxs instance; per-scan options can only lower them.
+  SCANNER_CRAWL_MAX_DEPTH: z.coerce.number().int().min(0).max(20).default(5),
+  SCANNER_CRAWL_CONCURRENCY: z.coerce.number().int().min(1).max(5).default(2),
+  SCANNER_CRAWL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(15_000),
+  SCANNER_CRAWL_MAX_PAGE_BYTES: z.coerce.number().int().min(65_536).max(5_242_880).default(2_097_152),
   MAX_CONCURRENT_SCANS_PER_TENANT: z.coerce.number().default(2),
   MAX_QUEUED_SCANS_PER_TENANT: z.coerce.number().default(10),
   MAX_SCAN_CREATIONS_PER_MINUTE: z.coerce.number().default(10),

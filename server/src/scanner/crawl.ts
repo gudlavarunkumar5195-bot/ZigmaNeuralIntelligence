@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import * as cheerio from "cheerio";
-import { safeFetch, type SafeFetchResult } from "./fetch.js";
+import { safeFetch, type SafeFetchOptions, type SafeFetchResult } from "./fetch.js";
 import { parseRobotsTxt, robotsAllows, type RobotsFetchOutcome } from "./robots.js";
 import { parseSitemapXml } from "./sitemap.js";
 import type { ModuleResult, NewFinding, Severity } from "../types.js";
@@ -9,57 +9,121 @@ import type { ModuleResult, NewFinding, Severity } from "../types.js";
  * Multi-page technical crawl of ONE verified site.
  *
  * Everything is measured by our own fetcher (MEASURED provenance); nothing is
- * estimated. Scope: the start URL's host and its www/apex twin, http(s) only,
- * robots.txt honoured for our token, every request through the SSRF-safe
- * pinned fetcher. Budgets: page count, wall-clock time, sitemap size.
+ * estimated, and "indexable" only means "eligible by the signals we measured"
+ * (status, robots directives, canonical), never "indexed by a search engine".
  *
- * Pages we did not reach (budget) are not reported as broken or fixed:
- * analysis only judges what was actually fetched.
+ * Scope: the start URL's host and its www/apex twin, http(s) only. Every
+ * request goes through the SSRF-safe pinned fetcher, and redirects that leave
+ * the site are recorded but NOT followed. robots.txt is honoured for our
+ * token; disallowed URLs are recorded as such and never fetched.
+ *
+ * Budgets: pages, depth, query-string variants per path, discovered URLs,
+ * per-request timeout and body size, total wall-clock time, sitemap size.
+ * Pages we did not reach are not reported as broken or fixed: analysis only
+ * judges what was actually fetched and parsed.
  */
 
-export type Fetcher = (url: string) => Promise<SafeFetchResult>;
+export type Fetcher = (url: string, options?: SafeFetchOptions) => Promise<SafeFetchResult>;
+
+export interface CrawlProgress {
+  pagesCrawled: number;
+  pagesDiscovered: number;
+  queued: number;
+}
 
 export interface CrawlOptions {
   maxPages: number;
   maxDurationMs: number;
+  /** Link depth from the start URL (start = 0). Sitemap-only URLs count as depth 1. */
+  maxDepth?: number;
   concurrency?: number;
+  /** Per-request body timeout for crawled pages. */
+  requestTimeoutMs?: number;
+  /** Per-page body size cap (decoded bytes); larger pages are recorded as too large, not audited. */
+  maxPageBytes?: number;
+  /** Distinct query strings followed per path (faceted navigation, session ids, calendars). */
+  maxQueryVariantsPerPath?: number;
   maxSitemapUrls?: number;
   maxSitemapFiles?: number;
+  /** Polled before every fetch; true stops the crawl (cancellation, lost lease). */
+  shouldStop?: () => boolean;
+  /** Called after every fetched page. */
+  onProgress?: (progress: CrawlProgress) => void;
   fetch?: Fetcher;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
 
+/**
+ * What happened to a URL:
+ * - ok: HTML fetched completely and parsed;
+ * - redirect: the URL redirected (its landing page is recorded separately when internal);
+ * - redirect_out_of_scope: it redirected off the site; the target was not requested;
+ * - redirect_loop: a loop or too many hops;
+ * - http_error: final response 4xx/5xx;
+ * - fetch_error: network, TLS, timeout or SSRF refusal (no usable response);
+ * - too_large: body exceeded the page size cap, so the page was not audited;
+ * - non_html: not an HTML document (not downloaded);
+ * - blocked_by_robots: disallowed for our crawler; never requested.
+ */
+export type CrawlOutcome =
+  | "ok"
+  | "redirect"
+  | "redirect_out_of_scope"
+  | "redirect_loop"
+  | "http_error"
+  | "fetch_error"
+  | "too_large"
+  | "non_html"
+  | "blocked_by_robots";
+
 export interface CrawlPage {
   url: string;
   finalUrl: string;
-  /** Status of the first response for `url` (3xx when it redirected). */
+  /** Status of the first response for `url` (3xx when it redirected; 0 when never requested or no response). */
   status: number;
-  /** Status of the final response after redirects (0 = network/read error). */
+  /** Status of the final response after redirects (0 = no response). */
   finalStatus: number;
   redirectChain: Array<{ url: string; status: number }>;
+  /** Off-site Location that was not followed. */
+  redirectTarget: string | null;
+  outcome: CrawlOutcome;
   depth: number;
   discoveredFrom: string | null;
   contentType: string | null;
   title: string | null;
   metaDescription: string | null;
   canonicals: string[];
+  /** Content of <meta name="robots"> (and our own token's meta), lowercased. */
   robotsMeta: string | null;
+  /** X-Robots-Tag response header, lowercased. */
+  xRobotsTag: string | null;
   h1Count: number | null;
+  imagesTotal: number | null;
+  /** <img> elements with no alt attribute at all (alt="" is a valid decorative image). */
+  imagesMissingAlt: number | null;
+  imagesMissingAltSample: string[];
   internalLinks: string[];
+  /** Eligible for indexing by the measured signals; not a claim that it is indexed. */
   indexable: boolean;
+  /** Why the page is not eligible (empty when indexable). */
+  indexabilityReasons: string[];
   inSitemap: boolean;
   fetchError: string | null;
   responseMs: number;
 }
 
+export type TruncatedReason = "page_limit" | "time_limit" | "depth_limit" | "discovery_limit" | "cancelled";
+
 export interface CrawlSummary {
   startUrl: string;
   origin: string;
+  /** Pages requested (everything except robots-blocked URLs). */
   pagesCrawled: number;
   pagesDiscovered: number;
+  pagesBlockedByRobots: number;
   truncated: boolean;
-  truncatedReason: "page_limit" | "time_limit" | null;
+  truncatedReason: TruncatedReason | null;
   robotsStatus: "parsed" | "missing" | "unreachable";
   startBlockedByRobots: boolean;
   sitemapStatus: "found" | "missing" | "invalid" | "unsupported";
@@ -67,10 +131,12 @@ export interface CrawlSummary {
   sitemapUrlCount: number;
   durationMs: number;
   maxPages: number;
+  maxDepth: number;
   /**
    * True only when the crawl actually re-checked the site: robots.txt was
-   * readable or absent, the start URL was allowed and answered 2xx. When
-   * false, the issue lifecycle must not mark page-level issues as FIXED.
+   * readable or absent, the start URL was allowed and answered 2xx, and the
+   * crawl was not cancelled. When false, the issue lifecycle must not mark
+   * page-level issues as FIXED.
    */
   reconcilable: boolean;
 }
@@ -82,9 +148,21 @@ export interface CrawlResult {
   inlinks: Record<string, { count: number; sample: string[] }>;
 }
 
+export type SeoCategory =
+  | "crawlability"
+  | "status_codes"
+  | "links"
+  | "redirects"
+  | "content"
+  | "canonicalization"
+  | "indexability"
+  | "sitemaps"
+  | "images";
+
 export interface CrawlIssue {
   ruleId: string;
   severity: Severity;
+  category: SeoCategory;
   url: string;
   /** Extra discriminator for issues that are not per-URL (e.g. a duplicate title). */
   key?: string;
@@ -92,15 +170,23 @@ export interface CrawlIssue {
   details: Record<string, unknown>;
 }
 
+const DEFAULT_MAX_DEPTH = 5;
+const DEFAULT_QUERY_VARIANTS = 10;
 const MAX_LINKS_PER_PAGE = 1_000;
 const INLINK_SAMPLE = 20;
 const DISCOVERY_FACTOR = 20; // discovered URLs kept per page of budget
+const IMAGE_SAMPLE = 5;
 
 const SKIP_EXTENSIONS = /\.(?:jpe?g|png|gif|webp|avif|svg|ico|bmp|tiff?|pdf|zip|gz|tgz|rar|7z|mp[34]|m4[av]|mov|avi|webm|ogg|wav|flac|woff2?|ttf|otf|eot|css|js|mjs|map|json|xml|txt|csv|xlsx?|docx?|pptx?|exe|dmg|apk)$/i;
+/** Click/campaign identifiers that never change page content. */
+const TRACKING_PARAM = /^(?:utm_[a-z0-9_]+|gclid|dclid|gbraid|wbraid|fbclid|msclkid|yclid|mc_cid|mc_eid|_ga|_gl|igshid)$/i;
 
 const bareHost = (h: string) => h.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
 
-/** Normalize an href against a base: http(s) only, no fragment, lowercase host, no default port. */
+/**
+ * Normalize an href against a base: http(s) only, no fragment, lowercase
+ * host, no default port, no userinfo, tracking parameters removed.
+ */
 export function normalizeUrl(href: string, base?: string): string | null {
   let u: URL;
   try {
@@ -113,6 +199,10 @@ export function normalizeUrl(href: string, base?: string): string | null {
   u.hash = "";
   u.hostname = u.hostname.toLowerCase();
   if ((u.protocol === "http:" && u.port === "80") || (u.protocol === "https:" && u.port === "443")) u.port = "";
+  if (u.search) {
+    for (const key of [...u.searchParams.keys()]) if (TRACKING_PARAM.test(key)) u.searchParams.delete(key);
+    if ([...u.searchParams.keys()].length === 0) u.search = "";
+  }
   return u.href;
 }
 
@@ -150,16 +240,29 @@ function parsePage(html: string, pageUrl: string, siteHost: string) {
       if (links.size >= MAX_LINKS_PER_PAGE) break;
     }
   }
+  const images = $("img").toArray();
+  const missingAlt = images.filter((el) => $(el).attr("alt") === undefined);
   const title = $("head > title").first().text().trim() || $("title").first().text().trim() || null;
   const metaDescription = ($('meta[name="description" i]').attr("content") ?? "").trim() || null;
-  return { robotsMeta, canonicals, links: [...links], title, metaDescription, h1Count: $("h1").length };
+  return {
+    robotsMeta,
+    canonicals,
+    links: [...links],
+    title,
+    metaDescription,
+    h1Count: $("h1").length,
+    imagesTotal: images.length,
+    imagesMissingAlt: missingAlt.length,
+    imagesMissingAltSample: missingAlt
+      .slice(0, IMAGE_SAMPLE)
+      .map((el) => normalizeUrl($(el).attr("src") ?? "", resolveBase) ?? ($(el).attr("src") ?? "").slice(0, 300)),
+  };
 }
 
-const isNoindex = (robotsMeta: string | null, xRobots: string | undefined) =>
-  /\bnoindex\b|\bnone\b/.test(robotsMeta ?? "") || /\bnoindex\b|\bnone\b/i.test(xRobots ?? "");
+const NOINDEX = /\bnoindex\b|\bnone\b/;
 
-async function fetchRobots(origin: string, fetch: Fetcher): Promise<RobotsFetchOutcome> {
-  const res = await fetch(`${origin}/robots.txt`);
+async function fetchRobots(origin: string, fetch: Fetcher, scope: SafeFetchOptions): Promise<RobotsFetchOutcome> {
+  const res = await fetch(`${origin}/robots.txt`, scope);
   // An oversized file is still parsed: RFC 9309 requires only the first 500 KiB.
   if (res.status >= 200 && res.status < 300 && (res.ok || res.limited)) return { kind: "parsed", policy: parseRobotsTxt(res.body) };
   if (res.status >= 400 && res.status < 500) return { kind: "missing" };
@@ -170,9 +273,11 @@ async function collectSitemapUrls(
   candidates: string[],
   siteHost: string,
   fetch: Fetcher,
+  scope: SafeFetchOptions,
   maxUrls: number,
   maxFiles: number,
   hasTime: () => boolean = () => true,
+  declared: Set<string> = new Set(),
 ): Promise<{ urls: string[]; files: CrawlSummary["sitemapFiles"]; status: CrawlSummary["sitemapStatus"] }> {
   const urls = new Set<string>();
   const files: CrawlSummary["sitemapFiles"] = [];
@@ -189,9 +294,11 @@ async function collectSitemapUrls(
       anyUnsupported = true;
       continue;
     }
-    const res = await fetch(target);
+    const res = await fetch(target, scope);
     if (!res.ok) {
-      files.push({ url: target, status: res.status, kind: "unavailable" });
+      // Only a sitemap someone declared (robots.txt, an index) is "unavailable";
+      // our own /sitemap.xml probe answering 404 just means there is none.
+      files.push({ url: target, status: res.status, kind: declared.has(target) ? "unavailable" : "not_found" });
       continue;
     }
     const parsed = parseSitemapXml(res.body);
@@ -200,7 +307,10 @@ async function collectSitemapUrls(
     anyValid = true;
     for (const s of parsed.sitemaps) {
       const n = normalizeUrl(s);
-      if (n) queue.push(n);
+      if (n) {
+        declared.add(n);
+        queue.push(n);
+      }
     }
     for (const u of parsed.urls) {
       const n = normalizeUrl(u);
@@ -208,7 +318,7 @@ async function collectSitemapUrls(
       if (urls.size >= maxUrls) break;
     }
   }
-  const fetched = files.filter((f) => f.kind !== "unavailable");
+  const fetched = files.filter((f) => f.kind !== "unavailable" && f.kind !== "not_found");
   const status: CrawlSummary["sitemapStatus"] = anyValid
     ? "found"
     : fetched.some((f) => f.kind === "invalid")
@@ -219,30 +329,49 @@ async function collectSitemapUrls(
   return { urls: [...urls], files, status };
 }
 
+function classify(res: SafeFetchResult, html: boolean): CrawlOutcome {
+  if (res.redirectBlockedTo) return "redirect_out_of_scope";
+  if (res.status === 0 && /too many redirects/i.test(res.error ?? "")) return "redirect_loop";
+  if (res.status === 0) return "fetch_error";
+  if (res.status >= 400) return "http_error";
+  if (res.limited) return "too_large";
+  if (!res.ok) return "fetch_error";
+  if (!html || res.bodySkipped) return "non_html";
+  return "ok";
+}
+
 export async function crawlSite(startUrl: string, options: CrawlOptions): Promise<CrawlResult> {
-  const fetch = options.fetch ?? ((url: string) => safeFetch(url));
+  const fetch: Fetcher = options.fetch ?? ((url, o) => safeFetch(url, o));
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const shouldStop = options.shouldStop ?? (() => false);
   const started = now();
   const deadline = started + options.maxDurationMs;
+  const maxDepth = Math.max(0, options.maxDepth ?? DEFAULT_MAX_DEPTH);
+  const maxQueryVariants = Math.max(1, options.maxQueryVariantsPerPath ?? DEFAULT_QUERY_VARIANTS);
   const start = normalizeUrl(startUrl);
   if (!start) throw new Error("Invalid start URL");
   const siteHost = new URL(start).hostname;
   const origin = new URL(start).origin;
+  // Never request anything off the verified site, even through a redirect.
+  const inScope = (url: string) => isSameSite(siteHost, url);
+  const scope: SafeFetchOptions = { followRedirect: inScope, responseTimeoutMs: options.requestTimeoutMs };
+  const pageFetchOptions: SafeFetchOptions = { ...scope, maxBytes: options.maxPageBytes, acceptBody: isHtml };
 
-  const robots = await fetchRobots(origin, fetch);
+  const robots = await fetchRobots(origin, fetch, scope);
   const timeLeft = () => deadline - now();
   const robotsSitemaps = robots.kind === "parsed" ? robots.policy.sitemaps.map((s) => normalizeUrl(s)).filter((s): s is string => !!s) : [];
-  // Sitemap discovery gets at most a third of the budget's file allowance
-  // when time is short; it never starts after the deadline.
-  const sitemap = timeLeft() > 0
+  // Sitemap discovery never starts after the deadline.
+  const sitemap = timeLeft() > 0 && !shouldStop()
     ? await collectSitemapUrls(
         robotsSitemaps.length > 0 ? robotsSitemaps : [`${origin}/sitemap.xml`],
         siteHost,
         fetch,
+        scope,
         options.maxSitemapUrls ?? 5_000,
         options.maxSitemapFiles ?? 10,
-        () => timeLeft() > 0,
+        () => timeLeft() > 0 && !shouldStop(),
+        new Set(robotsSitemaps),
       )
     : { urls: [] as string[], files: [] as CrawlSummary["sitemapFiles"], status: "missing" as const };
   const sitemapSet = new Set(sitemap.urls);
@@ -250,13 +379,37 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
   const concurrency = crawlDelayMs > 0 ? 1 : Math.max(1, Math.min(options.concurrency ?? 3, 5));
 
   const pages = new Map<string, CrawlPage>();
+  let blockedCount = 0;
   const inlinks: Record<string, { count: number; sample: string[] }> = {};
   const maxDiscovered = Math.max(options.maxPages * DISCOVERY_FACTOR, 1_000);
   let discoveryCapped = false;
+  let depthCapped = false;
+  const queryVariants = new Map<string, Set<string>>();
+  /** Bounded query-string variants per path; true when the URL may be followed. */
+  const admitVariant = (url: string): boolean => {
+    const u = new URL(url);
+    if (!u.search) return true;
+    const key = `${u.origin}${u.pathname}`;
+    const set = queryVariants.get(key) ?? new Set<string>();
+    if (set.has(u.search)) return true;
+    if (set.size >= maxQueryVariants) return false;
+    set.add(u.search);
+    queryVariants.set(key, set);
+    return true;
+  };
   const discovered = new Set<string>([start]);
   const linkQueue: Array<{ url: string; depth: number; from: string | null }> = [{ url: start, depth: 0, from: null }];
-  const sitemapQueue = sitemap.urls.map((url) => ({ url, depth: 1, from: "sitemap" as string | null }));
-  for (const s of sitemap.urls) discovered.add(s);
+  const sitemapQueue: Array<{ url: string; depth: number; from: string | null }> = [];
+  for (const url of sitemap.urls) {
+    if (discovered.has(url)) continue;
+    if (!admitVariant(url)) {
+      discoveryCapped = true;
+      continue;
+    }
+    discovered.add(url);
+    if (maxDepth >= 1) sitemapQueue.push({ url, depth: 1, from: "sitemap" });
+    else depthCapped = true;
+  }
   let truncatedReason: CrawlSummary["truncatedReason"] = null;
   const startBlocked = !robotsAllows(robots, start);
 
@@ -264,75 +417,131 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
   // URLs handed to a fetch (in flight or done), so concurrent workers never
   // fetch the same URL twice.
   const scheduled = new Set<string>();
+  const auditedCount = () => pages.size - blockedCount;
+
+  const emptyContent = {
+    title: null, metaDescription: null, canonicals: [] as string[], robotsMeta: null, h1Count: null,
+    imagesTotal: null, imagesMissingAlt: null, imagesMissingAltSample: [] as string[], internalLinks: [] as string[],
+  };
+
+  const recordBlocked = (item: { url: string; depth: number; from: string | null }) => {
+    if (pages.has(item.url) || blockedCount >= options.maxPages) return;
+    blockedCount++;
+    pages.set(item.url, {
+      ...emptyContent,
+      url: item.url, finalUrl: item.url, status: 0, finalStatus: 0, redirectChain: [], redirectTarget: null,
+      outcome: "blocked_by_robots", depth: item.depth, discoveredFrom: item.from, contentType: null, xRobotsTag: null,
+      indexable: false, indexabilityReasons: ["blocked_by_robots"], inSitemap: sitemapSet.has(item.url),
+      fetchError: null, responseMs: 0,
+    });
+  };
 
   const visit = async (item: { url: string; depth: number; from: string | null }) => {
     if (pages.has(item.url)) return;
     const t0 = now();
-    const res = await fetch(item.url);
+    const res = await fetch(item.url, pageFetchOptions);
     const chain = res.redirectChain ?? [];
     const finalUrl = normalizeUrl(res.finalUrl) ?? res.finalUrl;
-    const html = res.ok && isHtml(res.contentType) && isSameSite(siteHost, finalUrl);
-    const parsed = html ? parsePage(res.body, finalUrl, siteHost) : null;
-    const xRobots = res.headers?.["x-robots-tag"];
+    const htmlType = isHtml(res.contentType);
+    const outcome = classify(res, htmlType && inScope(finalUrl));
+    const parsed = outcome === "ok" ? parsePage(res.body, finalUrl, siteHost) : null;
+    const xRobotsTag = res.headers?.["x-robots-tag"]?.toLowerCase() ?? null;
     const canonicalTargets = (parsed?.canonicals ?? []).map((c) => normalizeUrl(c, finalUrl));
     const selfCanonical = canonicalTargets.length === 0 || canonicalTargets.every((c) => c === finalUrl);
-    const base: Omit<CrawlPage, "url" | "status" | "redirectChain" | "discoveredFrom" | "depth"> = {
+    const reasons: string[] = [];
+    if (outcome !== "ok") reasons.push(outcome);
+    else {
+      if (res.status !== 200) reasons.push("status_not_200");
+      if (NOINDEX.test(parsed?.robotsMeta ?? "")) reasons.push("noindex_meta");
+      if (NOINDEX.test(xRobotsTag ?? "")) reasons.push("noindex_header");
+      if (!selfCanonical) reasons.push("canonicalized_elsewhere");
+    }
+    const landing: Omit<CrawlPage, "url" | "status" | "redirectChain" | "redirectTarget" | "discoveredFrom" | "depth" | "outcome" | "inSitemap"> = {
       finalUrl,
       finalStatus: res.status,
       contentType: res.contentType ?? null,
       title: parsed?.title ?? null,
       metaDescription: parsed?.metaDescription ?? null,
       canonicals: parsed?.canonicals ?? [],
-      robotsMeta: parsed?.robotsMeta ?? (xRobots ? `x-robots-tag:${xRobots.toLowerCase()}` : null),
+      robotsMeta: parsed?.robotsMeta ?? null,
+      xRobotsTag,
       h1Count: parsed ? parsed.h1Count : null,
+      imagesTotal: parsed ? parsed.imagesTotal : null,
+      imagesMissingAlt: parsed ? parsed.imagesMissingAlt : null,
+      imagesMissingAltSample: parsed?.imagesMissingAltSample ?? [],
       internalLinks: parsed?.links ?? [],
-      indexable: !!parsed && res.status === 200 && !isNoindex(parsed.robotsMeta, xRobots) && selfCanonical,
-      inSitemap: sitemapSet.has(item.url),
-      fetchError: res.status === 0 || !res.ok && res.error ? res.error ?? null : null,
+      indexable: outcome === "ok" && reasons.length === 0,
+      indexabilityReasons: reasons,
+      fetchError: outcome === "ok" || outcome === "non_html" || outcome === "redirect" ? null : res.error ?? null,
       responseMs: Math.max(0, now() - t0),
     };
-    const redirected = chain.length > 0
+    // A redirect that stayed on the site and completed: the requested URL is a
+    // "redirect" with no content of its own; the body belongs to the landing
+    // page, which is recorded separately below.
+    const followedRedirect = chain.length > 0 && !res.redirectBlockedTo && outcome !== "redirect_loop";
     pages.set(item.url, {
-      ...base,
-      // A redirecting URL has no content of its own: the body belongs to the
-      // landing page, which is recorded separately below.
-      ...(redirected
-        ? { title: null, metaDescription: null, canonicals: [], h1Count: null, internalLinks: [], indexable: false }
+      ...landing,
+      ...(followedRedirect || outcome === "redirect_out_of_scope"
+        ? { ...emptyContent, xRobotsTag: null, indexable: false, indexabilityReasons: [followedRedirect ? "redirect" : outcome] }
         : {}),
       url: item.url,
       status: chain[0]?.status ?? res.status,
       redirectChain: chain,
+      redirectTarget: res.redirectBlockedTo ?? null,
+      outcome: followedRedirect ? "redirect" : outcome,
       depth: item.depth,
       discoveredFrom: item.from,
+      inSitemap: sitemapSet.has(item.url),
     });
     // A redirect landed on an internal page we have not recorded: record the
     // landing page from the same response instead of fetching it again.
     let landingRecorded = false;
-    if (redirected && finalUrl !== item.url && isSameSite(siteHost, finalUrl) && !pages.has(finalUrl)) {
+    if (followedRedirect && finalUrl !== item.url && inScope(finalUrl) && !pages.has(finalUrl)) {
       landingRecorded = true;
       discovered.add(finalUrl);
-      pages.set(finalUrl, { ...base, url: finalUrl, status: res.status, redirectChain: [], depth: item.depth, discoveredFrom: item.url, inSitemap: sitemapSet.has(finalUrl) });
+      pages.set(finalUrl, {
+        ...landing, url: finalUrl, status: res.status, redirectChain: [], redirectTarget: null, outcome,
+        depth: item.depth, discoveredFrom: item.url, inSitemap: sitemapSet.has(finalUrl),
+      });
     }
     // Links are attributed once, to the page whose content they came from.
-    for (const link of !redirected || landingRecorded ? base.internalLinks : []) {
+    for (const link of !followedRedirect || landingRecorded ? landing.internalLinks : []) {
       if (!discovered.has(link)) {
-        if (discovered.size >= maxDiscovered) {
+        if (discovered.size >= maxDiscovered || !admitVariant(link)) {
           discoveryCapped = true;
           continue;
         }
-        discovered.add(link);
-        if (!SKIP_EXTENSIONS.test(new URL(link).pathname)) linkQueue.push({ url: link, depth: item.depth + 1, from: finalUrl });
+        if (item.depth + 1 > maxDepth) {
+          depthCapped = true;
+        } else {
+          discovered.add(link);
+          if (!SKIP_EXTENSIONS.test(new URL(link).pathname)) linkQueue.push({ url: link, depth: item.depth + 1, from: finalUrl });
+        }
       }
       const entry = (inlinks[link] ??= { count: 0, sample: [] });
       entry.count++;
       if (entry.sample.length < INLINK_SAMPLE) entry.sample.push(finalUrl);
     }
+    options.onProgress?.({ pagesCrawled: auditedCount(), pagesDiscovered: discovered.size, queued: linkQueue.length + sitemapQueue.length });
   };
 
-  if (!startBlocked) {
+  if (startBlocked) {
+    recordBlocked({ url: start, depth: 0, from: null });
+  } else {
     const inFlight = new Set<Promise<void>>();
     while (true) {
-      if (pages.size >= options.maxPages) {
+      if (shouldStop()) {
+        truncatedReason = "cancelled";
+        break;
+      }
+      // In-flight fetches count toward the page budget, so concurrency can
+      // never overshoot it (a redirect's landing page is recorded from the
+      // same response and costs no extra request).
+      if (auditedCount() + inFlight.size >= options.maxPages) {
+        if (inFlight.size > 0) {
+          await Promise.race(inFlight);
+          continue;
+        }
         if (linkQueue.length > 0 || sitemapQueue.length > 0) truncatedReason = "page_limit";
         break;
       }
@@ -342,7 +551,11 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
       }
       const item = inFlight.size < concurrency ? next() : undefined;
       if (item) {
-        if (pages.has(item.url) || scheduled.has(item.url) || !robotsAllows(robots, item.url)) continue;
+        if (pages.has(item.url) || scheduled.has(item.url)) continue;
+        if (!robotsAllows(robots, item.url)) {
+          recordBlocked(item);
+          continue;
+        }
         scheduled.add(item.url);
         const p: Promise<void> = visit(item).finally(() => inFlight.delete(p));
         inFlight.add(p);
@@ -358,18 +571,25 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
     await Promise.allSettled(inFlight);
   }
 
-  if (discoveryCapped && !truncatedReason) truncatedReason = "page_limit";
+  if (!truncatedReason && discoveryCapped) truncatedReason = "discovery_limit";
+  if (!truncatedReason && depthCapped) truncatedReason = "depth_limit";
   const startPage = pages.get(start);
   const reconcilable =
-    robots.kind !== "unreachable" && !startBlocked && !!startPage && startPage.finalStatus >= 200 && startPage.finalStatus < 300;
+    truncatedReason !== "cancelled" &&
+    robots.kind !== "unreachable" &&
+    !startBlocked &&
+    !!startPage &&
+    startPage.finalStatus >= 200 &&
+    startPage.finalStatus < 300;
   return {
     pages: [...pages.values()],
     inlinks,
     summary: {
       startUrl: start,
       origin,
-      pagesCrawled: pages.size,
+      pagesCrawled: auditedCount(),
       pagesDiscovered: discovered.size,
+      pagesBlockedByRobots: blockedCount,
       truncated: truncatedReason !== null,
       truncatedReason,
       robotsStatus: robots.kind,
@@ -379,101 +599,165 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
       sitemapUrlCount: sitemap.urls.length,
       durationMs: now() - started,
       maxPages: options.maxPages,
+      maxDepth,
       reconcilable,
     },
   };
 }
 
+// ─── Rules ───────────────────────────────────────────────────────────────────
+
+export interface SeoRule {
+  category: SeoCategory;
+  severity: Severity;
+  /** Title of one occurrence (per URL or group). */
+  title: string;
+  /** Title of the aggregated per-scan finding. */
+  groupTitle: string;
+  /** What was measured and why it matters. */
+  explanation: string;
+  remediation: string;
+}
+
+/**
+ * Every crawl rule: stable id, category, default severity, explanation and
+ * remediation. All are MEASURED from our own fetches (source: site_crawler).
+ */
+export const SEO_RULES: Record<string, SeoRule> = {
+  robots_txt_unreachable: { category: "crawlability", severity: "high", title: "robots.txt is unreachable", groupTitle: "robots.txt is unreachable", explanation: "robots.txt answered with a server error or could not be fetched. Under RFC 9309 crawlers then treat the whole site as disallowed, so this crawl did not fetch any page.", remediation: "Serve robots.txt with a 200 (or a 404 if you have no rules). Server errors make crawlers stop crawling the site." },
+  robots_txt_missing: { category: "crawlability", severity: "low", title: "robots.txt not found", groupTitle: "robots.txt not found", explanation: "robots.txt returned a 4xx, which crawlers read as \"everything allowed\". Nothing is blocked, but there is also no Sitemap: declaration.", remediation: "Add a robots.txt, at least to declare your sitemap location." },
+  start_url_blocked_by_robots: { category: "crawlability", severity: "high", title: "Start URL is disallowed by robots.txt", groupTitle: "Start URL blocked by robots.txt", explanation: "robots.txt disallows the website's start URL for our crawler, so no page was crawled.", remediation: "Allow the page in robots.txt if it should be crawled." },
+  sitemap_missing: { category: "sitemaps", severity: "low", title: "No XML sitemap found", groupTitle: "No XML sitemap found", explanation: "Neither a Sitemap: line in robots.txt nor /sitemap.xml returned a sitemap.", remediation: "Publish an XML sitemap and reference it from robots.txt with a Sitemap: line." },
+  sitemap_invalid: { category: "sitemaps", severity: "medium", title: "Sitemap is not valid sitemap XML", groupTitle: "Invalid sitemap", explanation: "The sitemap file was fetched but is not a sitemaps.org urlset or sitemapindex document.", remediation: "Serve valid sitemaps.org XML (urlset or sitemapindex)." },
+  sitemap_unavailable: { category: "sitemaps", severity: "medium", title: "Declared sitemap could not be fetched", groupTitle: "Declared sitemap unavailable", explanation: "A declared sitemap did not return a 2xx response.", remediation: "Fix or remove Sitemap: entries that do not return 200." },
+  sitemap_url_not_indexable: { category: "sitemaps", severity: "medium", title: "Sitemap lists a URL that is not an indexable 200 page", groupTitle: "Non-indexable URLs in the sitemap", explanation: "A URL listed in the sitemap redirected, failed, or carried a noindex or a canonical pointing elsewhere when we fetched it.", remediation: "List only canonical, indexable 200 pages in sitemaps." },
+  sitemap_url_blocked_by_robots: { category: "sitemaps", severity: "medium", title: "Sitemap lists a URL disallowed by robots.txt", groupTitle: "Sitemap URLs blocked by robots.txt", explanation: "The sitemap asks crawlers to visit a URL that robots.txt forbids them to fetch.", remediation: "Remove the URL from the sitemap or allow it in robots.txt." },
+  page_fetch_error: { category: "status_codes", severity: "high", title: "Page could not be fetched", groupTitle: "Pages could not be fetched", explanation: "No usable response: network or TLS error, timeout, or the request was refused as unsafe.", remediation: "Check server availability, timeouts and response size for these URLs." },
+  page_too_large: { category: "status_codes", severity: "medium", title: "Page exceeds the size limit and was not audited", groupTitle: "Pages too large to audit", explanation: "The HTML body was larger than the crawler's per-page limit, so its content was not analysed.", remediation: "Reduce the HTML size (inline data, huge lists) or split the page." },
+  page_5xx: { category: "status_codes", severity: "critical", title: "Server error", groupTitle: "Pages return server errors", explanation: "The final response was a 5xx server error.", remediation: "Fix the server errors; crawlers drop pages that keep failing." },
+  page_4xx: { category: "status_codes", severity: "high", title: "Client error", groupTitle: "Pages return client errors", explanation: "The final response was a 4xx error.", remediation: "Restore the pages, redirect them to a relevant URL, or remove links to them." },
+  broken_internal_link: { category: "links", severity: "high", title: "Broken internal link target", groupTitle: "Broken internal links", explanation: "Internal links point at a URL whose final response is an error.", remediation: "Fix or remove internal links whose targets return errors." },
+  internal_link_to_redirect: { category: "links", severity: "low", title: "Internal links point at a redirecting URL", groupTitle: "Internal links to redirects", explanation: "Internal links point at a URL that redirects, which costs a round trip and dilutes link signals.", remediation: "Update internal links to point at the final URL." },
+  redirect_loop: { category: "redirects", severity: "high", title: "Redirect loop or excessive redirects", groupTitle: "Redirect loops", explanation: "Following the redirects never reached a page within the hop limit.", remediation: "Break the loop so each URL resolves to one final page." },
+  redirect_chain: { category: "redirects", severity: "medium", title: "Redirect chain", groupTitle: "Redirect chains", explanation: "The URL needs two or more redirect hops to reach its final page.", remediation: "Redirect straight to the final URL in one hop." },
+  redirect_off_site: { category: "redirects", severity: "low", title: "Internal URL redirects to another site", groupTitle: "Internal URLs redirecting off-site", explanation: "An internal URL redirects to a different domain. The target was not requested (outside the verified site).", remediation: "Confirm the off-site redirect is intended; link to the destination directly." },
+  title_missing: { category: "content", severity: "high", title: "Missing <title>", groupTitle: "Pages without a title", explanation: "The page has no <title> element or it is empty.", remediation: "Give every indexable page a unique, descriptive <title>." },
+  title_duplicate: { category: "content", severity: "medium", title: "Duplicate title", groupTitle: "Duplicate titles", explanation: "Several indexable pages share the same <title>.", remediation: "Write a unique title for each indexable page." },
+  meta_description_missing: { category: "content", severity: "low", title: "Missing meta description", groupTitle: "Pages without a meta description", explanation: "The page has no meta description or it is empty.", remediation: "Add a concise, page-specific meta description." },
+  meta_description_duplicate: { category: "content", severity: "low", title: "Duplicate meta description", groupTitle: "Duplicate meta descriptions", explanation: "Several indexable pages share the same meta description.", remediation: "Write a unique meta description for each indexable page." },
+  h1_missing: { category: "content", severity: "medium", title: "No <h1> heading", groupTitle: "Pages without an H1", explanation: "The page has no <h1> element.", remediation: "Add one <h1> that states the page's main topic." },
+  h1_multiple: { category: "content", severity: "low", title: "Multiple <h1> headings", groupTitle: "Pages with multiple H1s", explanation: "The page has more than one <h1> element.", remediation: "Keep one <h1> per page and use <h2>-<h6> for sections." },
+  canonical_missing: { category: "canonicalization", severity: "low", title: "No canonical link", groupTitle: "Pages without a canonical link", explanation: "The indexable page declares no rel=canonical.", remediation: "Add a self-referencing rel=canonical to indexable pages." },
+  canonical_multiple: { category: "canonicalization", severity: "medium", title: "Multiple canonical links", groupTitle: "Pages with multiple canonicals", explanation: "The page declares more than one rel=canonical; search engines may ignore all of them.", remediation: "Declare exactly one canonical URL per page." },
+  canonical_invalid: { category: "canonicalization", severity: "medium", title: "Canonical link is not a valid URL", groupTitle: "Invalid canonical URLs", explanation: "The rel=canonical href could not be resolved to an http(s) URL.", remediation: "Use an absolute, valid URL in rel=canonical." },
+  canonical_cross_domain: { category: "canonicalization", severity: "low", title: "Canonical points to another domain", groupTitle: "Cross-domain canonicals", explanation: "The canonical URL is on a different domain.", remediation: "Confirm the cross-domain canonical is intentional." },
+  canonical_target_not_ok: { category: "canonicalization", severity: "high", title: "Canonical target redirects or errors", groupTitle: "Canonicals pointing at redirects or errors", explanation: "The canonical URL itself redirects or returns an error when fetched.", remediation: "Point canonicals at the final, 200-status URL." },
+  page_noindex: { category: "indexability", severity: "info", title: "Page excludes itself from indexing (noindex)", groupTitle: "Pages with noindex", explanation: "A robots meta tag or X-Robots-Tag header says noindex. This is a measured directive, reported so unintended noindex can be caught.", remediation: "Remove noindex if the page should appear in search results." },
+  page_nofollow: { category: "indexability", severity: "info", title: "Page asks crawlers not to follow its links (nofollow)", groupTitle: "Pages with nofollow", explanation: "A robots meta tag or X-Robots-Tag header says nofollow, so crawlers ignore the page's links.", remediation: "Remove nofollow unless you intend crawlers to ignore every link on the page." },
+  img_alt_missing: { category: "images", severity: "low", title: "Images without an alt attribute", groupTitle: "Images missing alt attributes", explanation: "<img> elements have no alt attribute at all (an empty alt=\"\" for decorative images is fine).", remediation: "Add descriptive alt text, or alt=\"\" for purely decorative images." },
+};
+
+export function ruleInfo(ruleId: string): SeoRule & { ruleId: string; provenance: "MEASURED"; source: "site_crawler" } {
+  const rule = SEO_RULES[ruleId] ?? { category: "crawlability", severity: "info", title: ruleId, groupTitle: ruleId, explanation: "", remediation: "" };
+  return { ...rule, ruleId, provenance: "MEASURED", source: "site_crawler" };
+}
+
 // ─── Analysis ────────────────────────────────────────────────────────────────
 
+/** Stable per-website identity of an issue: rule + normalized URL (+ group key). No volatile fields. */
 export function issueFingerprint(issue: Pick<CrawlIssue, "ruleId" | "url" | "key">): string {
   return createHash("sha256").update(`${issue.ruleId}|${issue.url}|${issue.key ?? ""}`).digest("hex");
 }
 
-const isBroken = (p: CrawlPage) => p.finalStatus === 0 || p.finalStatus >= 400;
+const isBroken = (p: CrawlPage) => p.outcome === "http_error" || p.outcome === "fetch_error" || p.outcome === "redirect_loop";
 const sample = <T>(xs: T[], n = 20) => xs.slice(0, n);
 
 /** Pure: derive issues from what the crawl actually observed. */
 export function analyzeCrawl(result: CrawlResult): CrawlIssue[] {
   const { pages, summary, inlinks } = result;
   const issues: CrawlIssue[] = [];
+  const add = (ruleId: string, url: string, details: Record<string, unknown> = {}, extra: { key?: string; title?: string; severity?: Severity } = {}) => {
+    const rule = ruleInfo(ruleId);
+    issues.push({ ruleId, category: rule.category, severity: extra.severity ?? rule.severity, url, title: extra.title ?? rule.title, details, ...(extra.key ? { key: extra.key } : {}) });
+  };
   const byUrl = new Map(pages.map((p) => [p.url, p]));
   const robotsUrl = `${summary.origin}/robots.txt`;
 
   if (summary.robotsStatus === "unreachable") {
-    issues.push({ ruleId: "robots_txt_unreachable", severity: "high", url: robotsUrl, title: "robots.txt is unreachable", details: { note: "A server error or network failure on robots.txt makes crawlers treat the whole site as disallowed." } });
+    add("robots_txt_unreachable", robotsUrl, { note: "A server error or network failure on robots.txt makes crawlers treat the whole site as disallowed." });
   } else if (summary.robotsStatus === "missing") {
-    issues.push({ ruleId: "robots_txt_missing", severity: "low", url: robotsUrl, title: "robots.txt not found", details: {} });
+    add("robots_txt_missing", robotsUrl);
   }
-  if (summary.startBlockedByRobots) {
-    issues.push({ ruleId: "start_url_blocked_by_robots", severity: "high", url: summary.startUrl, title: "Start URL is disallowed by robots.txt", details: {} });
-  }
-  if (summary.sitemapStatus === "missing") {
-    issues.push({ ruleId: "sitemap_missing", severity: "low", url: `${summary.origin}/sitemap.xml`, title: "No XML sitemap found", details: { checked: summary.sitemapFiles.map((f) => f.url) } });
-  }
+  if (summary.startBlockedByRobots) add("start_url_blocked_by_robots", summary.startUrl);
+  // A declared sitemap that fails is reported as unavailable, not also as missing.
+  if (summary.sitemapStatus === "missing" && !summary.sitemapFiles.some((f) => f.kind === "unavailable")) add("sitemap_missing", `${summary.origin}/sitemap.xml`, { checked: summary.sitemapFiles.map((f) => f.url) });
   for (const f of summary.sitemapFiles) {
-    if (f.kind === "invalid") issues.push({ ruleId: "sitemap_invalid", severity: "medium", url: f.url, title: "Sitemap is not valid sitemap XML", details: { status: f.status } });
-    if (f.kind === "unavailable") issues.push({ ruleId: "sitemap_unavailable", severity: "medium", url: f.url, title: "Declared sitemap could not be fetched", details: { status: f.status } });
+    if (f.kind === "invalid") add("sitemap_invalid", f.url, { status: f.status });
+    if (f.kind === "unavailable") add("sitemap_unavailable", f.url, { status: f.status });
   }
 
   for (const p of pages) {
-    if (p.finalStatus === 0) {
-      issues.push({ ruleId: "page_fetch_error", severity: "high", url: p.url, title: "Page could not be fetched", details: { error: p.fetchError } });
-    } else if (p.finalStatus >= 500) {
-      issues.push({ ruleId: "page_5xx", severity: "critical", url: p.url, title: `Server error (${p.finalStatus})`, details: { status: p.finalStatus } });
-    } else if (p.finalStatus >= 400) {
-      issues.push({ ruleId: "page_4xx", severity: "high", url: p.url, title: `Client error (${p.finalStatus})`, details: { status: p.finalStatus } });
+    if (p.outcome === "blocked_by_robots") {
+      if (p.inSitemap) add("sitemap_url_blocked_by_robots", p.url);
+      continue;
     }
+    if (p.outcome === "fetch_error") add("page_fetch_error", p.url, { error: p.fetchError });
+    else if (p.outcome === "too_large") add("page_too_large", p.url, { error: p.fetchError, contentType: p.contentType });
+    else if (p.finalStatus >= 500) add("page_5xx", p.url, { status: p.finalStatus, finalUrl: p.finalUrl }, { title: `Server error (${p.finalStatus})` });
+    else if (p.finalStatus >= 400) add("page_4xx", p.url, { status: p.finalStatus, finalUrl: p.finalUrl }, { title: `Client error (${p.finalStatus})` });
 
     const hops = p.redirectChain.length;
     const chainUrls = p.redirectChain.map((h) => h.url);
-    const looped = new Set(chainUrls).size !== chainUrls.length || /too many redirects/i.test(p.fetchError ?? "");
-    if (looped) {
-      issues.push({ ruleId: "redirect_loop", severity: "high", url: p.url, title: "Redirect loop or excessive redirects", details: { chain: p.redirectChain } });
-    } else if (hops >= 2) {
-      issues.push({ ruleId: "redirect_chain", severity: "medium", url: p.url, title: `Redirect chain of ${hops} hops`, details: { chain: p.redirectChain, finalUrl: p.finalUrl } });
-    }
+    const looped = p.outcome === "redirect_loop" || new Set(chainUrls).size !== chainUrls.length;
+    if (looped) add("redirect_loop", p.url, { chain: p.redirectChain, error: p.fetchError });
+    else if (hops >= 2) add("redirect_chain", p.url, { chain: p.redirectChain, finalUrl: p.finalUrl }, { title: `Redirect chain of ${hops} hops` });
+    if (p.outcome === "redirect_out_of_scope") add("redirect_off_site", p.url, { chain: p.redirectChain, target: p.redirectTarget });
 
     const incoming = inlinks[p.url];
-    if (p.redirectChain.length > 0 && incoming) {
-      issues.push({ ruleId: "internal_link_to_redirect", severity: "low", url: p.url, title: "Internal links point at a redirecting URL", details: { finalUrl: p.finalUrl, linkedFrom: incoming.sample, linkCount: incoming.count } });
+    if (p.redirectChain.length > 0 && !looped && incoming) {
+      add("internal_link_to_redirect", p.url, { finalUrl: p.finalUrl, target: p.redirectTarget, linkedFrom: incoming.sample, linkCount: incoming.count });
     }
-
     if (isBroken(p) && incoming) {
-      issues.push({ ruleId: "broken_internal_link", severity: "high", url: p.url, title: `Broken internal link target (${p.finalStatus || "error"})`, details: { status: p.finalStatus, linkedFrom: incoming.sample, linkCount: incoming.count } });
+      add("broken_internal_link", p.url, { status: p.finalStatus, error: p.fetchError, linkedFrom: incoming.sample, linkCount: incoming.count }, { title: `Broken internal link target (${p.finalStatus || "error"})` });
     }
 
-    const htmlOk = p.redirectChain.length === 0 && p.finalStatus === 200 && p.h1Count !== null;
-    if (htmlOk) {
-      const noindex = /\bnoindex\b|\bnone\b/.test(p.robotsMeta ?? "");
-      if (!p.title) issues.push({ ruleId: "title_missing", severity: "high", url: p.url, title: "Missing <title>", details: {} });
-      if (p.canonicals.length === 0 && !noindex) {
-        issues.push({ ruleId: "canonical_missing", severity: "low", url: p.url, title: "No canonical link", details: {} });
-      } else if (p.canonicals.length > 1) {
-        issues.push({ ruleId: "canonical_multiple", severity: "medium", url: p.url, title: "Multiple canonical links", details: { canonicals: p.canonicals } });
-      } else if (p.canonicals.length === 1) {
-        const target = normalizeUrl(p.canonicals[0], p.finalUrl);
-        if (!target) {
-          issues.push({ ruleId: "canonical_invalid", severity: "medium", url: p.url, title: "Canonical link is not a valid URL", details: { canonical: p.canonicals[0] } });
-        } else if (!isSameSite(new URL(summary.startUrl).hostname, target)) {
-          issues.push({ ruleId: "canonical_cross_domain", severity: "low", url: p.url, title: "Canonical points to another domain", details: { canonical: target } });
-        } else if (target !== p.url) {
-          const t = byUrl.get(target);
-          if (t && (t.redirectChain.length > 0 || t.finalStatus !== 200)) {
-            issues.push({ ruleId: "canonical_target_not_ok", severity: "high", url: p.url, title: "Canonical target redirects or errors", details: { canonical: target, targetStatus: t.status, targetFinalStatus: t.finalStatus } });
-          }
+    if (p.inSitemap && (p.outcome === "ok" ? !p.indexable : p.outcome !== "non_html")) {
+      add("sitemap_url_not_indexable", p.url, { status: p.status, finalStatus: p.finalStatus, finalUrl: p.finalUrl, reasons: p.indexabilityReasons });
+    }
+
+    // Content rules only for pages we fetched completely and parsed as HTML.
+    if (p.outcome !== "ok" || p.finalStatus !== 200) continue;
+    const directives = `${p.robotsMeta ?? ""},${p.xRobotsTag ?? ""}`;
+    const noindex = NOINDEX.test(directives);
+    if (noindex) add("page_noindex", p.url, { robotsMeta: p.robotsMeta, xRobotsTag: p.xRobotsTag });
+    if (/\bnofollow\b|\bnone\b/.test(directives)) add("page_nofollow", p.url, { robotsMeta: p.robotsMeta, xRobotsTag: p.xRobotsTag });
+    if (!p.title) add("title_missing", p.url);
+    if (!p.metaDescription && !noindex) add("meta_description_missing", p.url);
+    if (p.h1Count === 0) add("h1_missing", p.url);
+    else if ((p.h1Count ?? 0) > 1) add("h1_multiple", p.url, { h1Count: p.h1Count });
+    if ((p.imagesMissingAlt ?? 0) > 0) add("img_alt_missing", p.url, { missing: p.imagesMissingAlt, total: p.imagesTotal, sample: p.imagesMissingAltSample });
+    if (p.canonicals.length === 0 && !noindex) {
+      add("canonical_missing", p.url);
+    } else if (p.canonicals.length > 1) {
+      add("canonical_multiple", p.url, { canonicals: p.canonicals });
+    } else if (p.canonicals.length === 1) {
+      const target = normalizeUrl(p.canonicals[0], p.finalUrl);
+      if (!target) {
+        add("canonical_invalid", p.url, { canonical: p.canonicals[0] });
+      } else if (!isSameSite(new URL(summary.startUrl).hostname, target)) {
+        add("canonical_cross_domain", p.url, { canonical: target });
+      } else if (target !== p.url) {
+        const t = byUrl.get(target);
+        if (t && t.outcome !== "blocked_by_robots" && (t.redirectChain.length > 0 || t.finalStatus !== 200)) {
+          add("canonical_target_not_ok", p.url, { canonical: target, targetStatus: t.status, targetFinalStatus: t.finalStatus, targetOutcome: t.outcome });
         }
       }
-    }
-
-    if (p.inSitemap && (p.redirectChain.length > 0 || p.finalStatus !== 200 || (p.h1Count !== null && !p.indexable))) {
-      issues.push({ ruleId: "sitemap_url_not_indexable", severity: "medium", url: p.url, title: "Sitemap lists a URL that is not an indexable 200 page", details: { status: p.status, finalStatus: p.finalStatus, finalUrl: p.finalUrl } });
     }
   }
 
   // Duplicates across indexable pages only (a canonicalised or noindex page is
   // not a duplicate problem).
-  const dupes = (field: "title" | "metaDescription", ruleId: string, severity: Severity, label: string) => {
+  const dupes = (field: "title" | "metaDescription", ruleId: string, label: string) => {
     const groups = new Map<string, string[]>();
     for (const p of pages) {
       const v = p[field]?.replace(/\s+/g, " ").trim().toLowerCase();
@@ -483,46 +767,17 @@ export function analyzeCrawl(result: CrawlResult): CrawlIssue[] {
     for (const [value, urls] of groups) {
       if (urls.length < 2) continue;
       const sorted = [...urls].sort();
-      issues.push({
-        ruleId,
-        severity,
-        url: sorted[0],
+      add(ruleId, sorted[0], { value, pages: sample(sorted, 50), pageCount: urls.length }, {
         key: createHash("sha256").update(value).digest("hex").slice(0, 32),
         title: `${label} shared by ${urls.length} pages`,
-        details: { value, pages: sample(sorted, 50), pageCount: urls.length },
       });
     }
   };
-  dupes("title", "title_duplicate", "medium", "Duplicate title");
-  dupes("metaDescription", "meta_description_duplicate", "low", "Duplicate meta description");
+  dupes("title", "title_duplicate", "Duplicate title");
+  dupes("metaDescription", "meta_description_duplicate", "Duplicate meta description");
 
   return issues;
 }
-
-const RULE_LABELS: Record<string, { title: string; recommendation: string }> = {
-  robots_txt_unreachable: { title: "robots.txt is unreachable", recommendation: "Serve robots.txt with a 200 (or 404 if you have no rules). Server errors make crawlers stop crawling the site." },
-  robots_txt_missing: { title: "robots.txt not found", recommendation: "Add a robots.txt, at least to declare your sitemap location." },
-  start_url_blocked_by_robots: { title: "Start URL blocked by robots.txt", recommendation: "Allow the page in robots.txt if it should be crawled." },
-  sitemap_missing: { title: "No XML sitemap found", recommendation: "Publish an XML sitemap and reference it from robots.txt with a Sitemap: line." },
-  sitemap_invalid: { title: "Invalid sitemap", recommendation: "Serve valid sitemaps.org XML (urlset or sitemapindex)." },
-  sitemap_unavailable: { title: "Declared sitemap unavailable", recommendation: "Fix or remove Sitemap: entries that do not return 200." },
-  page_fetch_error: { title: "Pages could not be fetched", recommendation: "Check server availability, timeouts and response size for these URLs." },
-  page_5xx: { title: "Pages return server errors", recommendation: "Fix the server errors; crawlers drop pages that keep failing." },
-  page_4xx: { title: "Pages return client errors", recommendation: "Restore the pages, redirect them to a relevant URL, or remove links to them." },
-  redirect_loop: { title: "Redirect loops", recommendation: "Break the loop so each URL resolves to one final page." },
-  redirect_chain: { title: "Redirect chains", recommendation: "Redirect straight to the final URL in one hop." },
-  internal_link_to_redirect: { title: "Internal links to redirects", recommendation: "Update internal links to point at the final URL." },
-  broken_internal_link: { title: "Broken internal links", recommendation: "Fix or remove internal links whose targets return errors." },
-  title_missing: { title: "Pages without a title", recommendation: "Give every indexable page a unique, descriptive <title>." },
-  canonical_missing: { title: "Pages without a canonical link", recommendation: "Add a self-referencing rel=canonical to indexable pages." },
-  canonical_multiple: { title: "Pages with multiple canonicals", recommendation: "Declare exactly one canonical URL per page." },
-  canonical_invalid: { title: "Invalid canonical URLs", recommendation: "Use an absolute, valid URL in rel=canonical." },
-  canonical_cross_domain: { title: "Cross-domain canonicals", recommendation: "Confirm the cross-domain canonical is intentional." },
-  canonical_target_not_ok: { title: "Canonicals pointing at redirects or errors", recommendation: "Point canonicals at the final, 200-status URL." },
-  sitemap_url_not_indexable: { title: "Non-indexable URLs in the sitemap", recommendation: "List only canonical, indexable 200 pages in sitemaps." },
-  title_duplicate: { title: "Duplicate titles", recommendation: "Write a unique title for each indexable page." },
-  meta_description_duplicate: { title: "Duplicate meta descriptions", recommendation: "Write a unique meta description for each indexable page." },
-};
 
 /** One aggregated finding per rule for the scan report and category score. */
 export function crawlFindings(issues: CrawlIssue[]): NewFinding[] {
@@ -530,15 +785,15 @@ export function crawlFindings(issues: CrawlIssue[]): NewFinding[] {
   for (const i of issues) byRule.set(i.ruleId, [...(byRule.get(i.ruleId) ?? []), i]);
   const order: Severity[] = ["critical", "high", "medium", "low", "info"];
   return [...byRule.entries()].map(([ruleId, list]) => {
-    const label = RULE_LABELS[ruleId] ?? { title: ruleId, recommendation: "" };
+    const rule = ruleInfo(ruleId);
     const severity = order.find((s) => list.some((i) => i.severity === s)) ?? "info";
     const urls = [...new Set(list.map((i) => i.url))];
     return {
       category: "technicalHealth",
       severity,
-      title: label.title,
-      description: `${list.length} occurrence${list.length === 1 ? "" : "s"} found by the site crawl.`,
-      recommendation: label.recommendation,
+      title: rule.groupTitle,
+      description: `${list.length} occurrence${list.length === 1 ? "" : "s"} found by the site crawl. ${rule.explanation}`.trim(),
+      recommendation: rule.remediation,
       affectedUrls: urls.slice(0, 10),
       confidence: 100,
       provenance: "MEASURED",
@@ -551,8 +806,25 @@ export interface CrawlModuleResult extends ModuleResult {
   crawl?: { result: CrawlResult; issues: CrawlIssue[] };
 }
 
-export function makeCrawlRunner(limits: { maxPages: number; maxDurationMs: number }, fetch?: Fetcher) {
-  return async (url: string, ctx: { deadlineAt?: number } = {}): Promise<CrawlModuleResult> => {
+export interface CrawlLimits {
+  maxPages: number;
+  maxDurationMs: number;
+  maxDepth?: number;
+  concurrency?: number;
+  requestTimeoutMs?: number;
+  maxPageBytes?: number;
+}
+
+export interface CrawlRunContext {
+  deadlineAt?: number;
+  /** Per-scan options chosen by the user, already validated and capped by the API. */
+  crawlOptions?: { maxPages?: number; maxDepth?: number } | null;
+  shouldStop?: () => boolean;
+  onProgress?: (progress: CrawlProgress) => void;
+}
+
+export function makeCrawlRunner(limits: CrawlLimits, fetch?: Fetcher) {
+  return async (url: string, ctx: CrawlRunContext = {}): Promise<CrawlModuleResult> => {
     const t0 = Date.now();
     // Never outlive the scan: the crawl budget is the smaller of its own
     // limit and the time left before the scan deadline.
@@ -560,8 +832,22 @@ export function makeCrawlRunner(limits: { maxPages: number; maxDurationMs: numbe
     if (maxDurationMs < 5_000) {
       return { moduleName: "crawl", status: "failed", durationMs: 0, findings: [], error: "CRAWL_TIME_BUDGET_EXHAUSTED: not enough scan time left to crawl" };
     }
+    // Per-scan choices can only lower the server's limits.
+    const maxPages = Math.max(1, Math.min(limits.maxPages, ctx.crawlOptions?.maxPages ?? limits.maxPages));
+    const maxDepth = Math.max(0, Math.min(limits.maxDepth ?? DEFAULT_MAX_DEPTH, ctx.crawlOptions?.maxDepth ?? limits.maxDepth ?? DEFAULT_MAX_DEPTH));
     try {
-      const result = await crawlSite(url, { ...limits, maxDurationMs, fetch });
+      const result = await crawlSite(url, {
+        ...limits,
+        maxPages,
+        maxDepth,
+        maxDurationMs,
+        fetch,
+        shouldStop: ctx.shouldStop,
+        onProgress: ctx.onProgress,
+      });
+      if (result.summary.truncatedReason === "cancelled") {
+        return { moduleName: "crawl", status: "failed", durationMs: Date.now() - t0, findings: [], error: "CRAWL_CANCELLED: the scan was cancelled or lost its lease; partial results were discarded" };
+      }
       const issues = analyzeCrawl(result);
       // A crawl that fetched nothing at all (start unreachable) still reports
       // what it observed, but is not a "completed" measurement of the site.

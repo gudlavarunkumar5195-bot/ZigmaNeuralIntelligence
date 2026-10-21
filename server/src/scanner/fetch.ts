@@ -19,6 +19,30 @@ export interface SafeFetchResult {
   limited?: boolean;
   contentType?: string;
   error?: string;
+  /** Set when `followRedirect` refused a hop: the Location that was NOT requested. */
+  redirectBlockedTo?: string;
+  /** Set when `acceptBody` refused the content type: the body was not downloaded. */
+  bodySkipped?: boolean;
+}
+
+export interface SafeFetchOptions {
+  method?: string;
+  /**
+   * Called for every redirect target (already resolved to an absolute URL).
+   * Returning false stops BEFORE that target is requested; the result is the
+   * redirecting response with `redirectBlockedTo` set. Used to keep a crawl
+   * inside the verified site.
+   */
+  followRedirect?: (url: string) => boolean;
+  /** Body read timeout; never longer than SCANNER_RESPONSE_TIMEOUT_MS. */
+  responseTimeoutMs?: number;
+  /** Body size cap in decoded bytes; never larger than SCANNER_MAX_RESPONSE_BYTES. */
+  maxBytes?: number;
+  /**
+   * Called with the final response's content type (lowercased, no params).
+   * Returning false skips downloading the body (`bodySkipped`).
+   */
+  acceptBody?: (contentType: string | undefined) => boolean;
 }
 
 /**
@@ -30,9 +54,11 @@ export interface SafeFetchResult {
  */
 export async function safeFetch(
   rawUrl: string,
-  options: { method?: string } = {}
+  options: SafeFetchOptions = {}
 ): Promise<SafeFetchResult> {
   const start = Date.now();
+  const responseTimeoutMs = Math.min(options.responseTimeoutMs ?? Infinity, config.SCANNER_RESPONSE_TIMEOUT_MS);
+  const maxBytes = Math.min(options.maxBytes ?? Infinity, config.SCANNER_MAX_RESPONSE_BYTES);
   let currentUrl = rawUrl;
   let redirectCount = 0;
   const redirectChain: Array<{ url: string; status: number }> = [];
@@ -92,25 +118,48 @@ export async function safeFetch(
         };
       }
 
+      let nextUrl: string;
       try {
         const redirectUrl = new URL(location, currentUrl);
         if (redirectUrl.username || redirectUrl.password) throw new Error("Userinfo in URL is not permitted");
         if (!new Set(["http:", "https:"]).has(redirectUrl.protocol)) throw new Error("Redirect scheme is not permitted");
-        currentUrl = redirectUrl.href;
+        nextUrl = redirectUrl.href;
       } catch (error) {
         res.destroy();
         return { ok: false, status: res.statusCode ?? 0, headers: headersToObject(res.headers), body: "", finalUrl: currentUrl, redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start, error: `Invalid redirect: ${(error as Error).message}` };
       }
+      if (options.followRedirect && !options.followRedirect(nextUrl)) {
+        res.destroy();
+        redirectChain.push({ url: parsedCurrentUrl.href, status: res.statusCode ?? 0 });
+        return {
+          ok: false, status: res.statusCode ?? 0, headers: headersToObject(res.headers), body: "",
+          finalUrl: currentUrl, redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start,
+          redirectBlockedTo: nextUrl, error: "Redirect target is outside the permitted scope; not requested",
+        };
+      }
+      currentUrl = nextUrl;
       res.destroy();
       redirectChain.push({ url: parsedCurrentUrl.href, status: res.statusCode ?? 0 });
       redirectCount++;
       continue;
     }
 
+    const earlyHeaders = headersToObject(res.headers);
+    const earlyContentType = earlyHeaders["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    if (options.acceptBody && !options.acceptBody(earlyContentType)) {
+      res.destroy();
+      const status = res.statusCode ?? 0;
+      return {
+        ok: status >= 200 && status < 300, status, headers: earlyHeaders, body: "", finalUrl: currentUrl,
+        redirectCount, redirectChain: [...redirectChain], durationMs: Date.now() - start,
+        contentType: earlyContentType, bodySkipped: true,
+      };
+    }
+
     // Read body with size limit and response timeout
     const responseTimer = setTimeout(
       () => controller.abort(),
-      config.SCANNER_RESPONSE_TIMEOUT_MS
+      responseTimeoutMs
     );
 
     const chunks: Buffer[] = [];
@@ -123,7 +172,7 @@ export async function safeFetch(
         const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         // Limit is applied to DECODED bytes, which also bounds decompression bombs.
         bytesRead += value.byteLength;
-        if (bytesRead > config.SCANNER_MAX_RESPONSE_BYTES) {
+        if (bytesRead > maxBytes) {
           limited = true;
           stream.destroy();
           res.destroy();
@@ -134,15 +183,15 @@ export async function safeFetch(
     } catch (err) {
       // A truncated body must not be reported as a complete, successful page.
       readError = controller.signal.aborted
-        ? `Response body not received within ${config.SCANNER_RESPONSE_TIMEOUT_MS}ms`
+        ? `Response body not received within ${responseTimeoutMs}ms`
         : `Response body read failed: ${(err as Error).message}`;
     } finally {
       clearTimeout(responseTimer);
     }
     const body = Buffer.concat(chunks).toString("utf8");
 
-    const headers = headersToObject(res.headers);
-    const contentType = headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    const headers = earlyHeaders;
+    const contentType = earlyContentType;
 
     return {
       ok: !limited && !readError && (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
@@ -157,7 +206,7 @@ export async function safeFetch(
       durationMs: Date.now() - start,
       limited,
       contentType,
-      ...(limited ? { error: `Response exceeded ${config.SCANNER_MAX_RESPONSE_BYTES} bytes` } : readError ? { error: readError } : {}),
+      ...(limited ? { error: `Response exceeded ${maxBytes} bytes` } : readError ? { error: readError } : {}),
     };
   }
 }
