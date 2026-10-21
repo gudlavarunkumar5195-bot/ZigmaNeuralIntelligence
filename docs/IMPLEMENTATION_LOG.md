@@ -47,7 +47,54 @@ Releases from before this branch do not contain migrations 000 and 027-029, and 
 - The outbox dispatcher holds row locks during the ClickHouse HTTP call (bounded by the 8 s socket timeout). Claim-then-send with a lease would release them sooner.
 - `insert_deduplication_token` only applies on replicated tables or with `non_replicated_deduplication_window`; exact counts before merges need `FINAL`.
 - robots.txt is read for the start host only and applied to its www/apex twin.
-- The crawl does not poll for cancellation mid-crawl; cancel takes effect after the module.
+- ~~The crawl does not poll for cancellation mid-crawl~~ (resolved in Phase 2: polled every 2 s).
 - The AI discovery agent still runs its own 25-page crawl when AI is enabled.
 - CI's PostgreSQL user is a superuser; the non-superuser (Neon-like) path was verified locally only.
 - RLS still does not bind the API's own connection (owner role, no `FORCE`); isolation rests on `org_id` filters (audit item P1-3).
+
+---
+
+# Phase 2: complete technical SEO audit
+
+Branch `feat/p2-technical-seo-audit`, stacked on `feat/p0-phase1-verification` (PR #3). Not deployed; no production migration run.
+
+## Crawler rules (documented behaviour)
+
+| Rule | Behaviour |
+| --- | --- |
+| Scope | Start URL's host or its www/apex twin, **same port**, http(s). A site on default ports may switch http/https. Off-scope redirects are recorded (`redirect_out_of_scope`, target kept) and never requested |
+| SSRF | Every request and redirect hop goes through `safeFetch` (DNS pinning, private/metadata ranges refused) |
+| robots.txt | RFC 9309 for token `zigmaneural-scanner` (UA `ZigmaNeural-Scanner/1.0`); 4xx = allow all, 5xx/unreachable = disallow all; disallowed URLs are recorded as `blocked_by_robots`, never fetched; `Crawl-delay` honoured (max 5 s, concurrency 1) |
+| Sitemaps | robots.txt `Sitemap:` lines, else `/sitemap.xml`; indexes followed; max 10 files, 5 000 URLs; gzip reported as unsupported; a declared sitemap that fails is "unavailable", a missing default one is "missing" |
+| Normalization | No fragments, lowercase host, default ports dropped, tracking parameters (`utm_*`, `gclid`, `fbclid`, `msclkid`, ...) removed |
+| Budgets | Pages (`SCANNER_CRAWL_MAX_PAGES` 100), depth (`SCANNER_CRAWL_MAX_DEPTH` 5), 10 query-string variants per path, discovered URLs (20x pages), concurrency (`SCANNER_CRAWL_CONCURRENCY` 2), per-request body timeout (`SCANNER_CRAWL_REQUEST_TIMEOUT_MS` 15 s), page size (`SCANNER_CRAWL_MAX_PAGE_BYTES` 2 MiB), total time (`SCANNER_CRAWL_MAX_DURATION_MS`, capped by the scan deadline). Per-scan `crawl.maxPages` / `crawl.maxDepth` can only lower them |
+| Outcomes | `ok`, `redirect`, `redirect_out_of_scope`, `redirect_loop`, `http_error`, `fetch_error`, `too_large`, `non_html` (body not downloaded), `blocked_by_robots`. Content rules run only on `ok` 200 pages |
+| Indexability | "Eligible by measured signals" (200, no noindex meta/header, self or no canonical). Never a claim that a page is indexed |
+| Cancellation | Polled every 2 s (DB) plus lost lease; a cancelled crawl is discarded and changes no issue |
+
+## Rules (`SEO_RULES`, all MEASURED by `site_crawler`)
+
+crawlability: `robots_txt_unreachable`, `robots_txt_missing`, `start_url_blocked_by_robots` · status codes: `page_4xx`, `page_5xx`, `page_fetch_error`, `page_too_large` · links: `broken_internal_link`, `internal_link_to_redirect` · redirects: `redirect_chain`, `redirect_loop`, `redirect_off_site` · content: `title_missing`, `title_duplicate`, `meta_description_missing`, `meta_description_duplicate`, `h1_missing`, `h1_multiple` · canonicals: `canonical_missing`, `canonical_multiple`, `canonical_invalid`, `canonical_cross_domain`, `canonical_target_not_ok` · indexability: `page_noindex`, `page_nofollow` · sitemaps: `sitemap_missing`, `sitemap_invalid`, `sitemap_unavailable`, `sitemap_url_not_indexable`, `sitemap_url_blocked_by_robots` · images: `img_alt_missing`.
+
+Fingerprint: `sha256(rule | normalized URL | group key)`, unique per website (`UNIQUE (website_id, fingerprint)`); no timestamps or evidence in it.
+
+## Issue lifecycle
+
+OPEN → FIXED only when a completed, reconcilable crawl re-checked the scope: content rules need the page re-fetched and parsed (200 HTML), or a complete crawl that no longer reaches it; robots-blocked, failed, too-large, cancelled or truncated-before-the-page re-checks fix nothing. IGNORED is kept across scans until a user reopens. Every observing scan is in `site_issue_scans`; events (`DETECTED`, `FIXED`, `REOPENED`, `IGNORED`, `UNIGNORED`) carry scan or actor and reason.
+
+## API (all under `/api/v1/websites/:id`, org-scoped, 404 across tenants)
+
+`GET /crawl` (latest, previous, changes, latest crawl scan) · `GET /crawl/pages?status=&outcome=&indexable=&url=&limit=&cursor=` · `GET /issues?status=&severity=&category=&rule=&url=&limit=&cursor=` · `GET /issues/rules` · `GET /issues/:issueId` · `GET /issues/:issueId/history` · `POST /issues/:issueId/ignore {reason}` · `POST /issues/:issueId/reopen`. `POST /api/v1/scans` accepts `crawl: { maxPages, maxDepth }`; `GET /api/v1/scans/:id` adds `module_statuses` and `crawl_progress`.
+
+## Migration 031 (additive)
+
+crawl page outcome / redirect target / X-Robots-Tag / image alt / indexability reasons; summary depth, robots-blocked count, reconcilable; wider `truncated_reason`; `site_issues.category` (backfilled, indexed); `site_issue_scans`; `scans.crawl_options`. Fresh and upgrade paths are checked by `server/scripts/verify-migrations.mjs` in CI.
+
+## Known limitations (Phase 2)
+
+- No JavaScript rendering: pages are audited as served HTML. A headless browser needs separate approval (CPU, cost).
+- Core Web Vitals are not measured (no lab or field data source); nothing reports them.
+- The crawl runs in the shared worker loop: a long crawl (up to `SCANNER_CRAWL_MAX_DURATION_MS`) delays the monitoring scheduler tick. Separate scheduler/worker processes are audit item P1-5.
+- `hreflang` reciprocity and orphan-page detection are not implemented.
+- Crawl pages are kept for the latest 2 crawls per website; older page-level history is not retained (ClickHouse later).
+- The frontend tests use mocked responses shaped like the backend's (the same contract is asserted against PostgreSQL in `site-audit-api.integration.test.ts`); there is no browser E2E of the workflow against a live backend yet.

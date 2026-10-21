@@ -4,7 +4,7 @@ import { runSEOScanner } from "../scanner/seo.js"
 import { runSecurityScanner } from "../scanner/security.js"
 import { runSSLScanner } from "../scanner/ssl.js"
 import { runPerformanceScanner } from "../scanner/performance.js"
-import { makeCrawlRunner, type CrawlModuleResult } from "../scanner/crawl.js"
+import { makeCrawlRunner, type CrawlModuleResult, type CrawlRunContext } from "../scanner/crawl.js"
 import { persistCrawl } from "./site-audit.service.js"
 import { calculateCategoryScore } from "../types.js"
 import type {
@@ -129,6 +129,29 @@ export function stopScanLeaseHeartbeat(scanId: string): void {
   leaseHeartbeats.delete(scanId)
 }
 
+/** Polls the database for cancellation every 2 s while a long module runs. */
+function watchScanStop(scanId: string, orgId: string): { shouldStop: () => boolean; dispose: () => void } {
+  let cancelled = false
+  const timer = setInterval(() => {
+    isScanCancelled(scanId, orgId)
+      .then((c) => { if (c) cancelled = true })
+      .catch(() => undefined)
+  }, 2_000)
+  timer.unref?.()
+  return { shouldStop: () => cancelled || hasLostScanLease(scanId), dispose: () => clearInterval(timer) }
+}
+
+/** At most one crawl_progress event every 3 s per scan. */
+function throttledCrawlProgress(scanId: string) {
+  let last = 0
+  return (progress: { pagesCrawled: number; pagesDiscovered: number; queued: number }) => {
+    const now = Date.now()
+    if (now - last < 3_000) return
+    last = now
+    emitScanEvent(scanId, "crawl_progress", { module: "crawl", ...progress }).catch(() => undefined)
+  }
+}
+
 export function hasLostScanLease(scanId: string): boolean {
   return leaseHeartbeats.get(scanId)?.lost ?? false
 }
@@ -144,7 +167,7 @@ export async function isScanCancelled(
   return rows[0]?.status === "cancelled"
 }
 
-const MODULE_RUNNERS: Record<string, (url: string, ctx?: { deadlineAt?: number }) => Promise<ModuleResult>> = {
+const MODULE_RUNNERS: Record<string, (url: string, ctx?: CrawlRunContext) => Promise<ModuleResult>> = {
   // Wrapped so the per-run context argument never reaches a scanner's own
   // optional second parameter (runSSLScanner takes injectable deps there).
   seo: (url) => runSEOScanner(url),
@@ -156,6 +179,10 @@ const MODULE_RUNNERS: Record<string, (url: string, ctx?: { deadlineAt?: number }
   crawl: makeCrawlRunner({
     maxPages: Math.min(config.SCANNER_CRAWL_MAX_PAGES ?? 100, config.SCANNER_MAX_PAGES ?? 200),
     maxDurationMs: config.SCANNER_CRAWL_MAX_DURATION_MS ?? 120_000,
+    maxDepth: config.SCANNER_CRAWL_MAX_DEPTH ?? 5,
+    concurrency: config.SCANNER_CRAWL_CONCURRENCY ?? 2,
+    requestTimeoutMs: config.SCANNER_CRAWL_REQUEST_TIMEOUT_MS ?? 15_000,
+    maxPageBytes: config.SCANNER_CRAWL_MAX_PAGE_BYTES ?? 2_097_152,
   }),
 }
 
@@ -303,6 +330,23 @@ export interface CreateScanInput {
    * its own module set).
    */
   onActive?: "return" | "reject"
+  /**
+   * Client-supplied Idempotency-Key (scoped to the organization). A repeat of
+   * the same request returns the scan the first one produced, even after it
+   * finished; the same key with a different request is rejected.
+   */
+  idempotencyKey?: string
+  /** User-chosen crawl limits (validated by the route); the worker can only lower server limits with them. */
+  crawlOptions?: { maxPages?: number; maxDepth?: number }
+}
+
+export class IdempotencyKeyReusedError extends Error {
+  readonly statusCode = 422
+  readonly code = "IDEMPOTENCY_KEY_REUSED"
+  constructor() {
+    super("This Idempotency-Key was already used for a different scan request")
+    this.name = "IdempotencyKeyReusedError"
+  }
 }
 
 export class ActiveScanExistsError extends Error {
@@ -323,10 +367,14 @@ export class ScanAdmissionError extends Error {
 }
 
 
-async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void> {
+async function lockScanAdmission(db: Queryable, orgId: string): Promise<void> {
   // Serialise admission per tenant for the duration of the transaction so
   // concurrent requests cannot all pass the check-then-insert race.
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`scan-admission:${orgId}`])
+}
+
+async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void> {
+  await lockScanAdmission(db, orgId)
   const { rows } = await db.query(
     `SELECT COUNT(*) FILTER (WHERE status IN ('queued','running')) AS active_count,
             COUNT(*) FILTER (WHERE status = 'queued') AS queued_count,
@@ -347,15 +395,45 @@ async function enforceScanAdmission(db: Queryable, orgId: string): Promise<void>
  * Creates the scan, its module rows and the scan_queued event atomically so a
  * crash cannot leave a scan without modules/events (F-015).
  */
-export async function createScan(input: CreateScanInput): Promise<ScanRow & { deduplicated?: true }> {
+export async function createScan(
+  input: CreateScanInput,
+): Promise<ScanRow & { deduplicated?: true; idempotentReplay?: true }> {
   const modules = input.modules ?? ["seo", "security", "ssl", "performance", "crawl"]
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ websiteId: input.websiteId, modules, crawlOptions: input.crawlOptions ?? null }))
+    .digest("hex")
 
   return withTransaction(async (client) => {
-    await enforceScanAdmission(client, input.orgId)
+    // Everything below runs under the per-org admission lock, so a key, the
+    // active-scan check and the insert are decided one request at a time.
+    await lockScanAdmission(client, input.orgId)
+
+    if (input.idempotencyKey) {
+      const { rows: prior } = await client.query<ScanRow & { request_fingerprint: string }>(
+        `SELECT s.*, k.request_fingerprint FROM scan_idempotency_keys k
+           JOIN scans s ON s.id = k.scan_id AND s.org_id = k.org_id
+          WHERE k.org_id = $1 AND k.idempotency_key = $2`,
+        [input.orgId, input.idempotencyKey],
+      )
+      if (prior[0]) {
+        const { request_fingerprint, ...scan } = prior[0]
+        if (request_fingerprint !== fingerprint) throw new IdempotencyKeyReusedError()
+        return Object.assign(scan as ScanRow, { idempotentReplay: true as const })
+      }
+    }
+    const rememberKey = async (scanId: string) => {
+      if (!input.idempotencyKey) return
+      await client.query(
+        `INSERT INTO scan_idempotency_keys (org_id, idempotency_key, request_fingerprint, scan_id)
+         VALUES ($1, $2, $3, $4)`,
+        [input.orgId, input.idempotencyKey, fingerprint, scanId],
+      )
+    }
 
     // P0-7: at most one active scan per website. Checked under the per-org
-    // admission lock taken above (websites belong to exactly one org), and
-    // backed by the partial unique index from migration 028.
+    // lock (websites belong to exactly one org) and backed by the partial
+    // unique index from migration 028. A double submit is answered before
+    // admission limits, so a retry is never refused with 429.
     const { rows: active } = await client.query<ScanRow>(
       `SELECT * FROM scans
         WHERE website_id = $1 AND org_id = $2 AND status IN ('queued','running')
@@ -364,13 +442,16 @@ export async function createScan(input: CreateScanInput): Promise<ScanRow & { de
     )
     if (active[0]) {
       if (input.onActive === "reject") throw new ActiveScanExistsError(active[0].id)
+      await rememberKey(active[0].id)
       return Object.assign(active[0], { deduplicated: true as const })
     }
 
+    await enforceScanAdmission(client, input.orgId)
+
     const { rows } = await client.query<ScanRow>(
-      `INSERT INTO scans (website_id, org_id, triggered_by, modules)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [input.websiteId, input.orgId, input.triggeredBy, modules],
+      `INSERT INTO scans (website_id, org_id, triggered_by, modules, crawl_options)
+       VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING *`,
+      [input.websiteId, input.orgId, input.triggeredBy, modules, input.crawlOptions ? JSON.stringify(input.crawlOptions) : null],
     )
     const scan = rows[0]
 
@@ -384,6 +465,7 @@ export async function createScan(input: CreateScanInput): Promise<ScanRow & { de
       "INSERT INTO scan_events (scan_id, type, payload) VALUES ($1, $2, $3)",
       [scan.id, "scan_queued", JSON.stringify({ scanId: scan.id, modules })],
     )
+    await rememberKey(scan.id)
     return scan
   })
 }
@@ -446,8 +528,9 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
     org_id: string
     website_id: string
     modules: string[]
+    crawl_options: CrawlRunContext["crawlOptions"]
   }>(
-    `SELECT s.id AS scan_id, s.website_id, w.url, s.org_id, s.modules
+    `SELECT s.id AS scan_id, s.website_id, w.url, s.org_id, s.modules, s.crawl_options
      FROM scans s JOIN websites w ON w.id = s.website_id
     WHERE s.id = $1 AND s.org_id = w.org_id`,
     [scanId],
@@ -458,7 +541,7 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
     return
   }
 
-  const { url, org_id, website_id, modules } = rows[0]
+  const { url, org_id, website_id, modules, crawl_options } = rows[0]
   const ownerId = preClaimedOwner ?? (await claimScanExecution(scanId, org_id))
   if (!ownerId || (await isScanCancelled(scanId, org_id))) return
   startScanLeaseHeartbeat(scanId, org_id, ownerId)
@@ -559,9 +642,17 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
     const maxAttempts = claimed[0].max_retries + 1
     while (true) {
       if (Date.now() >= scanDeadline) throw new Error("SCAN_DEADLINE_EXCEEDED")
+      // Long modules (the crawl) poll for cancellation and a lost lease
+      // between requests, and report progress.
+      const stop = moduleName === "crawl" ? watchScanStop(scanId, org_id) : null
       try {
         // Leave headroom for the commit and scoring before the scan deadline.
-        result = await runner(url, { deadlineAt: scanDeadline - 15_000 })
+        result = await runner(url, {
+          deadlineAt: scanDeadline - 15_000,
+          crawlOptions: crawl_options,
+          shouldStop: stop?.shouldStop,
+          onProgress: moduleName === "crawl" ? throttledCrawlProgress(scanId) : undefined,
+        })
       } catch (err: unknown) {
         result = {
           moduleName,
@@ -570,6 +661,18 @@ async function runScanWithLease(scanId: string, preClaimedOwner?: string): Promi
           findings: [],
           error: (err as Error).message,
         }
+      } finally {
+        stop?.dispose()
+      }
+      if (moduleName === "crawl") {
+        // Counts only: no URLs, page content, tokens or headers in logs.
+        const crawl = (result as CrawlModuleResult).crawl?.result.summary
+        console.log(JSON.stringify({
+          event: "crawl_module_finished", scanId, orgId: org_id, status: result.status, error: result.error ?? null,
+          pagesCrawled: crawl?.pagesCrawled ?? 0, pagesDiscovered: crawl?.pagesDiscovered ?? 0,
+          truncatedReason: crawl?.truncatedReason ?? null, issues: (result as CrawlModuleResult).crawl?.issues.length ?? 0,
+          durationMs: result.durationMs,
+        }))
       }
       if (
         result.status !== "failed" ||

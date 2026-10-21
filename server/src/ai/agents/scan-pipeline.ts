@@ -208,9 +208,15 @@ async function runScanIntelligenceInner(input: {
   const error = failedResults.length > 0 ? `${failedResults.length} specialist agent(s) failed` : reportResult?.status === "FAILED" ? "Report synthesis failed" : undefined;
   const reportStatus = status === "completed" && reportResult?.status !== "FAILED" ? "READY" : "FAILED";
   const reportArtifact = { synthesis: reportResult, crossDomainFindings: crossDomainResult.findings, remediationProposals: crossDomainResult.proposals };
-  await query("UPDATE reports SET status = $4, summary = $5, synthesis_artifact = $6, synthesis_execution_id = $7, synthesis_quality_status = $8, error = $9, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportStatus, JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), JSON.stringify(reportArtifact), reportResult?.executionId ?? null, reportResult?.status === "FAILED" ? "REJECTED" : "ACCEPTED", error]);
+  await query("UPDATE reports SET status = $4, summary = $5, synthesis_artifact = $6, synthesis_execution_id = $7, synthesis_quality_status = $8, error = $9, updated_at = NOW() WHERE scan_id = $1 AND org_id = $2 AND website_id = $3 AND report_version = 1", [input.scanId, input.organizationId, input.websiteId, reportStatus, JSON.stringify({ deterministic: true, intelligence: status.toUpperCase(), agents: Object.fromEntries(settled.map(([type, result]) => [type, result.status])), reportStatus: reportResult?.status ?? "UNAVAILABLE" }), JSON.stringify(reportArtifact), reportResult?.executionId ?? null, synthesisQualityStatus(reportResult), error]);
   await query("UPDATE scans SET intelligence_status = $3, intelligence_error = $4 WHERE id = $1 AND org_id = $2", [input.scanId, input.organizationId, status === "completed" ? "COMPLETED" : status === "partial" ? "PARTIAL" : "FAILED", error]);
   return { discoveryCount: discovery.pages.length, seoResult, agentResults, reportResult, status, error };
+}
+
+/** No synthesis ran (every specialist failed): record no quality verdict rather than ACCEPTED. */
+function synthesisQualityStatus(reportResult: AgentResult | null): "ACCEPTED" | "REJECTED" | null {
+  if (!reportResult) return null;
+  return reportResult.status === "FAILED" ? "REJECTED" : "ACCEPTED";
 }
 
 async function loadStoredSynthesis(input: { scanId: string; organizationId: string }): Promise<AgentResult | null> {

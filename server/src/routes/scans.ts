@@ -6,7 +6,7 @@ import {
   requireOrgMember,
   requireRole,
 } from "../middleware/auth.js"
-import { createScan, getScan, emitScanEvent, ScanAdmissionError, SCAN_MODULE_NAMES } from "../services/scan.service.js"
+import { createScan, getScan, emitScanEvent, IdempotencyKeyReusedError, ScanAdmissionError, SCAN_MODULE_NAMES } from "../services/scan.service.js"
 import { getWebsite } from "../services/website.service.js"
 import { query } from "../db/client.js"
 import { audit } from "../services/audit.service.js"
@@ -20,7 +20,28 @@ const createScanSchema = z.object({
     .max(8)
     .transform((modules) => [...new Set(modules)])
     .optional(),
+  /** Optional crawl limits; the worker caps them at the server's configured limits. */
+  crawl: z
+    .object({
+      maxPages: z.number().int().min(1).max(1_000).optional(),
+      maxDepth: z.number().int().min(0).max(20).optional(),
+    })
+    .strict()
+    .optional(),
+}).refine((body) => !body.crawl || !body.modules || body.modules.includes("crawl"), {
+  message: "crawl options require the crawl module",
+  path: ["crawl"],
 })
+
+/**
+ * Optional Idempotency-Key header: undefined when absent, false when invalid
+ * (repeated, empty, too long or containing non-visible characters).
+ */
+export function parseIdempotencyKey(header: string | string[] | undefined): string | undefined | false {
+  if (header === undefined) return undefined
+  if (typeof header !== "string") return false
+  return /^[!-~]{1,255}$/.test(header) ? header : false
+}
 
 const idParam = z.object({ id: z.string().uuid() })
 
@@ -122,6 +143,15 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
             error: { code: "VALIDATION_ERROR", message: parsed.error.message },
           })
       }
+      const idempotencyKey = parseIdempotencyKey(request.headers["idempotency-key"])
+      if (idempotencyKey === false) {
+        return reply.status(400).send({
+          error: {
+            code: "INVALID_IDEMPOTENCY_KEY",
+            message: "Idempotency-Key must be 1-255 visible ASCII characters",
+          },
+        })
+      }
 
       const website = await getWebsite(parsed.data.websiteId, request.orgId)
       if (!website) {
@@ -148,12 +178,23 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
           orgId: request.orgId,
           triggeredBy: request.authUser.id,
           modules: parsed.data.modules,
+          idempotencyKey,
+          crawlOptions: parsed.data.crawl,
         })
       } catch (error) {
         if (error instanceof ScanAdmissionError) {
           return reply.status(429).header("Retry-After", "60").send({ error: { code: "SCAN_LIMIT_REACHED", message: error.message } })
         }
+        if (error instanceof IdempotencyKeyReusedError) {
+          return reply.status(422).send({ error: { code: error.code, message: error.message } })
+        }
         throw error
+      }
+
+      if (scan.idempotentReplay) {
+        // Same Idempotency-Key and request as an earlier call: return what it produced.
+        const { idempotentReplay: _flag, ...existing } = scan
+        return reply.status(200).send({ data: existing, meta: { idempotentReplay: true } })
       }
 
       if (scan.deduplicated) {
@@ -185,13 +226,31 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
         .send({ error: { code: "NOT_FOUND", message: "Scan not found" } })
     }
 
-    // Attach scores
-    const { rows: scores } = await query(
-      "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category",
-      [id, request.orgId],
-    )
+    // Attach scores, per-module status and the latest crawl progress
+    // (scan_events has no org_id; the scan was already resolved in this org).
+    const [{ rows: scores }, { rows: moduleRows }, { rows: progress }] = await Promise.all([
+      query(
+        "SELECT category, score, status, finding_count, critical_count FROM scan_scores WHERE scan_id = $1 AND org_id = $2 ORDER BY category",
+        [id, request.orgId],
+      ),
+      query(
+        "SELECT module_name, status, error, retry_count, started_at, completed_at FROM scan_modules WHERE scan_id = $1 ORDER BY module_name",
+        [id],
+      ),
+      query(
+        "SELECT payload, created_at FROM scan_events WHERE scan_id = $1 AND type = 'crawl_progress' ORDER BY id DESC LIMIT 1",
+        [id],
+      ),
+    ])
 
-    return reply.send({ data: { ...scan, scores } })
+    return reply.send({
+      data: {
+        ...scan,
+        scores,
+        module_statuses: moduleRows,
+        crawl_progress: progress[0] ? { ...(progress[0].payload as object), at: progress[0].created_at } : null,
+      },
+    })
   })
 
   fastify.get("/:id/status", { preHandler }, async (request, reply) => {

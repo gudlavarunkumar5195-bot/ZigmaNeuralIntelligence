@@ -7,7 +7,9 @@ function page(path: string, over: Partial<CrawlPage> = {}): CrawlPage {
   return {
     url: `${S}${path}`, finalUrl: `${S}${path}`, status: 200, finalStatus: 200, redirectChain: [], depth: 1, discoveredFrom: `${S}/`,
     contentType: "text/html", title: path, metaDescription: null, canonicals: [`${S}${path}`], robotsMeta: null, h1Count: 1,
-    internalLinks: [], indexable: true, inSitemap: false, fetchError: null, responseMs: 5, ...over,
+    internalLinks: [], indexable: true, inSitemap: false, fetchError: null, responseMs: 5,
+    redirectTarget: null, outcome: "ok", xRobotsTag: null, imagesTotal: 0, imagesMissingAlt: 0, imagesMissingAltSample: [], indexabilityReasons: [],
+    ...over,
   };
 }
 function crawl(pages: CrawlPage[], truncated = false, reconcilable = true): CrawlResult {
@@ -17,10 +19,11 @@ function crawl(pages: CrawlPage[], truncated = false, reconcilable = true): Craw
     summary: {
       startUrl: `${S}/`, origin: S, pagesCrawled: pages.length, pagesDiscovered: pages.length, truncated, truncatedReason: truncated ? "page_limit" : null,
       robotsStatus: "parsed", startBlockedByRobots: false, sitemapStatus: "found", sitemapFiles: [], sitemapUrlCount: 0, durationMs: 10, maxPages: 100, reconcilable,
+      pagesBlockedByRobots: 0, maxDepth: 5,
     },
   };
 }
-const issue = (ruleId: string, path: string, extra: Partial<CrawlIssue> = {}): CrawlIssue => ({ ruleId, severity: "high", url: `${S}${path}`, title: ruleId, details: {}, ...extra });
+const issue = (ruleId: string, path: string, extra: Partial<CrawlIssue> = {}): CrawlIssue => ({ ruleId, severity: "high", category: "status_codes", url: `${S}${path}`, title: ruleId, details: {}, ...extra });
 
 describe.skipIf(!INTEGRATION)("persistent site issues (PostgreSQL + HTTP)", () => {
   let h: Harness;

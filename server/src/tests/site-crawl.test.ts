@@ -107,7 +107,10 @@ describe("site crawl", () => {
     expect(requested.some((u) => u.includes("other.example"))).toBe(false); // off-site
     expect(requested).not.toContain(`${S}/img.png`); // asset
     const urls = r.pages.map((p) => p.url.replace(S, "")).sort();
-    expect(urls).toEqual(["/", "/a", "/b", "/gone", "/hop1", "/hop3", "/missing", "/noindex", "/old", "/orphan"].sort());
+    expect(urls).toEqual(["/", "/a", "/b", "/gone", "/hop1", "/hop3", "/missing", "/noindex", "/old", "/orphan", "/private/x"].sort());
+    // Disallowed URLs are recorded with their outcome but never requested or counted as crawled.
+    expect(r.pages.find((p) => p.url === `${S}/private/x`)).toMatchObject({ outcome: "blocked_by_robots", status: 0, indexable: false, indexabilityReasons: ["blocked_by_robots"] });
+    expect(r.summary).toMatchObject({ pagesCrawled: 10, pagesBlockedByRobots: 1 });
     const hop = r.pages.find((p) => p.url === `${S}/hop1`)!;
     expect(hop.status).toBe(301);
     expect(hop.finalStatus).toBe(200);
@@ -124,8 +127,14 @@ describe("site crawl", () => {
       "canonical_target_not_ok /b",
       "internal_link_to_redirect /hop1",
       "internal_link_to_redirect /old",
+      "meta_description_missing /",
+      "meta_description_missing /a",
+      "meta_description_missing /b",
+      "meta_description_missing /hop3",
+      "meta_description_missing /orphan",
       "page_4xx /gone",
       "page_4xx /missing",
+      "page_noindex /noindex",
       "redirect_chain /hop1",
       "sitemap_url_not_indexable /gone",
       "sitemap_url_not_indexable /noindex",

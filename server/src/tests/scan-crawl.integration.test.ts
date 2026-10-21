@@ -26,7 +26,7 @@ describe.skipIf(!INTEGRATION)("crawl module through the scan worker (PostgreSQL)
   let websiteId: string;
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const S = `https://crawl-${suffix}.example`;
-  const page = (title: string, links: string[]) => `<html><head><title>${title}</title><link rel="canonical" href="CANON"></head><body><h1>x</h1>${links.map((l) => `<a href="${l}">l</a>`).join("")}</body></html>`;
+  const page = (title: string, links: string[]) => `<html><head><title>${title}</title><meta name="description" content="About ${title}"><link rel="canonical" href="CANON"></head><body><h1>x</h1>${links.map((l) => `<a href="${l}">l</a>`).join("")}</body></html>`;
   const withCanon = (path: string, html: string) => html.replace("CANON", `${S}${path}`);
 
   beforeAll(async () => {
