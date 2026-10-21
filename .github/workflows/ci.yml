@@ -79,6 +79,19 @@ jobs:
       - name: Server build
         run: pnpm --dir server build
 
+      # Runs first, while the cluster still has only its default roles.
+      # Proves, as a NON-superuser Neon-like owner (CREATEROLE, CREATEDB):
+      # fresh migrate 0 -> latest, a no-op re-run, the actionable failure
+      # without CREATEROLE, and upgrades from 1ca145b (pre-Phase-1 schema)
+      # and from the base branch with identical resulting schemas.
+      - name: Migration safety (non-superuser, upgrade from earlier releases)
+        env:
+          VERIFY_MIGRATIONS_ADMIN_URL: ${{ env.CI_DATABASE_URL }}
+          MIGRATION_BASELINES: 1ca145b,origin/${{ github.base_ref || 'main' }}
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref || 'main' }}"
+          node server/scripts/verify-migrations.mjs
+
       - name: Migrate a fresh database (no pre-created Supabase roles)
         env:
           DATABASE_URL: ${{ env.CI_DATABASE_URL }}
