@@ -20,6 +20,17 @@ const createScanSchema = z.object({
     .max(8)
     .transform((modules) => [...new Set(modules)])
     .optional(),
+  /** Optional crawl limits; the worker caps them at the server's configured limits. */
+  crawl: z
+    .object({
+      maxPages: z.number().int().min(1).max(1_000).optional(),
+      maxDepth: z.number().int().min(0).max(20).optional(),
+    })
+    .strict()
+    .optional(),
+}).refine((body) => !body.crawl || !body.modules || body.modules.includes("crawl"), {
+  message: "crawl options require the crawl module",
+  path: ["crawl"],
 })
 
 /**
@@ -168,6 +179,7 @@ export async function scanRoutes(fastify: FastifyInstance): Promise<void> {
           triggeredBy: request.authUser.id,
           modules: parsed.data.modules,
           idempotencyKey,
+          crawlOptions: parsed.data.crawl,
         })
       } catch (error) {
         if (error instanceof ScanAdmissionError) {
