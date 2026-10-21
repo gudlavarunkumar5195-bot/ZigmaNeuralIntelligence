@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   analyzeCrawl,
+  crawlScope,
   crawlSite,
   issueFingerprint,
   makeCrawlRunner,
@@ -108,6 +109,17 @@ describe("URL normalization and crawl bounds", () => {
     expect(r.pages.find((p) => p.url === `${S}/out`)).toMatchObject({ outcome: "redirect_out_of_scope", redirectTarget: "https://evil.example/landing", indexable: false });
     expect(ruleSet(analyzeCrawl(r))).toEqual(expect.arrayContaining(["redirect_off_site /out", "internal_link_to_redirect /out"]));
     expect(ruleSet(analyzeCrawl(r))).not.toContain("broken_internal_link /out");
+  });
+
+  it("scope is host (or www/apex twin) on the start URL's port; another port is another origin", () => {
+    const def = crawlScope("http://shop.example/");
+    expect(def("https://www.shop.example/x")).toBe(true); // http -> https on default ports
+    expect(def("http://shop.example:8080/")).toBe(false);
+    expect(def("ftp://shop.example/")).toBe(false);
+    const explicit = crawlScope("http://127.0.0.1:4321/");
+    expect(explicit("http://127.0.0.1:4321/a")).toBe(true);
+    expect(explicit("http://127.0.0.1:1/admin")).toBe(false);
+    expect(explicit("http://127.0.0.1/")).toBe(false);
   });
 
   it("www/apex twins are in scope; other subdomains are not", async () => {

@@ -214,11 +214,30 @@ export function isSameSite(siteHost: string, url: string): boolean {
   }
 }
 
+/**
+ * Crawl scope of a start URL: same host or its www/apex twin, http(s), and
+ * the same port. A site on default ports may switch between http and https
+ * (both default); a site on an explicit port stays on that port. Another
+ * port is another origin and is never requested.
+ */
+export function crawlScope(startUrl: string): (url: string) => boolean {
+  const start = new URL(startUrl);
+  return (url: string) => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      return false;
+    }
+    return (u.protocol === "http:" || u.protocol === "https:") && bareHost(u.hostname) === bareHost(start.hostname) && u.port === start.port;
+  };
+}
+
 function isHtml(contentType: string | undefined | null): boolean {
   return !contentType || contentType.includes("text/html") || contentType.includes("application/xhtml");
 }
 
-function parsePage(html: string, pageUrl: string, siteHost: string) {
+function parsePage(html: string, pageUrl: string, inScope: (url: string) => boolean) {
   const $ = cheerio.load(html);
   const base = $("base[href]").attr("href");
   const resolveBase = base ? normalizeUrl(base, pageUrl) ?? pageUrl : pageUrl;
@@ -236,7 +255,7 @@ function parsePage(html: string, pageUrl: string, siteHost: string) {
       const rel = ($(el).attr("rel") ?? "").toLowerCase();
       if (/\bnofollow\b/.test(rel)) continue;
       const abs = normalizeUrl($(el).attr("href") ?? "", resolveBase);
-      if (abs && isSameSite(siteHost, abs)) links.add(abs);
+      if (abs && inScope(abs)) links.add(abs);
       if (links.size >= MAX_LINKS_PER_PAGE) break;
     }
   }
@@ -271,7 +290,7 @@ async function fetchRobots(origin: string, fetch: Fetcher, scope: SafeFetchOptio
 
 async function collectSitemapUrls(
   candidates: string[],
-  siteHost: string,
+  inScope: (url: string) => boolean,
   fetch: Fetcher,
   scope: SafeFetchOptions,
   maxUrls: number,
@@ -287,7 +306,7 @@ async function collectSitemapUrls(
   let anyUnsupported = false;
   while (queue.length > 0 && files.length < maxFiles && urls.size < maxUrls && hasTime()) {
     const target = queue.shift()!;
-    if (seen.has(target) || !isSameSite(siteHost, target)) continue;
+    if (seen.has(target) || !inScope(target)) continue;
     seen.add(target);
     if (/\.gz$/i.test(new URL(target).pathname)) {
       files.push({ url: target, status: 0, kind: "unsupported_gzip" });
@@ -314,7 +333,7 @@ async function collectSitemapUrls(
     }
     for (const u of parsed.urls) {
       const n = normalizeUrl(u);
-      if (n && isSameSite(siteHost, n)) urls.add(n);
+      if (n && inScope(n)) urls.add(n);
       if (urls.size >= maxUrls) break;
     }
   }
@@ -351,10 +370,9 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
   const maxQueryVariants = Math.max(1, options.maxQueryVariantsPerPath ?? DEFAULT_QUERY_VARIANTS);
   const start = normalizeUrl(startUrl);
   if (!start) throw new Error("Invalid start URL");
-  const siteHost = new URL(start).hostname;
   const origin = new URL(start).origin;
   // Never request anything off the verified site, even through a redirect.
-  const inScope = (url: string) => isSameSite(siteHost, url);
+  const inScope = crawlScope(start);
   const scope: SafeFetchOptions = { followRedirect: inScope, responseTimeoutMs: options.requestTimeoutMs };
   const pageFetchOptions: SafeFetchOptions = { ...scope, maxBytes: options.maxPageBytes, acceptBody: isHtml };
 
@@ -365,7 +383,7 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
   const sitemap = timeLeft() > 0 && !shouldStop()
     ? await collectSitemapUrls(
         robotsSitemaps.length > 0 ? robotsSitemaps : [`${origin}/sitemap.xml`],
-        siteHost,
+        inScope,
         fetch,
         scope,
         options.maxSitemapUrls ?? 5_000,
@@ -444,7 +462,7 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
     const finalUrl = normalizeUrl(res.finalUrl) ?? res.finalUrl;
     const htmlType = isHtml(res.contentType);
     const outcome = classify(res, htmlType && inScope(finalUrl));
-    const parsed = outcome === "ok" ? parsePage(res.body, finalUrl, siteHost) : null;
+    const parsed = outcome === "ok" ? parsePage(res.body, finalUrl, inScope) : null;
     const xRobotsTag = res.headers?.["x-robots-tag"]?.toLowerCase() ?? null;
     const canonicalTargets = (parsed?.canonicals ?? []).map((c) => normalizeUrl(c, finalUrl));
     const selfCanonical = canonicalTargets.length === 0 || canonicalTargets.every((c) => c === finalUrl);
