@@ -23,6 +23,7 @@ import { backlinkRoutes } from "./routes/backlinks.js";
 import { rankTrackingRoutes } from "./routes/rank-tracking.js";
 import { contentRoutes } from "./routes/content.js";
 import { aiVisibilityRoutes } from "./routes/ai-visibility.js";
+import { seoWorkspaceRoutes } from "./routes/seo-workspace.js";
 import { scanRoutes } from "./routes/scans.js";
 import { modelRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
@@ -124,6 +125,7 @@ export async function buildApp() {
   await fastify.register(rankTrackingRoutes, { prefix: "/api/v1/rank-tracking" });
   await fastify.register(contentRoutes, { prefix: "/api/v1/websites" });
   await fastify.register(aiVisibilityRoutes, { prefix: "/api/v1/ai-visibility" });
+  await fastify.register(seoWorkspaceRoutes, { prefix: "/api/v1/websites" });
   await fastify.register(scanRoutes, { prefix: "/api/v1/scans" });
   await fastify.register(modelRoutes, { prefix: "/api/v1/models" });
   await fastify.register(routingRoutes, { prefix: "/api/v1/routing" });

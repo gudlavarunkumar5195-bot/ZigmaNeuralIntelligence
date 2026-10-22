@@ -3115,3 +3115,195 @@ export async function apiAivExport(brandId: string, kind: "observations" | "sour
   const disposition = res.headers.get("content-disposition") ?? ""
   return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `ai-visibility-${kind}.csv` }
 }
+
+// ─── Unified SEO workspace (server/src/routes/seo-workspace.ts) ──────────────
+
+export type WsRangePreset = "7d" | "28d" | "90d" | "custom"
+export interface WsRangeParams { preset: WsRangePreset; from?: string; to?: string; compare: "previous" | "none" }
+export interface WsRange { preset: WsRangePreset; from: string; to: string; days: number; previous: { from: string; to: string } | null; timezone: string; notes: string[] }
+export interface WsFreshness { state: "fresh" | "stale" | "never"; lastUpdatedAt: string | null; ageHours: number | null; staleAfterHours: number }
+export type WsSectionStatus = "ok" | "partial" | "no_data" | "not_configured" | "auth_expired" | "error" | "timeout"
+export interface WsSection<T> { module: string; status: WsSectionStatus; freshness: WsFreshness | null; range: { support: "full" | "events_only" | "snapshot"; note: string }; notes: string[]; link: string; data: T | null }
+export interface WsMetrics { clicks: number | null; impressions: number | null; ctr: number | null; position: number | null }
+export interface WsChange { change: number | null; changePct: number | null }
+export interface WsSearch {
+  siteUrl: string
+  current: WsMetrics
+  previous: WsMetrics | null
+  comparison: { clicks: WsChange; impressions: WsChange; ctr: WsChange; position: WsChange } | null
+  coverage: { current: { days: number; daysWithData: number; daysMissing: number; daysFresh: number }; previous: { days: number; daysWithData: number; daysMissing: number } | null }
+  series: Array<{ date: string; clicks: number | null; impressions: number | null; state: string }>
+  topPages: Array<{ key: string; clicks: number; impressions: number; ctr: number | null; position: number | null }>
+  topQueries: Array<{ key: string; clicks: number; impressions: number; ctr: number | null; position: number | null }>
+  movers: Array<{ dimension: "page" | "query"; key: string; clicks: number | null; previousClicks: number | null; change: number | null }>
+  latestFinalDay: string | null
+  firstIncompleteDate: string | null
+}
+export interface WsTechnical {
+  latestCrawl: { scanId: string; crawledAt: string | null; pagesCrawled: number; pagesDiscovered: number; truncated: boolean; truncatedReason: string | null; statusCounts: Record<string, number>; maxPages: number | null }
+  indexability: { indexable: number; not_indexable: number; unknown: number }
+  openBySeverity: Record<string, number>
+  brokenInternalLinks: number
+  canonicalIssues: number
+  inRange: { detected: number; fixed: number }
+  previousRange: { detected: number; fixed: number } | null
+  topIssues: Array<{ id: string; rule_id: string; severity: string; url: string; title: string }>
+  history: Array<{ scanId: string; crawledAt: string | null; pagesCrawled: number; truncated: boolean; issues: Record<string, number> }>
+}
+export interface WsRankings {
+  projects: Array<{ id: string; name: string; frequency: string }>
+  tracked: number
+  observedInRange: number
+  changes: Record<string, number>
+  movers: Array<{ keyword: string; change: string; position: number | null; previousPosition: number | null; observedDate: string | null }>
+  nearTop: Array<{ keyword: string; position: number; url: string | null; observedDate: string | null }>
+  serpFeatures: Record<string, number>
+  competitors: Array<{ domain: string; ahead: number; behind: number }>
+  latestObservedDate: string | null
+}
+export interface WsBacklinks {
+  dataset: { id: string; sourceLabel: string; coverage: string; exportedAt: string | null; retrievedAt: string | null; stale: boolean }
+  links: number
+  referringDomains: number
+  changesInRange: { new: number; lost: number; other: number }
+  topLinkedPages: Array<{ target_url: string; links: number; domains: number }>
+  competitors: Array<{ domain: string; referringDomains: number; coverage: string }>
+  gap: { total: number; top: Array<{ domain: string; kind: string; score: number; competitors: string[] }> } | null
+}
+export interface WsContent {
+  inventory: { total: number; byState: Record<string, number>; lastCrawledAt: string | null }
+  possiblyStalePages: number
+  findingsOpen: Record<string, number>
+  findingsInRange: { detected: number; resolved: number }
+  opportunitiesOpen: Record<string, number>
+  topicGaps: number
+  briefs: Record<string, number>
+  topOpportunities: Array<{ id: string; title: string; priority: number }>
+  lastAnalysis: { status: string; at: string | null } | null
+}
+export interface WsAiVisibility {
+  brands: Array<{ brandId: string; name: string; observations: number; openOpportunities: number; minSample: number; groups: Array<{ key: AivGroupKey; sample: { answered: number; queries: number }; mentionRate: AivMetric | null; citationRate: AivMetric | null; topHosts: Array<{ host: string; observations: number }> }> }>
+  providers: Array<{ id: string; name: string; status: string }>
+}
+export interface WsAction {
+  key: string
+  source: string
+  sourceRef: string
+  sourceStatus: string
+  category: string
+  title: string
+  detail: string
+  recommendedAction: string
+  evidence: string[]
+  priority: number
+  priorityBasis: string
+  effort: "small" | "medium" | "large"
+  link: string
+  detectedAt: string | null
+  state: { status: "open" | "in_progress" | "completed" | "dismissed"; ownerId: string | null; dueDate: string | null; note: string | null; updatedAt: string | null }
+}
+export interface WsInsightRow { id: string; rule_id: string; title: string; priority: number; confidence: string; status: string; modules: string[]; last_detected_at: string }
+export interface WsOverview {
+  website: { id: string; domain: string; verified: boolean }
+  range: WsRange
+  generatedAt: string
+  summary: string[]
+  sections: { search: WsSection<WsSearch>; technical: WsSection<WsTechnical>; rankings: WsSection<WsRankings>; backlinks: WsSection<WsBacklinks>; content: WsSection<WsContent>; aiVisibility: WsSection<WsAiVisibility>; keywords: WsSection<{ runs: Array<{ id: string; kind: string; status: string; finished_at: string | null }> }> }
+  completeness: Record<string, { status: WsSectionStatus; freshness: string | null; lastUpdatedAt: string | null }>
+  jobs: Array<{ module: string; id: string; status: string; created_at: string; finished_at: string | null; error: string | null }>
+  topInsights: WsInsightRow[]
+  insightsOpen: number
+  insightsEvaluatedAt: string | null
+  topActions: WsAction[]
+  actionsTotal: number
+}
+export interface WsEvidence { module: string; kind: string; id?: string; url?: string; label: string; observedAt?: string | null; link?: string }
+export interface WsInsight {
+  id: string
+  rule_id: string
+  entity_type: string
+  entity_value: string
+  title: string
+  explanation: string
+  action: string
+  evidence: WsEvidence[]
+  modules: string[]
+  observed_from: string | null
+  observed_to: string | null
+  limitations: string[]
+  priority: number
+  priority_factors: Array<{ name: string; weight: number; value: number | null; explanation: string }>
+  confidence: "high" | "medium" | "low"
+  status: "open" | "in_progress" | "resolved" | "dismissed" | "obsolete"
+  first_detected_at: string
+  last_detected_at: string
+  events?: Array<{ event: string; from_status: string | null; to_status: string | null; note: string | null; created_at: string }>
+}
+export interface WsInsightsMeta { total: number; lastRun: { evaluated_at: string | null; window_from: string; window_to: string; detected: number; skipped_rules: Array<{ ruleId: string; reason: string }> } | null; rules: Record<string, { title: string; modules: string[]; description: string }>; formula: string }
+export interface WsHealth { id: string; name: string; state: "healthy" | "stale" | "configuration_required" | "auth_expired" | "provider_unavailable" | "recent_job_failed" | "not_supported" | "unknown"; detail: string; lastSuccessAt: string | null; lastFailureAt: string | null; link: string }
+export interface WsReport { title: string; range: WsRange; generatedAt: string; sections: string[]; summary: string[]; completeness: WsOverview["completeness"]; actions: WsAction[] | null; sources: WsHealth[] | null; definitions: string[]; limitations: string[] }
+
+const ws = (websiteId: string, path: string) => `${sitePath(websiteId)}/seo-workspace${path}`
+const wsRange = (r: WsRangeParams) => ({ preset: r.preset, from: r.preset === "custom" ? r.from : undefined, to: r.preset === "custom" ? r.to : undefined, compare: r.compare })
+
+export async function apiWsOverview(websiteId: string, range: WsRangeParams) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.overview")
+  return apiFetch<WsOverview>(ws(websiteId, `/overview${queryString(wsRange(range))}`)) as WithMeta<WsOverview, { ai: { available: boolean } }>
+}
+export async function apiWsIntegrations(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.integrations")
+  return apiFetch<WsHealth[]>(ws(websiteId, "/integrations"))
+}
+export async function apiWsInsights(websiteId: string, params: { status?: string; module?: string; search?: string; limit?: number; offset?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.insights")
+  return apiFetch<WsInsight[]>(ws(websiteId, `/insights${queryString({ ...params, limit: params.limit ?? 25 })}`)) as WithMeta<WsInsight[], WsInsightsMeta>
+}
+export async function apiWsInsight(websiteId: string, insightId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.insight")
+  return apiFetch<WsInsight & { formula: string }>(ws(websiteId, `/insights/${encodeURIComponent(insightId)}`))
+}
+export async function apiWsRefreshInsights(websiteId: string, range: WsRangeParams) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.insights.refresh")
+  return apiFetch<{ detected: number; skipped: Array<{ ruleId: string; reason: string }> }>(ws(websiteId, "/insights/refresh"), { method: "POST", body: JSON.stringify(wsRange(range)) })
+}
+export async function apiWsUpdateInsight(websiteId: string, insightId: string, patch: { status?: string; note?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.insight.update")
+  return apiFetch<{ updated: boolean }>(ws(websiteId, `/insights/${encodeURIComponent(insightId)}`), { method: "PATCH", body: JSON.stringify(patch) })
+}
+export async function apiWsActions(websiteId: string, params: { status?: string; category?: string; source?: string; search?: string; limit?: number; offset?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.actions")
+  return apiFetch<WsAction[]>(ws(websiteId, `/actions${queryString({ ...params, limit: params.limit ?? 25 })}`)) as WithMeta<WsAction[], { total: number; openByCategory: Record<string, number>; effortNote: string }>
+}
+export async function apiWsUpdateAction(websiteId: string, body: { source: string; sourceRef: string; status?: string; ownerId?: string | null; dueDate?: string | null; note?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.action.update")
+  return apiFetch<{ key: string }>(ws(websiteId, "/actions"), { method: "PATCH", body: JSON.stringify(body) })
+}
+export async function apiWsActionHistory(websiteId: string, source: string, sourceRef: string) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.action.history")
+  return apiFetch<Array<{ event: string; from_value: string | null; to_value: string | null; note: string | null; created_at: string }>>(ws(websiteId, `/actions/history${queryString({ source, sourceRef })}`))
+}
+export async function apiWsReport(websiteId: string, range: WsRangeParams, sections: string[]) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.report")
+  return apiFetch<WsReport>(ws(websiteId, `/report${queryString({ ...wsRange(range), sections: sections.join(",") })}`))
+}
+export async function apiWsAiSummary(websiteId: string, range: WsRangeParams) {
+  if (IS_DEMO) throw new IntegrationRequired("workspace.summary")
+  return apiFetch<{ model: string; ai: { summary: string; points: Array<{ statement: string; sources: string[] }>; insufficientEvidence: string[] }; dropped: number; sources: Record<string, string> }>(ws(websiteId, "/summary"), { method: "POST", body: JSON.stringify(wsRange(range)) })
+}
+/** Downloads a CSV export or the Markdown report. */
+export async function apiWsDownload(websiteId: string, kind: { dataset: string } | { report: string[] }, range: WsRangeParams): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("workspace.export")
+  const path = "dataset" in kind ? ws(websiteId, `/export${queryString({ ...wsRange(range), dataset: kind.dataset })}`) : ws(websiteId, `/report.md${queryString({ ...wsRange(range), sections: kind.report.join(",") })}`)
+  const res = await fetch(`${config.apiBaseUrl}${path}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: res.status === 403 ? "Your role cannot export from the SEO workspace." : message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? "seo-export" }
+}

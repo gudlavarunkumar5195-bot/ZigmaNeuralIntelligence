@@ -192,3 +192,12 @@ Branch `feat/p8-ai-visibility`, from `main` after PR #10. Not deployed; no produ
 - Additive changes outside the module: `ModelRequest.webSearch`, `ModelResponse.citations/providerRequestId` (OpenRouter `url_citation` annotations), `OxAlphaRequest.aivBrandId/webSearch`, `OxAlphaResult.errorCode/retryable`, and `agent_executions.aiv_brand_id`.
 - Fix found by tests: source verification reported an SSRF-refused host as "blocked by robots.txt"; it now reports `unsafe_url`.
 - The AI Visibility placeholder page is replaced by the real module. Migration 038 (additive). Details: `docs/AI_VISIBILITY.md`.
+
+# Phase 9: Unified SEO workspace
+
+Branch `feat/p9-unified-dashboard`, from `main` after PR #11. Not deployed; no production migration run; no external provider called (AI tested with a faked executor).
+
+- `/intelligence/workspace`: one website and date range across Search Console, technical audit, rankings, backlinks, content, AI visibility and keyword research, read from each module (no copied metrics), with per-section status, freshness, range support and notes; one failing module does not fail the page.
+- Consistent ranges (7/28/90 days or custom up to 480, ending yesterday in Pacific Time, compared with the preceding equal period); range kept in the URL.
+- Cross-module insights from six deterministic rules with source references, labelled as correlations, with lifecycle and history; an action center computed from source findings with only workflow state stored (idempotent by source reference); integration health from job timestamps; JSON/Markdown report and formula-safe CSV exports; optional schema-validated AI explanation over a deterministic summary.
+- Migration 039 (additive). The scan-score home page is unchanged. Details: `docs/SEO_WORKSPACE.md`.
