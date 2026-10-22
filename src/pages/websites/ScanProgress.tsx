@@ -3,6 +3,10 @@ import { Link, useParams } from "react-router";
 import { Activity, CheckCircle2, Clock3, XCircle } from "lucide-react";
 import { apiCancelScan, apiGetScan, ApiCallError, IntegrationRequired } from "../../services/api";
 import { ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
+import { PageHeader } from "../../components/ui/Card";
+import { ConfirmDialog } from "../../components/ui/Dialog";
+import { StatusBadge } from "../../components/ui/StatusBadge";
+import { buttonClass, card } from "../../components/ui/styles";
 
 interface ScanRecord {
   id: string;
@@ -42,6 +46,7 @@ export function ScanProgress() {
   const [attempt, setAttempt] = useState(0);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -100,44 +105,41 @@ export function ScanProgress() {
   if (!scan && error) return <ErrorState title="Unable to load scan execution" message={error.message} onRetry={retry} />;
 
   const icon = scan?.status === "completed"
-    ? <CheckCircle2 className="text-emerald-600" />
+    ? <CheckCircle2 className="text-emerald-600" aria-hidden="true" />
     : scan?.status === "failed"
-      ? <XCircle className="text-red-600" />
-      : <Clock3 className="text-blue-600" />;
+      ? <XCircle className="text-red-600" aria-hidden="true" />
+      : <Clock3 className="text-blue-600" aria-hidden="true" />;
   const active = !!scan && ACTIVE_STATUSES.has(scan.status);
   const finished = scan?.status === "completed" || scan?.status === "partial";
   const links = RESULT_LINKS.filter(([module]) => !scan?.modules?.length || scan.modules.includes(module));
 
-  return <div className="mx-auto max-w-4xl p-5 md:p-10">
-    <div className="flex items-center gap-3 border-b border-slate-200 pb-6">
-      {icon}
-      <div>
-        <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Live execution</p>
-        <h2 className="mt-1 text-2xl font-800 text-slate-950">Scan {scan?.status}</h2>
-      </div>
-      {active && <button onClick={() => void cancelScan()} disabled={cancelling} className="ml-auto rounded-md border border-red-200 px-3 py-2 text-sm font-700 text-red-700 disabled:opacity-60">{cancelling ? "Cancelling…" : "Cancel scan"}</button>}
-    </div>
-    {cancelError && <p role="alert" className="mt-4 rounded bg-red-50 p-3 text-sm text-red-800">{cancelError}</p>}
-    {error && <p role="alert" className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-900">Could not refresh scan status: {error.message}{isTransient(error) ? " Retrying…" : ""} <button onClick={retry} className="font-700 underline">Retry</button></p>}
-    {scan?.error && <p className="mt-6 rounded bg-red-50 p-3 text-sm text-red-800">{scan.error}</p>}
+  return <div className="mx-auto max-w-4xl">
+    <PageHeader eyebrow="Live execution" title={<span className="inline-flex items-center gap-2.5">{icon}Scan {scan?.status}</span>}
+      subtitle={scan?.started_at ? `Started ${new Date(scan.started_at).toLocaleString()}${scan.completed_at ? ` · finished ${new Date(scan.completed_at).toLocaleString()}` : ""}` : undefined}
+      action={active ? <button onClick={() => setConfirmCancel(true)} disabled={cancelling} className={buttonClass("danger", "md")}>{cancelling ? "Cancelling…" : "Cancel scan"}</button> : undefined} />
+    <ConfirmDialog open={confirmCancel && active} title="Cancel this scan?" description="Modules that have not finished will stop and their results will not be collected. Results already measured are kept." confirmLabel="Stop scan" tone="danger" busy={cancelling}
+      onConfirm={() => { setConfirmCancel(false); void cancelScan(); }} onCancel={() => setConfirmCancel(false)} />
+    {cancelError && <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{cancelError}</p>}
+    {error && <p role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Could not refresh scan status: {error.message}{isTransient(error) ? " Retrying…" : ""} <button onClick={retry} className="font-700 underline">Retry</button></p>}
+    {scan?.error && <p className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{scan.error}</p>}
     <p role="status" aria-live="polite" className="mt-4 min-h-5 text-sm text-slate-700">
       {active && scan?.crawl_progress
         ? `Crawling: ${scan.crawl_progress.pagesCrawled ?? 0} pages fetched, ${scan.crawl_progress.pagesDiscovered ?? 0} URLs discovered.`
         : scan ? `Scan ${scan.status}.` : ""}
     </p>
-    {scan?.module_statuses?.length ? <section className="mt-4" aria-labelledby="modules-heading">
-      <h3 id="modules-heading" className="text-sm font-800 text-slate-900">Modules</h3>
-      <ul className="mt-2 grid gap-1 text-sm">
-        {scan.module_statuses.map((m) => <li key={m.module_name} className="flex flex-wrap gap-2"><span className="font-600 text-slate-800">{m.module_name}</span><span className="text-slate-600">{m.status}</span>{m.error ? <span className="text-red-700">{m.error}</span> : null}</li>)}
+    {scan?.module_statuses?.length ? <section className={`${card} mt-4`} aria-labelledby="modules-heading">
+      <h3 id="modules-heading" className="text-card-title text-slate-900">Modules</h3>
+      <ul className="mt-2 divide-y divide-slate-100 text-sm">
+        {scan.module_statuses.map((m) => <li key={m.module_name} className="flex flex-wrap items-center gap-2 py-2"><span className="font-600 capitalize text-slate-800">{m.module_name}</span><span className="ml-auto"><StatusBadge status={m.status} /></span>{m.error ? <span className="basis-full text-xs text-red-700">{m.error}</span> : null}</li>)}
       </ul>
     </section> : null}
-    <section className="mt-8">
-      <h3 className="flex items-center gap-2 text-sm font-800 text-slate-900"><Activity size={16} />Measured dimensions</h3>
-      {scan?.scores.length ? <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">{scan.scores.map((score) => <div key={score.category} className="border-b border-slate-200 py-3"><p className="text-xs font-600 text-slate-500">{score.category}</p><strong className="mt-1 text-2xl text-slate-900">{score.score ?? "—"}</strong><p className="text-[11px] text-slate-400">{score.status}</p></div>)}</div> : <p className="mt-4 text-sm text-slate-500">No measured scores are available for this scan yet.</p>}
+    <section className="mt-6">
+      <h3 className="flex items-center gap-2 text-section-title text-slate-900"><Activity size={16} aria-hidden="true" />Measured dimensions</h3>
+      {scan?.scores.length ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{scan.scores.map((score) => <div key={score.category} className={card}><p className="text-xs font-600 capitalize text-slate-500">{score.category}</p><strong className="mt-1 block text-kpi tabular-nums text-slate-900">{score.score ?? "—"}</strong><p className="text-[11px] text-slate-500">{score.status}</p></div>)}</div> : <p className="mt-4 text-sm text-slate-500">No measured scores are available for this scan yet.</p>}
     </section>
     {finished && <nav aria-label="Scan results" className="mt-8 flex flex-wrap gap-2">
-      {links.map(([module, label, path]) => <Link key={module} to={path} className="rounded-md border border-slate-200 px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-50">{label}</Link>)}
-      <Link to="/reports" className="rounded-md bg-slate-950 px-3 py-2 text-sm font-700 text-white">View report</Link>
+      {links.map(([module, label, path]) => <Link key={module} to={path} className={buttonClass("secondary", "md")}>{label}</Link>)}
+      <Link to="/reports" className={buttonClass("primary", "md")}>View report</Link>
     </nav>}
   </div>;
 }

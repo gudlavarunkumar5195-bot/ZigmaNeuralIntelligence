@@ -64,7 +64,7 @@ const SCORE_KEYS = ["benchmark", "reliability", "capability", "latency", "contex
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function confidenceColor(v: number): string {
-  return v >= 80 ? "#10b981" : v >= 60 ? "#3b82f6" : v >= 40 ? "#f59e0b" : "#ef4444";
+  return v >= 80 ? "var(--zn-success)" : v >= 60 ? "var(--zn-accent)" : v >= 40 ? "var(--zn-warning)" : "var(--zn-danger)";
 }
 
 function ScoreBar({ value, label }: { value: number; label?: string }) {
@@ -111,9 +111,9 @@ function SourceBadge({ source }: { source: string }) {
 
 function IntegrationPlaceholder() {
   return (
-    <div className="p-6 max-w-screen-xl mx-auto">
+    <div>
       <div className="mb-6">
-        <h1 className="text-xl font-700 text-slate-900">Model Router</h1>
+        <p className="text-eyebrow text-blue-700">AI Agents</p><h1 className="mt-1 text-page-title text-slate-900">Model Router</h1>
         <p className="text-sm text-slate-500 mt-0.5">OX Alpha Intelligent Model Routing Engine</p>
       </div>
 
@@ -503,10 +503,10 @@ export function ModelRouter() {
   };
 
   return (
-    <div className="p-6 max-w-screen-xl mx-auto animate-slide-in">
+    <div className="animate-slide-in">
       <div className="flex items-start justify-between mb-5">
         <div>
-          <h1 className="text-xl font-700 text-slate-900">Model Router</h1>
+          <p className="text-eyebrow text-blue-700">AI Agents</p><h1 className="mt-1 text-page-title text-slate-900">Model Router</h1>
           <p className="text-sm text-slate-500 mt-0.5">OX Alpha selects among eligible candidates — policy and registry drive routing, not hard-coded rules</p>
         </div>
       </div>
@@ -541,8 +541,9 @@ export function ModelRouter() {
           <div className="space-y-4">
             <Card>
               <p className="text-xs font-600 text-slate-500 uppercase tracking-wide mb-3">Task</p>
-              <label className="block text-xs text-slate-600 mb-1">Task type</label>
+              <label htmlFor="sim-task-type" className="block text-xs text-slate-600 mb-1">Task type</label>
               <select
+                id="sim-task-type"
                 value={sim.taskType}
                 onChange={handleTaskTypeChange}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
@@ -551,16 +552,16 @@ export function ModelRouter() {
               </select>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="block text-xs text-slate-600 mb-1">Complexity</label>
-                  <select value={sim.complexity} onChange={handleComplexityChange}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none">
+                  <label htmlFor="sim-complexity" className="block text-xs text-slate-600 mb-1">Complexity</label>
+                  <select id="sim-complexity" value={sim.complexity} onChange={handleComplexityChange}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                     {COMPLEXITY_LEVELS.map((v) => <option key={v}>{v}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-600 mb-1">Risk level</label>
-                  <select value={sim.riskLevel} onChange={handleRiskChange}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none">
+                  <label htmlFor="sim-risk" className="block text-xs text-slate-600 mb-1">Risk level</label>
+                  <select id="sim-risk" value={sim.riskLevel} onChange={handleRiskChange}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                     {COMPLEXITY_LEVELS.map((v) => <option key={v}>{v}</option>)}
                   </select>
                 </div>

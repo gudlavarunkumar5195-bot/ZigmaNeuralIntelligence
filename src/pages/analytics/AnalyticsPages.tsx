@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { NavLink } from "react-router"
+import { PageHeader } from "../../components/ui/Card";
+import { RouteTabs } from "../../components/ui/Primitives";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { AlertOctagon, AlertTriangle, BarChart3, CheckCircle2, Info, RefreshCw } from "lucide-react"
 import { Card } from "../../components/ui/Card"
@@ -106,25 +107,9 @@ const TABS = [
 
 function Layout({ title, description, filters, onRefresh, loading, children }: { title: string; description: string; filters: ReactNode; onRefresh: () => void; loading: boolean; children: ReactNode }) {
   return (
-    <div className="mx-auto max-w-6xl animate-slide-in p-6 md:p-8">
-      <div className="mb-1 font-mono text-[10px] font-600 uppercase tracking-[0.14em] text-slate-400">Analytics</div>
-      <div className="mb-5">
-        <h2 className="text-3xl font-800 tracking-[-0.05em] text-foreground">{title}</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
-      </div>
-      <nav aria-label="Analytics sections" className="mb-5 flex gap-1 overflow-x-auto border-b border-border">
-        {TABS.map((t) => (
-          <NavLink
-            key={t.path}
-            to={t.path}
-            className={({ isActive }) =>
-              `whitespace-nowrap border-b-2 px-3 py-2 text-sm font-600 transition-colors ${isActive ? "border-blue-500 text-blue-600" : "border-transparent text-muted-foreground hover:text-foreground"}`
-            }
-          >
-            {t.label}
-          </NavLink>
-        ))}
-      </nav>
+    <div className="animate-slide-in">
+      <PageHeader eyebrow="Analytics" title={title} subtitle={description} />
+      <div className="mb-5"><RouteTabs label="Analytics sections" tabs={TABS.map((t) => ({ id: t.path, label: t.label, to: t.path }))} /></div>
       <div className="mb-6 flex flex-wrap items-center gap-2">
         {filters}
         <button
@@ -156,7 +141,7 @@ function RangeControl({ days, onChange }: { days: number; onChange: (d: number) 
           type="button"
           aria-pressed={days === r.days}
           onClick={() => onChange(r.days)}
-          className={`rounded-md px-2.5 py-1 text-xs font-600 transition-colors ${days === r.days ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "text-muted-foreground hover:text-foreground"}`}
+          className={`rounded-md px-2.5 py-1 text-xs font-600 transition-colors ${days === r.days ? "bg-blue-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
         >
           {r.label}
         </button>

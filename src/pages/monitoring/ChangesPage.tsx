@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react"
+import { PageHeader } from "../../components/ui/Card";
+import { input } from "../../components/ui/styles";
 import { useWebsites } from "../../lib/useWebsites"
 import {
   EmptyState,
@@ -74,17 +76,15 @@ export function ChangesPage() {
       />
     )
   return (
-    <div className="mx-auto max-w-6xl animate-slide-in p-6 md:p-8">
-      <h2 className="mb-6 text-3xl font-800 tracking-[-0.05em] text-slate-950">
-        Change detection
-      </h2>
-      <div className="card-panel mb-6 p-4">
+    <div className="animate-slide-in">
+      <PageHeader eyebrow="Monitoring" title="Change detection" subtitle="Differences between consecutive monitoring runs." />
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm mb-6 p-4">
         <label className="text-sm text-slate-700">
           Monitoring configuration
           <select
             value={selectedId}
             onChange={(event) => void loadSelected(event.target.value)}
-            className="ml-3 rounded border p-2"
+            className={input}
           >
             <option value="">Select monitoring</option>
             {configs.map((config) => (
@@ -98,9 +98,9 @@ export function ChangesPage() {
       {items?.length ? (
         <section className="space-y-3">
           {items.map((item) => (
-            <article key={item.id} className="card-panel p-5">
+            <article key={item.id} className="rounded-xl border border-slate-200 bg-white shadow-sm p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="font-800 text-slate-900">
+                <h3 className="text-card-title text-slate-900">
                   {item.change_type.replace(/_/g, " ")}
                 </h3>
                 <span className="text-xs font-700 uppercase text-blue-700">

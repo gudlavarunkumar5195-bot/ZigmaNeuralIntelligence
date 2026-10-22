@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { ApiCallError, apiGetDashboard, apiGetFindings, IntegrationRequired } from "../../services/api";
 import { useSelectedWebsiteId } from "../../lib/selectedWebsite";
+import { PageHeader } from "./Card";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "./DataState";
+import { SeverityBadge } from "./StatusBadge";
 
 type Finding = {
   id: string;
@@ -49,27 +51,26 @@ export function ScanModuleFindings({ title, moduleName }: { title: string; modul
   if (!findings) return <LoadingState label={`Loading ${title.toLowerCase()}...`} />;
 
   return (
-    <div className="mx-auto max-w-4xl p-6 md:p-10">
-      <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">{title}</p>
-      {domain ? <h2 className="mt-2 text-2xl font-800 text-slate-950">{domain}</h2> : null}
+    <div className="max-w-4xl">
+      <PageHeader eyebrow="Latest scan findings" title={title} subtitle={domain ?? undefined} />
       {findings.length === 0 ? (
         <EmptyState
           title="No findings"
           description={domain ? "The latest scan recorded no findings for this module." : "Run a scan on a verified website to see results."}
         />
       ) : (
-        <div className="mt-6 space-y-3">
+        <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white shadow-sm">
           {findings.map((finding) => (
-            <article key={finding.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+            <li key={finding.id} className="p-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-700 text-slate-900">{finding.title}</h3>
-                <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-700 uppercase text-blue-700">{finding.severity}</span>
+                <h2 className="text-sm font-600 text-slate-900">{finding.title}</h2>
+                <SeverityBadge severity={finding.severity} />
               </div>
               {finding.description ? <p className="mt-2 text-xs leading-5 text-slate-600">{finding.description}</p> : null}
               {finding.recommendation ? <p className="mt-2 text-xs leading-5 text-slate-700">Recommendation: {finding.recommendation}</p> : null}
-            </article>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );

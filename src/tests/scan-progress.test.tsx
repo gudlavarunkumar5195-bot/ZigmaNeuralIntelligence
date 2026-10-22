@@ -55,6 +55,8 @@ describe("ScanProgress", () => {
     await flush(2_000);
     expect(vi.mocked(api.apiGetScan).mock.calls.length).toBeGreaterThanOrEqual(2);
     await act(async () => { screen.getByRole("button", { name: "Cancel scan" }).click(); });
+    expect(api.apiCancelScan).not.toHaveBeenCalled();
+    await act(async () => { screen.getByRole("button", { name: "Stop scan" }).click(); });
     await flush();
     expect(api.apiCancelScan).toHaveBeenCalledWith("s1");
     expect(screen.getByRole("alert").textContent).toContain("cannot be cancelled");

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { btn, btnPrimary, input } from "../../../components/ui/styles";
 import { Link } from "react-router";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/DataState";
 import {
@@ -26,9 +27,6 @@ import {
 } from "../../../services/api";
 import { downloadBlob } from "../research/shared";
 
-const btn = "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-700 text-slate-800 hover:bg-slate-50 disabled:opacity-50";
-const btnPrimary = "rounded-md bg-slate-950 px-3 py-1.5 text-xs font-700 text-white hover:bg-slate-800 disabled:opacity-50";
-const input = "mt-1 block rounded border border-slate-300 px-2 py-1 text-sm";
 
 export const STATE_LABEL: Record<string, string> = {
   verified_live: "Verified live",

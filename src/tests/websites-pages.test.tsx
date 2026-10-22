@@ -110,3 +110,29 @@ describe("Overview", () => {
     expect(screen.queryByText("55")).toBeNull();
   });
 });
+
+describe("Overview KPIs", () => {
+  const scored = (category: string, score: number) => ({ category, score, status: "scored", finding_count: 0, critical_count: 0 });
+  const snap = (overall_score: number | null) => ({ captured_at: "2030-01-01T00:00:00Z", overall_score, seo_score: null, security_score: null, performance_score: null, accessibility_score: null, ssl_score: null });
+  const render2 = (over: Record<string, unknown>) => {
+    const base = dashboard([site()]);
+    vi.mocked(api.apiGetDashboard).mockResolvedValue({ ...base, data: { ...base.data, ...over } } as never);
+    return renderAt(<Overview />);
+  };
+
+  it("counts measured dashboard dimensions only, not the overall row", async () => {
+    render2({ scores: [scored("seo", 70), scored("security", 90), scored("overall", 80)] });
+    const card = (await screen.findByText("Dimensions measured")).closest("div.flex-col") as HTMLElement;
+    expect(card.textContent).toContain("2/ 8");
+  });
+
+  it("shows the change only when the newest snapshot is the displayed score", async () => {
+    render2({ history: [snap(70), snap(75)] });
+    await screen.findByText("Health score");
+    expect(screen.queryByText(/points vs previous snapshot/)).toBeNull();
+    cleanup();
+    render2({ history: [snap(75), snap(80)] });
+    expect(await screen.findByText(/points vs previous snapshot/)).toBeTruthy();
+    expect(screen.getByText("up 5, better")).toBeTruthy();
+  });
+});

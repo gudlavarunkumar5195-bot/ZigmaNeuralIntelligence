@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { apiConfirmPasswordReset, apiRequestPasswordReset } from "../../services/api";
+import { buttonClass } from "../../components/ui/styles";
+import { AuthLayout, authInput } from "./AuthLayout";
 
 /**
  * Public password reset. Without a token: request a link (the answer is the
@@ -11,13 +13,12 @@ export function ResetPasswordPage() {
   const [params] = useSearchParams();
   const token = params.get("token");
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-800 text-slate-950">{token ? "Choose a new password" : "Reset your password"}</h1>
-        {token ? <SetPassword token={token} /> : <RequestLink />}
-        <p className="mt-4 text-xs"><Link to="/login" className="font-600 text-blue-700 underline">Back to sign in</Link></p>
-      </div>
-    </div>
+    <AuthLayout>
+      <h1 className="text-page-title text-slate-900">{token ? "Choose a new password" : "Reset your password"}</h1>
+      <p className="mt-1 text-sm text-slate-500">{token ? "The reset link is single-use and expires after 30 minutes." : "We will email a reset link if an account exists for this address."}</p>
+      {token ? <SetPassword token={token} /> : <RequestLink />}
+      <p className="mt-6 text-xs"><Link to="/login" className="font-600 text-blue-700 hover:underline">Back to sign in</Link></p>
+    </AuthLayout>
   );
 }
 
@@ -38,12 +39,12 @@ function RequestLink() {
     }
   };
   return (
-    <form onSubmit={submit} className="mt-4 space-y-3">
-      <label className="block text-xs text-slate-700">Email
-        <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm" />
+    <form onSubmit={submit} className="mt-6 space-y-4">
+      <label className="block text-xs font-600 text-slate-700">Email
+        <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={`${authInput} mt-1.5`} />
       </label>
-      <button type="submit" disabled={busy} className="w-full rounded-md bg-slate-950 py-2 text-sm font-700 text-white disabled:opacity-50">{busy ? "Sending…" : "Send reset link"}</button>
-      {message ? <p role={message.ok ? "status" : "alert"} className={`text-xs ${message.ok ? "text-slate-700" : "text-red-800"}`}>{message.text}</p> : null}
+      <button type="submit" disabled={busy} className={`${buttonClass("primary", "lg")} w-full`}>{busy ? "Sending…" : "Send reset link"}</button>
+      {message ? <p role={message.ok ? "status" : "alert"} className={`rounded-lg border px-3 py-2 text-xs ${message.ok ? "border-slate-200 bg-slate-50 text-slate-700" : "border-red-200 bg-red-50 text-red-800"}`}>{message.text}</p> : null}
       <p className="text-[11px] text-slate-500">If you do not receive an email, ask a platform administrator: email delivery may not be configured on this installation.</p>
     </form>
   );
@@ -73,15 +74,15 @@ function SetPassword({ token }: { token: string }) {
     }
   };
   return (
-    <form onSubmit={submit} className="mt-4 space-y-3">
-      <label className="block text-xs text-slate-700">New password
-        <input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm" />
+    <form onSubmit={submit} className="mt-6 space-y-4">
+      <label className="block text-xs font-600 text-slate-700">New password
+        <input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className={`${authInput} mt-1.5`} />
       </label>
-      <label className="block text-xs text-slate-700">Repeat new password
-        <input type="password" required minLength={8} autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} className="mt-1 block w-full rounded border border-slate-300 px-2 py-1.5 text-sm" />
+      <label className="block text-xs font-600 text-slate-700">Repeat new password
+        <input type="password" required minLength={8} autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} className={`${authInput} mt-1.5`} />
       </label>
-      <button type="submit" disabled={busy || message?.ok} className="w-full rounded-md bg-slate-950 py-2 text-sm font-700 text-white disabled:opacity-50">{busy ? "Saving…" : "Set new password"}</button>
-      {message ? <p role={message.ok ? "status" : "alert"} className={`text-xs ${message.ok ? "text-emerald-800" : "text-red-800"}`}>{message.text}</p> : null}
+      <button type="submit" disabled={busy || message?.ok} className={`${buttonClass("primary", "lg")} w-full`}>{busy ? "Saving…" : "Set new password"}</button>
+      {message ? <p role={message.ok ? "status" : "alert"} className={`rounded-lg border px-3 py-2 text-xs ${message.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{message.text}</p> : null}
     </form>
   );
 }

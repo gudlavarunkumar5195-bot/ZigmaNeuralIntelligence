@@ -201,3 +201,28 @@ Branch `feat/p9-unified-dashboard`, from `main` after PR #11. Not deployed; no p
 - Consistent ranges (7/28/90 days or custom up to 480, ending yesterday in Pacific Time, compared with the preceding equal period); range kept in the URL.
 - Cross-module insights from six deterministic rules with source references, labelled as correlations, with lifecycle and history; an action center computed from source findings with only workflow state stored (idempotent by source reference); integration health from job timestamps; JSON/Markdown report and formula-safe CSV exports; optional schema-validated AI explanation over a deterministic summary.
 - Migration 039 (additive). The scan-score home page is unchanged. Details: `docs/SEO_WORKSPACE.md`.
+
+# Phase 9.5: Frontend redesign
+
+Branch `feat/p9-5-frontend-redesign`, from `main` after PR #12. Frontend only: no server, API, schema or migration change, and no new dependency.
+
+- One design system (`docs/DESIGN_SYSTEM.md`): semantic `--zn-*` tokens, Tailwind slate/blue/sky remapped to the new neutrals, indigo accent and teal, a type scale, and shared control classes in `src/components/ui/styles.ts`. Module `ui` files now re-export the shared button, input and card classes.
+- Fix: Tailwind 4 generated no CSS for the numeric `font-400`…`font-800` classes used about 600 times, so those weights never applied. They are now defined as utilities.
+- New app shell: grouped, collapsible sidebar with an icon rail (state kept in localStorage), a mobile drawer, a top bar with breadcrumb, website selector, alerts and a Ctrl/⌘ K page launcher over real routes, a skip link and per-route document titles. Unavailable modules are labelled N/A in the navigation.
+- New components: Button, Dialog/ConfirmDialog (native `<dialog>`), Toast, Tooltip, KpiCard/Delta/Sparkline, Badge, Freshness, Notice, Field, RouteTabs, ChartFrame, TableContainer, Skeleton. Data states, status badges, cards and route errors restyled with their existing texts and roles.
+- Every routed page uses `PageHeader` and the shared tabs. The dashboard ("/") has KPI cards (with health change and trend from real snapshots), an accessible score chart and no hero gradient. Login and password reset share a new auth layout that lists capabilities only. The Agent Registry moved from a dark theme to the light one.
+- Behaviour changes: cancelling a running scan now asks for confirmation ("Stop scan"); the 404 page links to the dashboard; Reports has a Print action.
+- Fixes found by new tests: `Field` referenced a hint that was hidden on error; `ChartFrame` announced its summary twice; `RouteTabs` driven by a route param never set `aria-current` (NavLink overrode it).
+- Found in browser checks: below 768px the website selector was hidden and a `hidden` class lost to the button's `inline-flex`, so phones could not switch websites; the top bar now keeps the selector at every width and makes Go to page and Logout icon-only below 1280px. The Model Router simulator labels were not associated with their selects.
+- Fixed in review:
+  - The skip link changed the hash route instead of focusing the content.
+  - The mobile drawer did not trap focus, and one Escape closed both the drawer and the launcher.
+  - "Dimensions measured" counted the `overall` score row.
+  - The health change mixed the latest scan with older snapshots; it now shows only when the newest snapshot is the displayed score.
+  - Print showed only the visible part of the page; print styles now hide the shell.
+  - The cancel dialog could outlive a finished scan.
+  - The Agent Registry panes lost their own scrolling.
+  - Collapsed-rail tooltips were clipped; tooltips are now positioned against the viewport and chain the trigger's own handlers.
+  - Toast timers were not cleared on unmount.
+  - The login tab order went from Email to the reset link before Password.
+- Tests: `src/tests/shell-navigation.test.tsx` (breadcrumb, N/A labels, group collapse and persistence, rail, drawer, launcher) and `src/tests/ui-components.test.tsx` (dialogs, toasts, tooltip, KPI pieces, Field, tabs, chart frame, page header).

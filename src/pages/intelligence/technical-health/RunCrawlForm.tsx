@@ -72,7 +72,7 @@ export function RunCrawlForm({ websiteId, disabled, onStarted }: { websiteId: st
             className="mt-1 block w-28 rounded border border-slate-300 px-2 py-1 text-sm"
           />
         </label>
-        <button type="submit" disabled={disabled || busy} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-700 text-white disabled:opacity-50">
+        <button type="submit" disabled={disabled || busy} className="rounded-lg bg-blue-600 shadow-sm hover:bg-blue-700 px-3 py-2 text-sm font-700 text-white disabled:opacity-50">
           {busy ? "Starting…" : disabled ? "Crawl in progress" : "Start crawl"}
         </button>
         {startedId ? <Link to={`/websites/scan/${startedId}`} className="text-xs font-600 text-blue-700 underline">View scan progress</Link> : null}

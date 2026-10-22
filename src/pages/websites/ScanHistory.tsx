@@ -1,14 +1,57 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { CalendarClock } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { apiGetDashboard, ApiCallError, DashboardData, IntegrationRequired } from "../../services/api";
 import { useSelectedWebsiteId } from "../../lib/selectedWebsite";
+import { PageHeader } from "../../components/ui/Card";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 
+/** Latest scan per website (the dashboard read model); opens the scan's progress and results. */
 export function ScanHistory() {
-  const navigate = useNavigate(); const [data, setData] = useState<DashboardData | null>(null); const [error, setError] = useState<Error | null>(null); const selectedId = useSelectedWebsiteId();
-  const load = async () => { setError(null); try { const result = await apiGetDashboard(selectedId); if (result.error) throw new ApiCallError(0, result.error.code, result.error.message); setData(result.data); } catch (cause) { setError(cause as Error); } };
-  useEffect(() => { void load(); }, [selectedId]); if (!data && !error) return <LoadingState label="Loading scan history…" />; if (error instanceof IntegrationRequired) return <IntegrationRequiredState feature="Scan history" />; if (error) return <ErrorState title="Unable to load scan history" message={error.message} onRetry={load} />;
-  const activeId = data?.selectedWebsite?.id; const scans = data?.websites.filter((site) => site.latest_scan_id) ?? [];
-  return <div className="mx-auto max-w-6xl p-5 md:p-8"><header className="mb-8 border-b border-slate-200 pb-6"><p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Tenant activity</p><h2 className="mt-2 flex items-center gap-2 text-2xl font-800 text-slate-950"><CalendarClock size={22} />Latest scans</h2></header>{!scans.length ? <EmptyState title="No scan results yet" description="Start a scan from a verified website to create history." /> : <div className="divide-y divide-slate-200 border-y border-slate-200">{scans.map((scan) => <button key={scan.id} onClick={() => navigate(`/websites/scan/${scan.latest_scan_id}`)} aria-current={scan.id === activeId ? "true" : undefined} className={`grid w-full grid-cols-[1fr_auto] gap-3 py-4 text-left hover:bg-slate-50 ${scan.id === activeId ? "bg-blue-50/60" : ""}`}><div><p className="font-700 text-slate-900">{scan.domain}</p><p className="mt-1 text-xs text-slate-500">{scan.completed_at ? new Date(scan.completed_at).toLocaleString() : "In progress"}</p></div><div className="text-right"><strong className="text-lg text-slate-900">{scan.overall_score ?? "—"}</strong><p className="text-[10px] uppercase text-slate-400">{scan.latest_scan_status}</p></div></button>)}</div>}</div>;
+  const navigate = useNavigate();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const selectedId = useSelectedWebsiteId();
+  const load = async () => {
+    setError(null);
+    try {
+      const result = await apiGetDashboard(selectedId);
+      if (result.error) throw new ApiCallError(0, result.error.code, result.error.message);
+      setData(result.data);
+    } catch (cause) {
+      setError(cause as Error);
+    }
+  };
+  useEffect(() => { void load(); }, [selectedId]);
+  if (!data && !error) return <LoadingState label="Loading scan history…" />;
+  if (error instanceof IntegrationRequired) return <IntegrationRequiredState feature="Scan history" />;
+  if (error) return <ErrorState title="Unable to load scan history" message={error.message} onRetry={load} />;
+  const activeId = data?.selectedWebsite?.id;
+  const scans = data?.websites.filter((site) => site.latest_scan_id) ?? [];
+  return (
+    <div>
+      <PageHeader eyebrow="Projects & Domains" title="Latest scans" subtitle="The most recent scan of each website. Open one to see its progress and results." />
+      {!scans.length ? <EmptyState title="No scan results yet" description="Start a scan from a verified website to create history." /> : (
+        <ul className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          {scans.map((scan) => (
+            <li key={scan.id} className="border-b border-slate-100 last:border-b-0">
+              <button onClick={() => navigate(`/websites/scan/${scan.latest_scan_id}`)} aria-current={scan.id === activeId ? "true" : undefined}
+                className={`grid w-full grid-cols-[1fr_auto_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${scan.id === activeId ? "bg-blue-50/60" : ""}`}>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-600 text-slate-900">{scan.domain}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{scan.completed_at ? new Date(scan.completed_at).toLocaleString() : "In progress"}</span>
+                </span>
+                <span className="text-right">
+                  <span className="block text-lg font-700 tabular-nums text-slate-900">{scan.overall_score ?? "—"}</span>
+                  {scan.latest_scan_status ? <StatusBadge status={scan.latest_scan_status} /> : null}
+                </span>
+                <ChevronRight size={16} className="text-slate-400" aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

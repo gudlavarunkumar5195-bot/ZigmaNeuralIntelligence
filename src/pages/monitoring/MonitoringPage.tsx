@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
-import { Activity } from "lucide-react"
+import { PageHeader } from "../../components/ui/Card";
+import { btn, btnDanger, buttonClass, input } from "../../components/ui/styles";
 import { useWebsites } from "../../lib/useWebsites"
 import {
   EmptyState,
@@ -106,28 +107,18 @@ export function MonitoringPage() {
       />
     )
   return (
-    <div className="mx-auto max-w-6xl animate-slide-in p-6 md:p-8">
-      <header className="hero-shell mb-6 rounded-[28px] border border-blue-100 p-6">
-        <div className="brand-chip w-fit">
-          <Activity size={12} /> Monitoring
-        </div>
-        <h2 className="mt-4 text-3xl font-800 tracking-[-0.05em] text-slate-950">
-          Website monitoring
-        </h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Persisted schedules and run health.
-        </p>
-      </header>
+    <div className="animate-slide-in">
+      <PageHeader eyebrow="Monitoring" title="Website monitoring" subtitle="Persisted schedules and run health." />
       {actionError && (
         <div
           role="alert"
-          className="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
         >
           {actionError}
         </div>
       )}
       <form
-        className="card-panel mb-6 flex flex-wrap items-end gap-3 p-4"
+        className="rounded-xl border border-slate-200 bg-white shadow-sm mb-6 flex flex-wrap items-end gap-3 p-4"
         onSubmit={(event) => {
           event.preventDefault()
           void action(() => apiCreateMonitoring({ websiteId, frequency }))
@@ -139,7 +130,7 @@ export function MonitoringPage() {
             required
             value={websiteId}
             onChange={(event) => setWebsiteId(event.target.value)}
-            className="mt-1 block rounded border p-2"
+            className={input}
           >
             <option value="">
               {websites.length ? "Select a website" : "No websites available"}
@@ -156,7 +147,7 @@ export function MonitoringPage() {
           <select
             value={frequency}
             onChange={(event) => setFrequency(event.target.value)}
-            className="mt-1 block rounded border p-2"
+            className={input}
           >
             {FREQUENCIES.map((value) => (
               <option key={value} value={value}>
@@ -175,9 +166,9 @@ export function MonitoringPage() {
       {items?.length ? (
         <section className="data-grid">
           {(items ?? []).map((item) => (
-            <article key={item.id} className="card-panel col-span-6 p-5">
+            <article key={item.id} className="rounded-xl border border-slate-200 bg-white shadow-sm col-span-6 p-5">
               <div className="flex items-center justify-between">
-                <h3 className="font-800 text-slate-900">{domainOf(item.website_id)}</h3>
+                <h3 className="text-card-title text-slate-900">{domainOf(item.website_id)}</h3>
                 <span className="text-xs font-700 uppercase text-blue-700">
                   {item.status}
                 </span>
@@ -198,7 +189,7 @@ export function MonitoringPage() {
                 <button
                   disabled={busy}
                   onClick={() => void action(() => apiRunMonitoring(item.id))}
-                  className="rounded bg-slate-900 px-3 py-2 text-xs font-700 text-white"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 text-white shadow-sm hover:bg-blue-700 font-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 h-8 px-3 text-xs"
                 >
                   Run now
                 </button>
@@ -208,7 +199,7 @@ export function MonitoringPage() {
                     onClick={() =>
                       void action(() => apiResumeMonitoring(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Resume
                   </button>
@@ -218,7 +209,7 @@ export function MonitoringPage() {
                     onClick={() =>
                       void action(() => apiPauseMonitoring(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Pause
                   </button>
@@ -233,7 +224,7 @@ export function MonitoringPage() {
                     )
                       void action(() => apiDisableMonitoring(item.id))
                   }}
-                  className="rounded border border-red-200 px-3 py-2 text-xs font-700 text-red-700"
+                  className={btnDanger}
                 >
                   Disable
                 </button>
@@ -248,7 +239,7 @@ export function MonitoringPage() {
                       }),
                     )
                   }
-                  className="rounded border px-3 py-2 text-xs font-700"
+                  className={btn}
                 >
                   {FREQUENCIES.map((value) => (
                     <option key={value} value={value}>
@@ -270,7 +261,7 @@ export function MonitoringPage() {
         <button
           disabled={busy}
           onClick={() => void loadMore()}
-          className="mt-4 rounded border px-4 py-2 text-sm font-700 disabled:opacity-60"
+          className={`${buttonClass("secondary", "md")} mt-4`}
         >
           Load more
         </button>

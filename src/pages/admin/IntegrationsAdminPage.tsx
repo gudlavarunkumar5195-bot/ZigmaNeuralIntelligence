@@ -41,7 +41,7 @@ export function IntegrationsAdminPage() {
   if (!items) return <LoadingState label="Loading integrations…" />;
 
   return (
-    <div className="mx-auto max-w-5xl p-6 md:p-10">
+    <div className="max-w-5xl">
       <PageHeader eyebrow="Administration" title="Integrations & API keys">
         <button type="button" className={btn} onClick={() => void load()}>Refresh</button>
       </PageHeader>

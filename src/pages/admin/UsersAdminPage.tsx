@@ -44,7 +44,7 @@ export function UsersAdminPage() {
   if (error) return <ErrorState title={(error as { code?: string }).code === "PLATFORM_ADMIN_REQUIRED" ? "Platform administrators only" : "Unable to load users"} message={error.message} onRetry={() => void load()} />;
 
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
+    <div>
       <PageHeader eyebrow="Administration" title="Users & access" />
       <CredentialGenerator />
 

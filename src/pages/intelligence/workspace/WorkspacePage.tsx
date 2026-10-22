@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { NavLink, useLocation, useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
+import { PageHeader } from "../../../components/ui/Card";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/DataState";
+import { Badge, RouteTabs } from "../../../components/ui/Primitives";
 import { setSelectedWebsiteId } from "../../../lib/selectedWebsite";
 import type { WsRangeParams } from "../../../services/api";
 import { useWebsites } from "../../search/research/shared";
@@ -62,29 +64,18 @@ export function WorkspacePage() {
   const site = websites.find((w) => w.id === websiteId);
   const qs = location.search;
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Intelligence</p>
-          <h2 className="mt-2 text-2xl font-800 text-slate-950">SEO workspace</h2>
-          {site ? <p className="mt-1 text-xs text-slate-600">{site.domain} · {site.verified ? "ownership verified" : "ownership not verified"}</p> : null}
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-xs text-slate-700">Website
-            <select value={websiteId} onChange={(e) => { setWebsiteId(e.target.value); setSelectedWebsiteId(e.target.value); }} className={input}>{websites.map((w) => <option key={w.id} value={w.id}>{w.domain}</option>)}</select>
-          </label>
+    <div>
+      <PageHeader eyebrow="Overview" title="SEO workspace"
+        subtitle={site ? <>{site.domain} · {site.verified ? <Badge tone="success" icon>Ownership verified</Badge> : <Badge tone="warning" icon>Ownership not verified</Badge>}</> : undefined}
+        action={<label className="text-xs font-600 text-slate-700">Website
+          <select value={websiteId} onChange={(e) => { setWebsiteId(e.target.value); setSelectedWebsiteId(e.target.value); }} className={input}>{websites.map((w) => <option key={w.id} value={w.id}>{w.domain}</option>)}</select>
+        </label>}>
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
           <RangeControls key={`${range.preset}-${range.from}-${range.to}`} range={range} onChange={setRange} />
         </div>
-      </div>
-      <nav aria-label="Workspace sections" className="mt-4 flex flex-wrap gap-1 border-b border-slate-200">
-        {WORKSPACE_TABS.map((t) => (
-          <NavLink key={t.id} to={`${t.id === "overview" ? "/intelligence/workspace" : `/intelligence/workspace/${t.id}`}${qs}`} end aria-current={tab === t.id ? "page" : undefined}
-            className={`-mb-px border-b-2 px-3 py-2 text-xs font-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${tab === t.id ? "border-blue-600 text-blue-800" : "border-transparent text-slate-600 hover:text-slate-900"}`}>
-            {t.label}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="mt-4" key={websiteId}>
+      </PageHeader>
+      <RouteTabs label="Workspace sections" current={tab} tabs={WORKSPACE_TABS.map((t) => ({ id: t.id, label: t.label, to: `${t.id === "overview" ? "/intelligence/workspace" : `/intelligence/workspace/${t.id}`}${qs}` }))} />
+      <div className="mt-5" key={websiteId}>
         {tab === "overview" && <OverviewTab websiteId={websiteId} range={range} />}
         {tab === "insights" && <InsightsTab websiteId={websiteId} range={range} />}
         {tab === "actions" && <ActionsTab websiteId={websiteId} />}

@@ -16,6 +16,8 @@ import { useSelectedWebsiteId } from "../../lib/selectedWebsite";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
 import { ScoreRing } from "../../components/ui/ScoreRing";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { PageHeader } from "../../components/ui/Card";
+import { buttonClass } from "../../components/ui/styles";
 
 function verificationInstructions(site: WebsiteRecord): string {
   const token = site.verification_token ?? "<token>";
@@ -98,20 +100,15 @@ export function MyWebsites() {
   if (error) return <ErrorState title="Unable to load websites" message={error.message} onRetry={load} />;
 
   return (
-    <div className="mx-auto max-w-6xl p-5 md:p-8 animate-slide-in">
-      <header className="mb-8 flex items-end justify-between border-b border-slate-200 pb-6">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Tenant inventory</p>
-          <h2 className="mt-2 text-2xl font-800 text-slate-950">Websites</h2>
-        </div>
-        <button onClick={() => navigate("/websites/add")} className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-4 py-2 text-sm font-700 text-white">
-          <Plus size={15} />
+    <div className="animate-slide-in">
+      <PageHeader eyebrow="Projects & Domains" title="Websites" subtitle="Your organization's websites, their ownership verification and latest scan."
+        action={<button onClick={() => navigate("/websites/add")} className={buttonClass("primary", "md")}>
+          <Plus size={15} aria-hidden="true" />
           Add website
-        </button>
-      </header>
+        </button>} />
 
       {actionError && (
-        <p role="alert" className="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{actionError}</p>
+        <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{actionError}</p>
       )}
 
       {!data?.websites.length ? (
@@ -119,15 +116,15 @@ export function MyWebsites() {
           title="No websites connected"
           description="Add a verified website to begin collecting intelligence."
           action={
-            <button onClick={() => navigate("/websites/add")} className="rounded bg-primary px-3 py-2 text-sm font-700 text-white">
+            <button onClick={() => navigate("/websites/add")} className={buttonClass("primary", "md")}>
               Add Website
             </button>
           }
         />
       ) : (
-        <div className="divide-y divide-slate-200 border-y border-slate-200">
+        <div className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           {data.websites.map((site) => (
-            <article key={site.id} aria-current={site.id === data.selectedWebsite?.id ? "true" : undefined} className={`flex flex-col flex-wrap gap-4 py-5 sm:flex-row sm:items-center ${site.id === data.selectedWebsite?.id ? "bg-blue-50/40" : ""}`}>
+            <article key={site.id} aria-current={site.id === data.selectedWebsite?.id ? "true" : undefined} className={`flex flex-col flex-wrap gap-4 px-4 py-4 sm:flex-row sm:items-center md:px-5 ${site.id === data.selectedWebsite?.id ? "bg-blue-50/40" : ""}`}>
               <div className="flex items-center gap-4">
                 <div>
                   {site.overall_score === null ? (
@@ -138,8 +135,8 @@ export function MyWebsites() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <Globe2 size={15} className="text-blue-600" />
-                    <h3 className="font-800 text-slate-900">{site.domain}</h3>
+                    <Globe2 size={15} className="text-blue-600" aria-hidden="true" />
+                    <h2 className="text-sm font-700 text-slate-900">{site.domain}</h2>
                     <a href={site.url} target="_blank" rel="noreferrer" aria-label={`Open ${site.domain}`}>
                       <ExternalLink size={13} className="text-slate-400" />
                     </a>
@@ -160,7 +157,7 @@ export function MyWebsites() {
                 {site.latest_scan_id && (
                   <button
                     onClick={() => navigate(`/websites/scan/${site.latest_scan_id}`)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-700 text-slate-700 shadow-sm hover:bg-slate-50"
+                    className={buttonClass("secondary", "md")}
                   >
                     Open latest scan
                   </button>
@@ -168,7 +165,7 @@ export function MyWebsites() {
                 <button
                   disabled={!site.verified || busyId === site.id}
                   onClick={() => void startScan(site.id)}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-700 text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={buttonClass("secondary", "md")}
                 >
                   <ScanLine size={14} />
                   {site.latest_scan_id ? "New scan" : "Start scan"}
@@ -176,7 +173,7 @@ export function MyWebsites() {
                 {!site.verified && (
                   <button
                     onClick={() => setVerifyingId(verifyingId === site.id ? null : site.id)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 shadow-sm hover:bg-amber-100"
+                    className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[13px] font-600 text-amber-800 shadow-sm hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                   >
                     <ShieldCheck size={14} />
                     Verify ownership
@@ -187,7 +184,7 @@ export function MyWebsites() {
                 <p className="basis-full text-xs text-amber-800">Scans are disabled until ownership of this website is verified.</p>
               )}
               {!site.verified && verifyingId === site.id && (
-                <div className="basis-full rounded-md border border-slate-200 bg-slate-50 p-4 text-sm">
+                <div className="basis-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
                   {records[site.id]?.verification_token ? (
                     <>
                       <p className="text-xs font-700 uppercase tracking-[.12em] text-slate-500">Verification token ({records[site.id].verification_method ?? "html"})</p>
@@ -200,7 +197,7 @@ export function MyWebsites() {
                   <button
                     disabled={busyId === site.id}
                     onClick={() => void verify(site.id)}
-                    className="mt-3 rounded-md bg-slate-950 px-3 py-2 text-xs font-700 text-white disabled:opacity-60"
+                    className={`${buttonClass("primary", "sm")} mt-3`}
                   >
                     {busyId === site.id ? "Checking…" : "Check ownership"}
                   </button>

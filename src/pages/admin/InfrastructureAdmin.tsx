@@ -6,7 +6,8 @@
 // never returns secrets. There is deliberately no option to relax TLS.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { NavLink } from "react-router"
+import { PageHeader } from "../../components/ui/Card";
+import { RouteTabs } from "../../components/ui/Primitives";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -107,28 +108,9 @@ const TABS = [
 
 function InfraLayout({ title, description, actions, children }: { title: string; description: string; actions?: ReactNode; children: ReactNode }) {
   return (
-    <div className="mx-auto max-w-6xl animate-slide-in p-6 md:p-8">
-      <div className="mb-1 font-mono text-[10px] font-600 uppercase tracking-[0.14em] text-slate-400">Administration · Infrastructure</div>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-800 tracking-[-0.05em] text-foreground">{title}</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
-        </div>
-        {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
-      </div>
-      <nav aria-label="Infrastructure sections" className="mb-6 flex gap-1 overflow-x-auto border-b border-border">
-        {TABS.map((t) => (
-          <NavLink
-            key={t.path}
-            to={t.path}
-            className={({ isActive }) =>
-              `whitespace-nowrap border-b-2 px-3 py-2 text-sm font-600 transition-colors ${isActive ? "border-blue-500 text-blue-600" : "border-transparent text-muted-foreground hover:text-foreground"}`
-            }
-          >
-            {t.label}
-          </NavLink>
-        ))}
-      </nav>
+    <div className="animate-slide-in">
+      <PageHeader eyebrow="Administration · Infrastructure" title={title} subtitle={description} action={actions ? <div className="flex flex-wrap gap-2">{actions}</div> : undefined} />
+      <div className="mb-6"><RouteTabs label="Infrastructure sections" tabs={TABS.map((t) => ({ id: t.path, label: t.label, to: t.path }))} /></div>
       {children}
     </div>
   )

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { NavLink, useParams } from "react-router";
+import { useParams } from "react-router";
+import { PageHeader } from "../../../components/ui/Card";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../../components/ui/DataState";
+import { RouteTabs } from "../../../components/ui/Primitives";
+import { input } from "../../../components/ui/styles";
 import { apiBacklinkSummary, IntegrationRequired, type BacklinkSummary } from "../../../services/api";
 import { useWebsites } from "../research/shared";
 import { ChangesTab, DomainsTab, GapTab, ImportsTab, LinksTab, OpportunitiesTab, OverviewTab, SourcesTab } from "./tabs";
@@ -48,40 +51,22 @@ export function BacklinkIntelligencePage() {
   if (websites.length === 0) return <EmptyState title="No websites yet" description="Add and verify a website to analyse its backlinks." />;
 
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Search data</p>
-          <h2 className="mt-2 text-2xl font-800 text-slate-950">Backlink intelligence</h2>
-        </div>
-        <label className="text-xs text-slate-700">
+    <div>
+      <PageHeader eyebrow="SEO Research" title="Backlink intelligence" subtitle="Backlinks and referring domains from authorized imports, with live link checks, change history and competitor gaps. Coverage is never presented as internet-wide."
+        action={<label className="text-xs font-600 text-slate-700">
           Website
-          <select value={websiteId} onChange={(e) => setWebsiteId(e.target.value)} className="mt-1 block rounded border border-slate-300 px-2 py-1 text-sm">
+          <select value={websiteId} onChange={(e) => setWebsiteId(e.target.value)} className={input}>
             {websites.map((w) => <option key={w.id} value={w.id}>{w.domain}</option>)}
           </select>
-        </label>
-      </div>
-
-      <nav aria-label="Backlink sections" className="mt-4 flex flex-wrap gap-1 border-b border-slate-200">
-        {BACKLINK_TABS.map((t) => (
-          <NavLink
-            key={t.id}
-            to={t.id === "overview" ? "/search/backlinks" : `/search/backlinks/${t.id}`}
-            end
-            aria-current={tab === t.id ? "page" : undefined}
-            className={`-mb-px rounded-t-md border-b-2 px-3 py-2 text-xs font-700 ${tab === t.id ? "border-blue-600 text-blue-800" : "border-transparent text-slate-600 hover:text-slate-900"}`}
-          >
-            {t.label}
-          </NavLink>
-        ))}
-      </nav>
+        </label>} />
+      <RouteTabs label="Backlink sections" current={tab} tabs={BACKLINK_TABS.map((t) => ({ id: t.id, label: t.label, to: t.id === "overview" ? "/search/backlinks" : `/search/backlinks/${t.id}` }))} />
 
       {error ? (
-        <ErrorState title="Unable to load backlink data" message={error.message} onRetry={load} />
+        <div className="mt-5"><ErrorState title="Unable to load backlink data" message={error.message} onRetry={load} /></div>
       ) : !summary ? (
         <LoadingState label="Loading backlink data…" />
       ) : (
-        <div className="mt-4">
+        <div className="mt-5">
           {tab !== "imports" && tab !== "sources" && summary.own?.dataset ? <DatasetBanner summary={summary} /> : null}
           {tab === "overview" && <OverviewTab websiteId={websiteId} summary={summary} onChanged={load} />}
           {tab === "links" && <LinksTab websiteId={websiteId} summary={summary} />}
@@ -100,7 +85,7 @@ export function BacklinkIntelligencePage() {
 function DatasetBanner({ summary }: { summary: BacklinkSummary }) {
   const d = summary.own!.dataset;
   return (
-    <div className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+    <div className="mb-4 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-700 shadow-sm">
       Your backlink data: <strong>{d.source_label}</strong>, {d.exported_at ? `exported ${d.exported_at}` : `imported ${new Date(d.retrieved_at).toLocaleDateString()}`} · {d.coverage === "complete" ? "declared complete" : d.coverage === "partial" ? "partial (a sample)" : "coverage unknown"}
       {d.observed_from ? ` · links seen ${d.observed_from} – ${d.observed_to}` : ""}
       {d.stale ? <span role="status" className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-700 text-amber-900">Older than {summary.staleAfterDays} days: import a fresh export</span> : null}

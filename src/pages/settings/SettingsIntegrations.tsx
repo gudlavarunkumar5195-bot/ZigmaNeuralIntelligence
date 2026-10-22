@@ -139,7 +139,7 @@ export function SettingsIntegrations() {
               type="button"
               onClick={() => void connect()}
               disabled={!config.configured || connecting}
-              className="rounded-md bg-slate-950 px-3 py-2 text-sm font-700 text-white disabled:opacity-50"
+              className="rounded-lg bg-blue-600 shadow-sm hover:bg-blue-700 px-3 py-2 text-sm font-700 text-white disabled:opacity-50"
             >
               {connecting ? "Opening Google…" : integrations.length ? "Connect another Google account" : "Connect Google Search Console"}
             </button>
@@ -294,7 +294,7 @@ function LinkWebsiteForm({ integration, websites, onLinked }: { integration: Int
       ) : null}
       {error ? <p role="alert" className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-800">{error}</p> : null}
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button type="submit" disabled={!websiteId || !siteUrl || busy} className="rounded bg-slate-900 px-3 py-1.5 text-xs font-700 text-white disabled:opacity-50">
+        <button type="submit" disabled={!websiteId || !siteUrl || busy} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 text-white shadow-sm hover:bg-blue-700 font-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 h-8 px-3 text-xs">
           {busy ? "Linking…" : "Link property"}
         </button>
         <Link to="/search/performance" className="text-xs font-600 text-blue-700 underline">Open Search performance</Link>
