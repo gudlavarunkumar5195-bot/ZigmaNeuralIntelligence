@@ -10,7 +10,6 @@ vi.mock("../services/api", async () => {
 
 import { SettingsTeam } from "../pages/settings/SettingsTeam";
 import { SettingsSecurity } from "../pages/settings/SettingsSecurity";
-import { SettingsIntegrations } from "../pages/settings/SettingsIntegrations";
 import { SettingsWorkspace } from "../pages/settings/SettingsWorkspace";
 
 afterEach(cleanup);
@@ -20,12 +19,13 @@ describe("settings pages", () => {
   it.each([
     ["team", SettingsTeam],
     ["security", SettingsSecurity],
-    ["integrations", SettingsIntegrations],
   ])("%s shows an honest unavailable state and no fabricated data", (_n, Page) => {
     wrap(<Page />);
     expect(screen.getByTestId("settings-unavailable").textContent).toContain("Not available yet");
     expect(document.body.textContent).not.toMatch(/Ava Thompson|12 active|Enabled for owners|Rate limiting|200\/min/);
   });
+
+  // Integrations is a real page now (Google Search Console): see search-console-pages.test.tsx.
 
   it("workspace shows real account data from /auth/me", async () => {
     wrap(<SettingsWorkspace />);

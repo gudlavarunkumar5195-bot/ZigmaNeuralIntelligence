@@ -179,10 +179,11 @@ describe("Search performance", () => {
 
   it("shows real totals, the comparison, freshness labels and missing-day warnings", async () => {
     renderPage();
-    expect(await screen.findByText("270")).toBeTruthy();
-    expect(screen.getByText("2,700")).toBeTruthy();
-    expect(screen.getByText("10.0%")).toBeTruthy();
-    expect(screen.getByText("4.2")).toBeTruthy();
+    const kpis = await screen.findByLabelText("Totals for the selected range");
+    expect(within(kpis).getByText("270")).toBeTruthy();
+    expect(within(kpis).getByText("2,700")).toBeTruthy();
+    expect(within(kpis).getByText("10.0%")).toBeTruthy();
+    expect(within(kpis).getByText("4.2")).toBeTruthy();
     expect(screen.getByText(/vs previous: \+70 \(\+35\.0%\)/)).toBeTruthy();
     expect(screen.getByText(/-0\.8 \(lower is better\)/)).toBeTruthy();
     expect(screen.getByText(/Final data through/).textContent).toMatch(/2030-01-28.*2030-01-29 are preliminary/);
