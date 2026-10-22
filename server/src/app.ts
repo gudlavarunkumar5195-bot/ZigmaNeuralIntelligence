@@ -29,6 +29,7 @@ import { dashboardRoutes } from "./routes/dashboard.js";
 import { reportRoutes } from "./routes/reports.js";
 import { crossDomainRoutes } from "./routes/cross-domain.js";
 import { monitoringRoutes } from "./routes/monitoring.js";
+import { sanitizeLoggedUrl } from "./http/log-redaction.js";
 
 // server/src (tsx) or server/dist (built) -> ../../dist is the Vite artifact.
 const FRONTEND_DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist");
@@ -38,6 +39,12 @@ export async function buildApp() {
     logger: {
       level: config.NODE_ENV === "production" ? "info" : "debug",
       redact: ["req.headers.authorization", "req.headers.cookie", "res.headers[\"set-cookie\"]"],
+      // OAuth callbacks carry a one-time code and state in the query string.
+      serializers: {
+        req: (req: { method?: string; url?: string; hostname?: string; ip?: string; id?: string }) => ({
+          method: req.method, url: sanitizeLoggedUrl(req.url), hostname: req.hostname, remoteAddress: req.ip, reqId: req.id,
+        }),
+      },
       transport: config.NODE_ENV !== "production"
         ? { target: "pino-pretty", options: { colorize: true } }
         : undefined,

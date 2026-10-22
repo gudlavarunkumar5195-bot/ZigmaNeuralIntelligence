@@ -210,3 +210,16 @@ describe("property types and website matching", () => {
     expect(propertyCoversWebsite("https://example.com/", "not a url")).toBe(false);
   });
 });
+
+describe("request log redaction", () => {
+  it("removes OAuth codes, state and tokens from logged URLs and leaves other URLs alone", async () => {
+    const { sanitizeLoggedUrl } = await import("../http/log-redaction.js");
+    const out = sanitizeLoggedUrl("/api/v1/integrations/google/oauth/callback?state=abc123&code=4/0AeanS-secret&scope=x")!;
+    expect(out).not.toContain("abc123");
+    expect(out).not.toContain("4/0AeanS-secret");
+    expect(out).toContain("scope=x");
+    expect(sanitizeLoggedUrl("/api/v1/websites?page=2")).toBe("/api/v1/websites?page=2");
+    expect(sanitizeLoggedUrl("/health")).toBe("/health");
+    expect(sanitizeLoggedUrl(undefined)).toBeUndefined();
+  });
+});
