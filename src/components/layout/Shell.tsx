@@ -47,6 +47,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Performance", path: "/intelligence/performance" },
       { label: "Accessibility", path: "/intelligence/accessibility" },
       { label: "Technical Health", path: "/intelligence/technical-health" },
+      { label: "Content", path: "/intelligence/content" },
     ],
   },
   {
@@ -397,6 +398,7 @@ function TopBar() {
     if (path === "/intelligence/performance") return "Performance";
     if (path === "/intelligence/accessibility") return "Accessibility";
     if (path === "/intelligence/technical-health") return "Technical Health";
+    if (path === "/intelligence/content" || path.startsWith("/intelligence/content/")) return "Content";
     if (path === "/search/keywords") return "Keywords";
     if (path === "/search/rankings" || path.startsWith("/search/rankings/")) return "Rankings";
     if (path === "/search/backlinks" || path.startsWith("/search/backlinks/")) return "Backlinks";

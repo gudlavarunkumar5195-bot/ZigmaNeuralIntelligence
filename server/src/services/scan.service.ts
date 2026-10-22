@@ -1454,6 +1454,15 @@ async function processNextQueuedScan(): Promise<void> {
       })
   }
 
+  // Content analysis (one queued run per tick; leased, recoverable).
+  if (!workerStopping) {
+    await import("./content.service.js")
+      .then(({ processContentTick }) => processContentTick())
+      .catch((err: unknown) => {
+        console.error("[worker] Content analysis tick failed:", (err as Error).message)
+      })
+  }
+
   // Rank tracking collection (only runs when a SERP provider is configured; one bounded slice per tick).
   if (!workerStopping) {
     await import("./rank-tracking.service.js")

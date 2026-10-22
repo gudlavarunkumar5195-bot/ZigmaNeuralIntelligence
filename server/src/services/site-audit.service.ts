@@ -1,3 +1,4 @@
+import { upsertContentInventory } from "./content.service.js";
 import { query, withTransaction, type Queryable } from "../db/client.js";
 import { issueFingerprint, ruleInfo, type CrawlIssue, type CrawlPage, type CrawlResult, type SeoCategory } from "../scanner/crawl.js";
 import { decodeCursor, encodeCursor } from "../http/pagination.js";
@@ -131,6 +132,9 @@ export async function persistCrawl(
            ORDER BY created_at DESC, scan_id DESC LIMIT $3)`,
     [orgId, websiteId, KEEP_CRAWLS_PER_WEBSITE],
   );
+
+  // Persistent content inventory (and, for a completed crawl, one content analysis), in the same transaction.
+  await upsertContentInventory(tx, { scanId, orgId, websiteId, result, completed: input.completed });
 
   if (!input.completed) return { detected: 0, reopened: 0, fixed: 0 };
   return reconcileIssues(tx, { scanId, orgId, websiteId, result, issues });

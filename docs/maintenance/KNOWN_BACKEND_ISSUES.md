@@ -11,6 +11,12 @@
 | 5 | Deactivating a user never revoked refresh tokens (`revokeAllUserTokens` had no caller) | Code search | There was no deactivation flow | Admin deactivation revokes all refresh tokens in the same transaction. Org routes already re-check `users.active` on every request | Integration: "deactivation revokes sessions…" |
 | 6 | `users` had no last-login information | Schema | Not recorded | `users.last_login_at` (034), set on successful login | Integration: users list |
 
+### Fixed in Phase 7
+
+| Defect | Evidence | Root cause | Change | Test |
+| --- | --- | --- | --- | --- |
+| Two concurrent confirmed "Generate Login Credentials" requests could both replace the password; the first password shown was silently invalid | The full gate failed once: `[200, 200, 409]` instead of `[200, 409, 409]` | The duplicate guard reads the `admin_credentials_generated` audit event, but the route wrote it after the transaction committed, so a waiting request could take the lock before the event existed | The event is written inside the locked transaction (`platform/users.ts`); the route no longer writes it | `admin-control-center.integration.test.ts` › concurrent confirmed requests (three consecutive passes) |
+
 ## Open (documented, not fixed in this phase)
 
 | Issue | Impact | Why not fixed now | Suggested fix |

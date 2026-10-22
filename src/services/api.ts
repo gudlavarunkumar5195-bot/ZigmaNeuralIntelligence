@@ -2371,3 +2371,253 @@ export async function apiRankExport(projectId: string, kind: "rankings" | "histo
   const disposition = res.headers.get("content-disposition") ?? ""
   return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `rank-${kind}.csv` }
 }
+
+// ─── Content intelligence (/websites/:id/content) ────────────────────────────
+// Inventory from the crawler, metrics from Search Console; nothing estimated.
+
+export type ContentSeverity = "high" | "medium" | "low" | "info"
+
+export interface ContentRule {
+  id: string
+  category: string
+  severity: ContentSeverity
+  heuristic: boolean
+  title: string
+}
+
+export interface ContentOverview {
+  inventory: { total: number; byState: Record<string, number>; lastCrawledAt: string | null }
+  findingsOpen: Partial<Record<ContentSeverity, number>>
+  topOpportunities: Array<{ id: string; kind: string; title: string; priority: number; confidence: string; effort: string; status: string }>
+  runs: ContentRun[]
+  coverage: { searchConsole: boolean; pagesWithSearchMetrics: number | null; pagesAnalyzable: number }
+  ai: { available: boolean }
+  rules: ContentRule[]
+  rulesVersion: string
+  thresholds: Record<string, number>
+}
+
+export interface ContentRun {
+  id: string
+  scan_id: string | null
+  trigger: "crawl" | "manual"
+  status: "queued" | "running" | "completed" | "failed" | "cancelled"
+  rules_version: string
+  pages_analyzed: number
+  findings_open: number
+  findings_new: number
+  findings_resolved: number
+  opportunities: number
+  error: string | null
+  created_at: string
+  finished_at: string | null
+}
+
+export interface ContentPageRow {
+  id: string
+  url: string
+  crawl_state: string
+  http_status: number | null
+  indexable: boolean | null
+  title: string | null
+  h1: string | null
+  word_count: number | null
+  inlinks: number | null
+  last_crawled_at: string
+  content_changed_at: string | null
+  crawl_error: string | null
+  open_findings: number
+  search: null | { clicks: number; impressions: number; position: number | null; noRows?: boolean }
+}
+
+export interface ContentFinding {
+  id: string
+  page_id: string | null
+  url: string | null
+  rule_id: string
+  rule_version: string
+  ruleTitle: string | null
+  category: string
+  severity: ContentSeverity
+  heuristic: boolean
+  status: "open" | "in_progress" | "resolved" | "ignored"
+  evidence: Record<string, unknown>
+  explanation: string
+  recommendation: string
+  ignore_reason: string | null
+  first_detected_at: string
+  last_detected_at: string
+  resolved_at: string | null
+}
+
+export interface ContentFactor {
+  name: string
+  weight: number
+  value: number | null
+  explanation: string
+}
+
+export interface ContentOpportunity {
+  id: string
+  kind: string
+  page_id: string | null
+  url: string | null
+  topic_id: string | null
+  topic: string | null
+  title: string
+  evidence: Record<string, unknown>
+  problem: string
+  action: string
+  priority: number
+  priority_factors: ContentFactor[]
+  confidence: "high" | "medium" | "low"
+  confidence_basis: string
+  missing_data: string[]
+  effort: "small" | "medium" | "large"
+  status: "open" | "in_progress" | "done" | "dismissed" | "obsolete"
+  first_detected_at: string
+  last_detected_at: string
+  completed_at: string | null
+}
+
+export interface ContentTopic {
+  id: string
+  name: string
+  nameLocked: boolean
+  source: string
+  terms: string[]
+  pages: number
+  coveringPages: number
+  queries: number
+  queryImpressions: number
+  competitorGaps: number
+}
+
+export interface ContentBriefBody {
+  targetTopic: string
+  intent: { value: string | null; rule: string | null; note: string }
+  primaryKeyword: string | null
+  relatedKeywords: string[]
+  existingPages: Array<{ url: string; title: string | null }>
+  suggestedTitle: string
+  suggestedMetaDescription: string
+  h1: string
+  outline: Array<{ heading: string; points: string[] }>
+  questions: string[]
+  internalLinks: Array<{ url: string; anchorHint: string }>
+  sources: Array<{ label: string; url: string | null }>
+  missingEvidence: string[]
+  researchQuestions: string[]
+  checklist: Array<{ item: string; done: boolean }>
+}
+
+export interface ContentBrief {
+  brief: { id: string; title: string; status: "draft" | "in_review" | "approved"; current_revision: number; page_url: string | null; topic: string | null; approved_at: string | null; updated_at: string }
+  body: ContentBriefBody
+  source: "deterministic" | "ai_suggestion" | "edit"
+  aiModel: string | null
+  revisions: Array<{ revision: number; source: string; ai_model: string | null; note: string | null; created_at: string }>
+}
+
+const ct = (websiteId: string, path: string) => `${sitePath(websiteId)}/content${path}`
+const cj = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+
+export async function apiContentOverview(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.overview")
+  return apiFetch<ContentOverview>(ct(websiteId, "/overview"))
+}
+export async function apiContentPages(websiteId: string, params: { search?: string; state?: string; indexable?: "true" | "false"; severity?: string; sort?: string; offset?: number; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("content.pages")
+  return apiFetch<ContentPageRow[]>(ct(websiteId, `/pages${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<ContentPageRow[], { total: number; offset: number; limit: number; searchConsole: boolean }>
+}
+export async function apiContentPage(websiteId: string, pageId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.page")
+  return apiFetch<{ page: Record<string, unknown> & { url: string; headings: Array<{ level: number; text: string }> }; findings: ContentFinding[]; opportunities: Array<{ id: string; kind: string; title: string; priority: number; status: string }>; topics: Array<{ id: string; name: string; assignment: string }> }>(ct(websiteId, `/pages/${encodeURIComponent(pageId)}`))
+}
+export async function apiContentRuns(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.runs")
+  return apiFetch<ContentRun[]>(ct(websiteId, "/runs"))
+}
+export async function apiContentStartRun(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.run")
+  return apiFetch<{ run: ContentRun; deduplicated: boolean }>(ct(websiteId, "/runs"), cj("POST"))
+}
+export async function apiContentFindings(websiteId: string, params: { status?: string; severity?: string; category?: string; pageId?: string; cursor?: string | null; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("content.findings")
+  return apiFetch<ContentFinding[]>(ct(websiteId, `/findings${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<ContentFinding[], { nextCursor: string | null }>
+}
+export async function apiContentUpdateFinding(websiteId: string, findingId: string, body: { status: "open" | "in_progress" | "ignored"; reason?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("content.finding.update")
+  return apiFetch<{ from: string; to: string }>(ct(websiteId, `/findings/${encodeURIComponent(findingId)}`), cj("PATCH", body))
+}
+export async function apiContentFindingHistory(websiteId: string, findingId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.finding.history")
+  return apiFetch<Array<{ event: string; from_status: string | null; to_status: string | null; note: string | null; created_at: string }>>(ct(websiteId, `/findings/${encodeURIComponent(findingId)}/history`))
+}
+export async function apiContentOpportunities(websiteId: string, params: { status?: string; kind?: string; minPriority?: number; offset?: number; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("content.opportunities")
+  return apiFetch<ContentOpportunity[]>(ct(websiteId, `/opportunities${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<ContentOpportunity[], { total: number }>
+}
+export async function apiContentOpportunity(websiteId: string, id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.opportunity")
+  return apiFetch<{ opportunity: ContentOpportunity & { baseline: Record<string, unknown> | null }; events: Array<{ event: string; from_status: string | null; to_status: string | null; feedback: string | null; note: string | null; created_at: string }>; outcome: null | { note: string; baseline: Record<string, unknown>; latest: Record<string, unknown> | null; enoughTimePassed: boolean } }>(ct(websiteId, `/opportunities/${encodeURIComponent(id)}`))
+}
+export async function apiContentUpdateOpportunity(websiteId: string, id: string, body: { status?: "open" | "in_progress" | "done" | "dismissed"; feedback?: "useful" | "not_useful"; note?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("content.opportunity.update")
+  return apiFetch<Awaited<ReturnType<typeof apiContentOpportunity>>["data"]>(ct(websiteId, `/opportunities/${encodeURIComponent(id)}`), cj("PATCH", body))
+}
+export async function apiContentTopics(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.topics")
+  return apiFetch<ContentTopic[]>(ct(websiteId, "/topics"))
+}
+export async function apiContentTopic(websiteId: string, topicId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.topic")
+  return apiFetch<{ topic: { id: string; name: string; name_locked: boolean; terms: string[] }; coverage: null | { queryImpressions: number; queries: Array<{ query: string; impressions: number; clicks: number }>; pages: Array<{ pageId: string; url: string; title: string | null; covers: boolean }>; competitorGaps: Array<{ keyword: string; competitor: string; position: number; date: string }> }; members: Array<{ member_type: string; member_key: string; assignment: string; excluded: boolean }>; overlap: null | { pages: string[]; note: string } }>(ct(websiteId, `/topics/${encodeURIComponent(topicId)}`))
+}
+export async function apiContentRenameTopic(websiteId: string, topicId: string, name: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.topic.rename")
+  return apiFetch<{ renamed: boolean }>(ct(websiteId, `/topics/${encodeURIComponent(topicId)}`), cj("PATCH", { name }))
+}
+export async function apiContentTopicMember(websiteId: string, topicId: string, body: { memberType: "page" | "query"; memberKey: string; action: "assign" | "exclude" }) {
+  if (IS_DEMO) throw new IntegrationRequired("content.topic.member")
+  return apiFetch<{ assigned?: boolean; excluded?: boolean }>(ct(websiteId, `/topics/${encodeURIComponent(topicId)}/members`), cj("POST", body))
+}
+export async function apiContentBriefs(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.briefs")
+  return apiFetch<Array<{ id: string; title: string; status: string; current_revision: number; page_url: string | null; topic: string | null; updated_at: string }>>(ct(websiteId, "/briefs"))
+}
+export async function apiContentCreateBrief(websiteId: string, body: { pageId?: string; topicId?: string; opportunityId?: string; title?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("content.brief.create")
+  return apiFetch<ContentBrief>(ct(websiteId, "/briefs"), cj("POST", body))
+}
+export async function apiContentBrief(websiteId: string, briefId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.brief")
+  return apiFetch<ContentBrief>(ct(websiteId, `/briefs/${encodeURIComponent(briefId)}`))
+}
+export async function apiContentSaveBrief(websiteId: string, briefId: string, body: { baseRevision: number; body: ContentBriefBody; title?: string; note?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("content.brief.save")
+  return apiFetch<ContentBrief>(ct(websiteId, `/briefs/${encodeURIComponent(briefId)}`), cj("PUT", body))
+}
+export async function apiContentBriefStatus(websiteId: string, briefId: string, status: "draft" | "in_review" | "approved") {
+  if (IS_DEMO) throw new IntegrationRequired("content.brief.status")
+  return apiFetch<ContentBrief>(ct(websiteId, `/briefs/${encodeURIComponent(briefId)}/status`), cj("POST", { status }))
+}
+export async function apiContentBriefAi(websiteId: string, briefId: string, baseRevision: number) {
+  if (IS_DEMO) throw new IntegrationRequired("content.brief.ai")
+  return apiFetch<ContentBrief>(ct(websiteId, `/briefs/${encodeURIComponent(briefId)}/ai-suggestions`), cj("POST", { baseRevision }))
+}
+export async function apiContentExport(websiteId: string, kind: "pages" | "findings" | "opportunities", params: { status?: string; severity?: string } = {}): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("content.export")
+  const res = await fetch(`${config.apiBaseUrl}${ct(websiteId, `/export${queryString({ kind, ...params })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: res.status === 403 ? "Your role cannot export content data." : message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `content-${kind}.csv` }
+}

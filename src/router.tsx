@@ -62,6 +62,7 @@ const ResetPasswordPage = lazy(() => import("./pages/auth/ResetPasswordPage").th
 const ControlCenterPage = lazy(() => import("./pages/admin/ControlCenterPage").then(({ ControlCenterPage }) => ({ default: ControlCenterPage })));
 const IntegrationsAdminPage = lazy(() => import("./pages/admin/IntegrationsAdminPage").then(({ IntegrationsAdminPage }) => ({ default: IntegrationsAdminPage })));
 const UsersAdminPage = lazy(() => import("./pages/admin/UsersAdminPage").then(({ UsersAdminPage }) => ({ default: UsersAdminPage })));
+const ContentPage = lazy(() => import("./pages/intelligence/content/ContentPage").then(({ ContentPage }) => ({ default: ContentPage })));
 const PlaceholderPage = lazy(() => import("./pages/PlaceholderPage").then(({ PlaceholderPage }) => ({ default: PlaceholderPage })));
 
 function readToken(): string | null {
@@ -106,6 +107,8 @@ export const router = createBrowserRouter([
       { path: "intelligence/performance", Component: PerformancePage },
       { path: "intelligence/accessibility", Component: AccessibilityPage },
       { path: "intelligence/technical-health", Component: TechnicalHealthPage },
+      { path: "intelligence/content", Component: ContentPage },
+      { path: "intelligence/content/:tab", Component: ContentPage },
       { path: "search/performance", Component: SearchPerformancePage },
       { path: "search/keywords", Component: KeywordsPage },
       { path: "search/rankings", Component: RankingsPage },

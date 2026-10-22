@@ -167,6 +167,10 @@ const envSchema = z.object({
 
   // Keyword research. Only implemented providers may be listed; licensed
   // providers need a contract and spending approval before an adapter exists.
+  // Content intelligence (docs/CONTENT_INTELLIGENCE.md). Heuristic thresholds, configurable.
+  CONTENT_THIN_WORDS: z.coerce.number().int().min(10).max(5_000).default(200),
+  CONTENT_STALE_MONTHS: z.coerce.number().int().min(1).max(120).default(24),
+  CONTENT_MAX_PAGES: z.coerce.number().int().min(10).max(20_000).default(5_000),
   // Rank tracking (docs/RANK_TRACKING.md).
   RANK_MAX_KEYWORDS_PER_PROJECT: z.coerce.number().int().min(1).max(10_000).default(500),
   RANK_MAX_COMPETITORS: z.coerce.number().int().min(1).max(20).default(10),
