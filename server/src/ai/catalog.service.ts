@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { query, withTransaction } from "../db/client.js";
 import { audit } from "../services/audit.service.js";
-import { config } from "../config.js";
+import { resolveSecret } from "../platform/credential-store.js";
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const CATALOG_TIMEOUT_MS = 30_000;
@@ -147,8 +147,9 @@ function sanitizeText(value: unknown, maxLength: number): string | null {
 // ─── Catalog fetch ────────────────────────────────────────────────────────────
 
 export async function fetchOpenRouterCatalog(): Promise<NormalizedModel[]> {
-  if (!config.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY is not configured");
+  const apiKey = resolveSecret("openrouter")?.secret;
+  if (!apiKey) {
+    throw new Error("No OpenRouter key is configured");
   }
 
   const controller = new AbortController();
@@ -162,8 +163,8 @@ export async function fetchOpenRouterCatalog(): Promise<NormalizedModel[]> {
         signal: controller.signal,
         headers: {
           // Key is sent to get full pricing details — never logged
-          "Authorization": `Bearer ${config.OPENROUTER_API_KEY}`,
-          "HTTP-Referer": "https://zignaneural.com",
+          "Authorization": `Bearer ${apiKey}`,
+          "HTTP-Referer": "https://zigmaneural.com",
           "X-Title": "ZigmaNeural",
         },
       });
@@ -407,6 +408,6 @@ export async function getCatalogStatus(): Promise<CatalogStatus> {
     lastRefreshAt: last?.completed_at ?? null,
     lastRefreshStatus: last?.status ?? null,
     modelsInRegistry: parseInt(countRow.rows[0]?.count ?? "0", 10),
-    isAvailable: !!config.OPENROUTER_API_KEY,
+    isAvailable: !!resolveSecret("openrouter"),
   };
 }

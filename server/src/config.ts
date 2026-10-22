@@ -167,6 +167,8 @@ const envSchema = z.object({
 
   // Keyword research. Only implemented providers may be listed; licensed
   // providers need a contract and spending approval before an adapter exists.
+  // The one account the Admin → Users "Generate login credentials" action may provision or reset.
+  ADMIN_CREDENTIAL_ACCOUNT_EMAIL: z.string().trim().toLowerCase().email().default("info@zigmaneural.com"),
   KEYWORD_RESEARCH_PROVIDERS: z
     .string()
     .trim()

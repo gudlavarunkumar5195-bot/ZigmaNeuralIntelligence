@@ -58,6 +58,10 @@ const InfraClickHousePage = lazy(() => infra().then((m) => ({ default: m.InfraCl
 const InfraEventPipelinePage = lazy(() => infra().then((m) => ({ default: m.InfraEventPipelinePage })));
 const InfraMigrationsPage = lazy(() => infra().then((m) => ({ default: m.InfraMigrationsPage })));
 const InfraConfigurationPage = lazy(() => infra().then((m) => ({ default: m.InfraConfigurationPage })));
+const ResetPasswordPage = lazy(() => import("./pages/auth/ResetPasswordPage").then(({ ResetPasswordPage }) => ({ default: ResetPasswordPage })));
+const ControlCenterPage = lazy(() => import("./pages/admin/ControlCenterPage").then(({ ControlCenterPage }) => ({ default: ControlCenterPage })));
+const IntegrationsAdminPage = lazy(() => import("./pages/admin/IntegrationsAdminPage").then(({ IntegrationsAdminPage }) => ({ default: IntegrationsAdminPage })));
+const UsersAdminPage = lazy(() => import("./pages/admin/UsersAdminPage").then(({ UsersAdminPage }) => ({ default: UsersAdminPage })));
 const PlaceholderPage = lazy(() => import("./pages/PlaceholderPage").then(({ PlaceholderPage }) => ({ default: PlaceholderPage })));
 
 function readToken(): string | null {
@@ -74,6 +78,12 @@ export const router = createBrowserRouter([
       if (target !== "/login") return redirect(target);
       return null;
     },
+  },
+  {
+    // Public: reachable signed in or out (a reset link may be opened anywhere).
+    path: "/reset-password",
+    Component: ResetPasswordPage,
+    errorElement: <RouteError />,
   },
   {
     path: "/",
@@ -131,6 +141,10 @@ export const router = createBrowserRouter([
       { path: "analytics/routing", Component: AnalyticsRoutingPage },
       { path: "analytics/scans", Component: AnalyticsScansPage },
       { path: "analytics/monitoring", Component: AnalyticsMonitoringPage },
+      { path: "admin", loader: () => redirect("/admin/control-center") },
+      { path: "admin/control-center", Component: ControlCenterPage },
+      { path: "admin/integrations", Component: IntegrationsAdminPage },
+      { path: "admin/users", Component: UsersAdminPage },
       { path: "admin/infrastructure", loader: () => redirect("/admin/infrastructure/health") },
       { path: "admin/infrastructure/health", Component: InfraHealthPage },
       { path: "admin/infrastructure/postgresql", Component: InfraPostgresPage },

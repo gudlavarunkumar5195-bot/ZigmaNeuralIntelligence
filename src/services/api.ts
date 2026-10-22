@@ -182,7 +182,7 @@ async function apiFetch<T>(
   }
 
   if (!res.ok) {
-    let errorBody: { error?: { code?: string; message?: string } } = {}
+    let errorBody: { error?: { code?: string; message?: string; details?: unknown } } = {}
     try {
       errorBody = await res.json()
     } catch {
@@ -196,6 +196,9 @@ async function apiFetch<T>(
           errorBody.error?.code === "PLATFORM_ADMIN_REQUIRED"
             ? "This changes platform-wide settings (shared by all organizations) and needs a platform administrator. Organization owners and admins cannot do this."
             : errorBody.error?.message ?? res.statusText,
+        ...(errorBody.error?.details && typeof errorBody.error.details === "object" && !Array.isArray(errorBody.error.details)
+          ? { details: errorBody.error.details as Record<string, unknown> }
+          : {}),
       },
     }
   }
@@ -297,6 +300,7 @@ export async function apiGetMe(): Promise<ApiResponse<{
   id: string
   email: string
   orgIds: string[]
+  isPlatformAdmin?: boolean
 }>> {
   if (IS_DEMO) throw new IntegrationRequired("auth.me")
   return apiFetch("/auth/me")
@@ -1657,3 +1661,195 @@ export const apiGetAnalyticsAi = (f: AnalyticsFilters = {}) => apiFetch<AiAnalyt
 export const apiGetAnalyticsRouting = (f: AnalyticsFilters = {}) => apiFetch<RoutingAnalytics>(`/analytics/routing${analyticsQuery(f)}`)
 export const apiGetAnalyticsScans = (f: AnalyticsFilters = {}) => apiFetch<ScanAnalytics>(`/analytics/scans${analyticsQuery(f)}`)
 export const apiGetAnalyticsMonitoring = (f: AnalyticsFilters = {}) => apiFetch<MonitoringAnalytics>(`/analytics/monitoring${analyticsQuery(f)}`)
+
+// ─── Admin Control Center (platform administrators; /api/v1/admin) ────────────
+// The backend enforces platform-admin access on every call and never returns
+// a stored secret; these types carry status only.
+
+export type AdminCheckStatus = "valid" | "invalid" | "permission_denied" | "quota_exceeded" | "rate_limited" | "unavailable" | "timeout" | "not_configured" | "error"
+
+export interface AdminCheckResult {
+  status: AdminCheckStatus
+  message: string
+  details: Record<string, unknown>
+}
+
+export interface AdminIntegration {
+  id: string
+  name: string
+  purpose: string
+  management: "admin" | "deployment" | "oauth" | "unsupported"
+  docsUrl: string | null
+  setup: string
+  envVars: Array<{ name: string; set: boolean }>
+  capabilities: string[]
+  configured: boolean
+  canTest: boolean
+  featureEnabled: boolean
+  credential: null | {
+    source: "admin" | "environment" | null
+    stored: boolean
+    suffix: string | null
+    enabled: boolean
+    validatedAt: string | null
+    status: string | null
+    error: string | null
+    updatedAt: string | null
+    decryptError: string | null
+    envFallback: boolean
+  }
+  lastCheck: null | { status: AdminCheckStatus; message: string | null; checkedAt: string; trigger: string }
+  lastSuccessAt: string | null
+  details: Record<string, unknown>
+}
+
+export interface AdminUser {
+  id: string
+  email: string
+  full_name: string | null
+  active: boolean
+  created_at: string
+  last_login_at: string | null
+  active_sessions: number
+  isPlatformAdmin: boolean
+  memberships: Array<{ orgId: string; orgName: string; role: "owner" | "admin" | "member" | "viewer" }>
+}
+
+export interface AdminFailedJob {
+  kind: "scan" | "gsc_sync" | "monitoring_run" | "notification" | "analytics_outbox"
+  id: string
+  orgId: string | null
+  at: string
+  error: string | null
+  retryable: boolean
+  retryNote: string
+}
+
+export interface AdminDiagnostics {
+  generatedAt: string
+  process: { uptimeSeconds: number; node: string; environment: string; memoryRssMb: number }
+  database: { status: "ok" | "failed"; latencyMs: number; error?: string }
+  migrations: { status: string; currentVersion?: string | null; latestOnDisk?: string | null; pending?: string[]; checksumMismatches?: string[]; error?: string }
+  worker: { running: boolean; startedAt: string | null; lastTickAt: string | null; status: string; lastError: null | { errorClass: string; at: string | null } }
+  jobs: Record<string, unknown>
+  failedJobs: AdminFailedJob[]
+  integrations: Array<{ id: string; name: string; management: string; configured: boolean; featureEnabled: boolean; lastCheck: AdminIntegration["lastCheck"]; lastSuccessAt: string | null }>
+  serverErrors: { errors: Array<{ at: string; requestId: string; method: string; route: string; statusCode: number; errorClass: string }>; totalSinceStart: number; capacity: number }
+  configurationWarnings: Array<{ severity: "warning" | "info"; message: string }>
+  adminEvents: Array<{ timestamp: string; action: string; result: string; user_id: string | null; resource_type: string | null; request_id: string | null }>
+}
+
+const adminJson = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+
+export async function apiAdminIntegrations() {
+  if (IS_DEMO) throw new IntegrationRequired("admin.integrations")
+  return apiFetch<AdminIntegration[]>("/admin/integrations")
+}
+
+export async function apiAdminSaveCredential(provider: string, secret: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.integrations.save")
+  return apiFetch<{ result: AdminCheckResult; integration: AdminIntegration }>(`/admin/integrations/${encodeURIComponent(provider)}/credential`, adminJson("PUT", { secret }))
+}
+
+export async function apiAdminTestIntegration(provider: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.integrations.test")
+  return apiFetch<{ result: AdminCheckResult; integration: AdminIntegration }>(`/admin/integrations/${encodeURIComponent(provider)}/test`, adminJson("POST"))
+}
+
+export async function apiAdminSetIntegrationEnabled(provider: string, enabled: boolean) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.integrations.toggle")
+  return apiFetch<AdminIntegration>(`/admin/integrations/${encodeURIComponent(provider)}/${enabled ? "enable" : "disable"}`, adminJson("POST"))
+}
+
+export async function apiAdminRemoveCredential(provider: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.integrations.remove")
+  return apiFetch<{ removed: boolean; integration: AdminIntegration }>(`/admin/integrations/${encodeURIComponent(provider)}/credential`, adminJson("DELETE", { confirm: true }))
+}
+
+export async function apiAdminReencryptCredentials() {
+  if (IS_DEMO) throw new IntegrationRequired("admin.integrations.reencrypt")
+  return apiFetch<{ reencrypted: number; alreadyCurrent: number; failed: number }>("/admin/integrations/encryption/reencrypt", adminJson("POST", { confirm: true }))
+}
+
+export async function apiAdminUsers(params: { search?: string; status?: "active" | "inactive"; cursor?: string | null; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.users")
+  return apiFetch<AdminUser[]>(`/admin/users${queryString({ ...params, limit: params.limit ?? 25 })}`) as WithMeta<AdminUser[], CursorMeta>
+}
+
+export async function apiAdminUser(id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.user")
+  return apiFetch<{ user: AdminUser; events: Array<{ timestamp: string; action: string; result: string; byUser: "self" | "admin" | null; request_id: string | null }> }>(`/admin/users/${encodeURIComponent(id)}`)
+}
+
+export async function apiAdminSetUserActive(id: string, active: boolean) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.user.active")
+  return apiFetch<{ revokedSessions: number }>(`/admin/users/${encodeURIComponent(id)}/${active ? "activate" : "deactivate"}`, adminJson("POST", { confirm: true }))
+}
+
+export async function apiAdminRevokeSessions(id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.user.sessions")
+  return apiFetch<{ revokedSessions: number }>(`/admin/users/${encodeURIComponent(id)}/revoke-sessions`, adminJson("POST", { confirm: true }))
+}
+
+export async function apiAdminChangeRole(id: string, orgId: string, role: AdminUser["memberships"][number]["role"]) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.user.role")
+  return apiFetch<{ from: string; to: string }>(`/admin/users/${encodeURIComponent(id)}/memberships/${encodeURIComponent(orgId)}`, adminJson("PATCH", { role, confirm: true }))
+}
+
+export async function apiAdminSendPasswordReset(id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.user.reset")
+  return apiFetch<{ sent: boolean }>(`/admin/users/${encodeURIComponent(id)}/password-reset`, adminJson("POST", { confirm: true }))
+}
+
+export async function apiAdminCredentialAccount() {
+  if (IS_DEMO) throw new IntegrationRequired("admin.credentials.status")
+  return apiFetch<{ email: string; exists: boolean; active: boolean | null; lastLoginAt: string | null }>("/admin/account-credentials")
+}
+
+/** The generated password is in this response only; never store it in the browser. */
+export async function apiAdminGenerateCredentials(email: string, confirmReset: boolean) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.credentials.generate")
+  return apiFetch<{ email: string; password: string; created: boolean; accountActive: boolean; revokedSessions: number }>("/admin/account-credentials", adminJson("POST", { email, confirmReset }))
+}
+
+export async function apiAdminDiagnostics() {
+  if (IS_DEMO) throw new IntegrationRequired("admin.diagnostics")
+  return apiFetch<AdminDiagnostics>("/admin/diagnostics")
+}
+
+export async function apiAdminRetryJob(kind: "gsc_sync" | "analytics_outbox", id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.diagnostics.retry")
+  return apiFetch<{ kind: string; result: Record<string, unknown> }>(`/admin/diagnostics/jobs/${kind}/${encodeURIComponent(id)}/retry`, adminJson("POST"))
+}
+
+/** Redacted diagnostic report as a file (authenticated download). */
+export async function apiAdminExportDiagnostics(): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("admin.diagnostics.export")
+  const res = await fetch(`${config.apiBaseUrl}/admin/diagnostics/export`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? "zigmaneural-diagnostics.json" }
+}
+
+export async function apiAdminAudit(limit = 50) {
+  if (IS_DEMO) throw new IntegrationRequired("admin.audit")
+  return apiFetch<Array<{ timestamp: string; action: string; result: string; resource_type: string | null; resource_id: string | null; org_id: string | null; request_id: string | null; metadata: Record<string, unknown> | null; actor_email: string | null }>>(`/admin/audit${queryString({ limit })}`)
+}
+
+export async function apiRequestPasswordReset(email: string) {
+  if (IS_DEMO) throw new IntegrationRequired("auth.reset.request")
+  return apiFetch<{ message: string }>("/auth/password-reset/request", adminJson("POST", { email }))
+}
+
+export async function apiConfirmPasswordReset(token: string, password: string) {
+  if (IS_DEMO) throw new IntegrationRequired("auth.reset.confirm")
+  return apiFetch<{ message: string }>("/auth/password-reset/confirm", adminJson("POST", { token, password }))
+}

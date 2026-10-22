@@ -127,3 +127,16 @@ Branch `feat/p4-keyword-research`, from `main` after PR #5. Not deployed; no pro
 - Migration 033 (additive). Details: `docs/KEYWORD_RESEARCH.md`.
 
 Known limitations: first-party data only; gap limited to own websites; runs execute in the request (no queue); ideas only from queries the site already has.
+
+---
+
+# Intermediate phase: cleanup, Admin Control Center, secure integrations
+
+Branch `feat/admin-control-center`, from `main` after PR #6. Not deployed; no production migration run; no provider called (all provider calls in tests are faked).
+
+- Inventory and audits: `docs/maintenance/` (repository inventory, unused code and database audit, plan, integration matrix, known backend issues).
+- Cleanup with verified evidence: removed `server/src/ai/evidence/adapters.ts`, three unreferenced images, and the unused `uuid` / `@types/uuid` dependencies. Unreferenced tables and redundant indexes are documented only (destructive; needs approval).
+- Admin Control Center: diagnostics (measured, redacted export, safe retries), Integrations & API Keys (OpenRouter key validated by the provider before encrypted storage; deployment-managed integrations tested in place), Users & Access (activation with session revocation, role changes with last-owner protection, session revocation, reset links), Generate Login Credentials for the designated account.
+- Password reset: hashed single-use tokens with a 30-minute expiry, sessions revoked on use. Email delivery is not implemented, so links cannot be sent yet.
+- Fixes: a `RATE_LIMITED` code for 429s; bcrypt's 72-byte limit enforced; the domain typo in outbound headers corrected; AI key rotation without redeploy; sessions revoked on deactivation; `users.last_login_at`.
+- Migration 034 (additive).

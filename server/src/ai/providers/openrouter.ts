@@ -14,7 +14,7 @@ export class OpenRouterProvider implements ModelProvider {
 
   constructor(
     private readonly apiKey: string,
-    private readonly siteUrl = "https://zignaneural.com",
+    private readonly siteUrl = "https://zigmaneural.com",
     private readonly appTitle = "ZigmaNeural"
   ) {}
 
