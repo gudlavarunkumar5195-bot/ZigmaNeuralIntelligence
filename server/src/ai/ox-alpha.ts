@@ -39,6 +39,10 @@ export interface OxAlphaRequest {
   scanId?: string;
   /** Alternative attribution for calls made for a keyword research run. */
   researchRunId?: string;
+  /** Alternative attribution for AI visibility collection and analysis (a monitored brand). */
+  aivBrandId?: string;
+  /** Provider-side web search; billed separately, so callers only pass it when an operator enabled it. */
+  webSearch?: { maxResults: number };
   orgId?: string;
   userId?: string;
 }
@@ -52,6 +56,10 @@ export interface OxAlphaResult {
   totalDurationMs: number;
   executionIds: string[];
   error?: string;
+  /** Code of the last provider error (ProviderError / budget), when the execution failed. */
+  errorCode?: string;
+  /** Whether the last failure was transient (a later attempt may succeed). */
+  retryable?: boolean;
 }
 
 // ─── OX Alpha Executor ────────────────────────────────────────────────────────
@@ -89,9 +97,9 @@ export class OxAlphaExecutor {
           break attempts;
         }
         // Every provider call must be attributable to an organization and to a
-        // scan or research run, so it is counted against that organization's budget.
-        if (!req.orgId || (!req.scanId && !req.researchRunId)) {
-          lastError = new ProviderError("PROVIDER_ERROR", "AI_UNATTRIBUTED: provider calls require an organization and a scan or research run context", false);
+        // scan, research run or monitored brand, so it is counted against that organization's budget.
+        if (!req.orgId || (!req.scanId && !req.researchRunId && !req.aivBrandId)) {
+          lastError = new ProviderError("PROVIDER_ERROR", "AI_UNATTRIBUTED: provider calls require an organization and a scan, research run or brand context", false);
           break attempts;
         }
         if (modelAttempt === 1) {
@@ -125,6 +133,7 @@ export class OxAlphaExecutor {
             taskDescription: req.taskDescription ?? "",
             scanId: req.scanId ?? null,
             researchRunId: req.researchRunId ?? null,
+            aivBrandId: req.aivBrandId ?? null,
             orgId: req.orgId!,
             attemptNumber: globalAttempt + 1,
           }));
@@ -161,6 +170,7 @@ export class OxAlphaExecutor {
             temperature: req.temperature,
             maxTokens: req.maxTokens ?? config.OX_ALPHA_MAX_OUTPUT_TOKENS,
             responseFormat: req.requireJson ? "json_object" : "text",
+            webSearch: req.webSearch,
             signal: controller.signal,
           });
           execStatus = "completed";
@@ -255,6 +265,8 @@ export class OxAlphaExecutor {
       totalDurationMs: Date.now() - totalStart,
       executionIds,
       error: lastError?.message ?? "All execution attempts failed",
+      errorCode: (lastError as { code?: string } | undefined)?.code ?? "PROVIDER_ERROR",
+      retryable: (lastError as { retryable?: boolean } | undefined)?.retryable ?? true,
     };
   }
 
@@ -268,6 +280,7 @@ export class OxAlphaExecutor {
     taskDescription: string;
     scanId: string | null;
     researchRunId: string | null;
+    aivBrandId: string | null;
     orgId: string;
     attemptNumber: number;
   }): Promise<string> {
@@ -275,14 +288,14 @@ export class OxAlphaExecutor {
     // provider call is made without a recorded (and therefore counted) attempt.
     const { rows } = await db.query<{ id: string }>(
       `INSERT INTO agent_executions
-          (scan_id, research_run_id, org_id, agent_type, model_id, task, status,
+          (scan_id, research_run_id, aiv_brand_id, org_id, agent_type, model_id, task, status,
           attempt_number, execution_kind, logical_execution_id, started_at, correlation_id, execution_id, provider)
-        VALUES ($1, $10, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
+        VALUES ($1, $10, $11, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
        RETURNING id`,
       [
         params.scanId, params.orgId, params.agentType, params.model,
         params.taskDescription, params.attemptNumber,
-        params.correlationId, params.executionId, this.provider.name, params.researchRunId,
+        params.correlationId, params.executionId, this.provider.name, params.researchRunId, params.aivBrandId,
       ]
     );
     return rows[0]?.id ?? "";

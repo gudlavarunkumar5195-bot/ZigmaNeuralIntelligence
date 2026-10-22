@@ -1472,6 +1472,15 @@ async function processNextQueuedScan(): Promise<void> {
       })
   }
 
+  // AI visibility collection (only confirmed runs or approved schedules; one bounded slice per tick).
+  if (!workerStopping) {
+    await import("./ai-visibility.service.js")
+      .then(({ processVisibilityTick }) => processVisibilityTick(15_000))
+      .catch((err: unknown) => {
+        console.error("[worker] AI visibility tick failed:", (err as Error).message)
+      })
+  }
+
   if (workerStopping) return
 
   const claimed = await claimNextQueuedScan()

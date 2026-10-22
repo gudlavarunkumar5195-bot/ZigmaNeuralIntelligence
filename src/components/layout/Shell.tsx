@@ -393,7 +393,7 @@ function TopBar() {
     if (path.startsWith("/websites/scan")) return "Scan Progress";
     if (path === "/websites/history") return "Scan History";
     if (path === "/intelligence/seo") return "SEO Intelligence";
-    if (path === "/intelligence/ai-visibility") return "AI Visibility";
+    if (path === "/intelligence/ai-visibility" || path.startsWith("/intelligence/ai-visibility/")) return "AI Visibility";
     if (path === "/intelligence/security") return "Security";
     if (path === "/intelligence/performance") return "Performance";
     if (path === "/intelligence/accessibility") return "Accessibility";

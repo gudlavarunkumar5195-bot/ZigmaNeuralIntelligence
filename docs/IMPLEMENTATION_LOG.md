@@ -180,3 +180,15 @@ Branch `feat/p7-content-intelligence`, from `main` after PR #9. Not deployed; no
 - Briefs: deterministic first revision, revisions with conflict detection, checklist approval, and optional AI suggestions (grounded, injection-aware, sanitized, flagged for review).
 - Fixes found by tests: block elements merged words in extracted text; events written in one transaction lost their order (`clock_timestamp()`); a pre-existing race in Generate Login Credentials (from the intermediate phase) let two concurrent confirmations both replace the password, because the duplicate guard read an audit event written after the transaction. It is now written inside the locked transaction.
 - Migration 037 (additive). Details: `docs/CONTENT_INTELLIGENCE.md`.
+
+# Phase 8: AI search visibility
+
+Branch `feat/p8-ai-visibility`, from `main` after PR #10. Not deployed; no production migration run; no AI provider called (collection and AI summaries are tested with a mocked model transport behind the real executor).
+
+- Brands, competitors, versioned query library and schedule settings; tenant-scoped, audited, with validation and limits.
+- A provider capability registry: OpenRouter model answers (no web search) are implemented through the existing executor, key and free-model gate (they need a configured key); OpenRouter web search is implemented but off until its per-request cost is approved; consumer AI products have no monitoring API and are import-only.
+- Observations with full provenance; mentions, citations and sources derived deterministically; exclusion and re-matching recorded as events. Manual imports (CSV/JSON) with preview, row errors and duplicate detection.
+- Metrics per method/provider/surface/model group with numerators, denominators, small-sample flags and no-data distinct from zero; competitor comparison within comparable groups; evidence-backed opportunities with a documented heuristic priority; optional schema-validated AI summary.
+- Additive changes outside the module: `ModelRequest.webSearch`, `ModelResponse.citations/providerRequestId` (OpenRouter `url_citation` annotations), `OxAlphaRequest.aivBrandId/webSearch`, `OxAlphaResult.errorCode/retryable`, and `agent_executions.aiv_brand_id`.
+- Fix found by tests: source verification reported an SSRF-refused host as "blocked by robots.txt"; it now reports `unsafe_url`.
+- The AI Visibility placeholder page is replaced by the real module. Migration 038 (additive). Details: `docs/AI_VISIBILITY.md`.

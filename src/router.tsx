@@ -12,7 +12,7 @@ const ScanProgress = lazy(() => import("./pages/websites/ScanProgress").then(({ 
 const ScanHistory = lazy(() => import("./pages/websites/ScanHistory").then(({ ScanHistory }) => ({ default: ScanHistory })));
 const SEOPage = lazy(() => import("./pages/intelligence/SEOPage").then(({ SEOPage }) => ({ default: SEOPage })));
 const SecurityPage = lazy(() => import("./pages/intelligence/SecurityPage").then(({ SecurityPage }) => ({ default: SecurityPage })));
-const AIVisibilityPage = lazy(() => import("./pages/intelligence/AIVisibilityPage").then(({ AIVisibilityPage }) => ({ default: AIVisibilityPage })));
+const AIVisibilityPage = lazy(() => import("./pages/intelligence/ai-visibility/AIVisibilityPage").then(({ AIVisibilityPage }) => ({ default: AIVisibilityPage })));
 const PerformancePage = lazy(() => import("./pages/intelligence/PerformancePage").then(({ PerformancePage }) => ({ default: PerformancePage })));
 const AccessibilityPage = lazy(() => import("./pages/intelligence/AccessibilityPage").then(({ AccessibilityPage }) => ({ default: AccessibilityPage })));
 const SearchPerformancePage = lazy(() => import("./pages/search/SearchPerformancePage").then(({ SearchPerformancePage }) => ({ default: SearchPerformancePage })));
@@ -103,6 +103,7 @@ export const router = createBrowserRouter([
       { path: "websites/history", Component: ScanHistory },
       { path: "intelligence/seo", Component: SEOPage },
       { path: "intelligence/ai-visibility", Component: AIVisibilityPage },
+      { path: "intelligence/ai-visibility/:tab", Component: AIVisibilityPage },
       { path: "intelligence/security", Component: SecurityPage },
       { path: "intelligence/performance", Component: PerformancePage },
       { path: "intelligence/accessibility", Component: AccessibilityPage },
