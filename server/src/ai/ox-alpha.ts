@@ -36,6 +36,8 @@ export interface OxAlphaRequest {
   agentType?: string;
   taskDescription?: string;
   scanId?: string;
+  /** Alternative attribution for calls made for a keyword research run. */
+  researchRunId?: string;
   orgId?: string;
   userId?: string;
 }
@@ -85,10 +87,10 @@ export class OxAlphaExecutor {
           lastError = new ProviderError("CANCELLED", "AI_ABORTED: execution cancelled before provider call", false);
           break attempts;
         }
-        // Every provider call must be attributable to an organization and a
-        // scan, so it is counted against that organization's budget.
-        if (!req.orgId || !req.scanId) {
-          lastError = new ProviderError("PROVIDER_ERROR", "AI_UNATTRIBUTED: provider calls require an organization and scan context", false);
+        // Every provider call must be attributable to an organization and to a
+        // scan or research run, so it is counted against that organization's budget.
+        if (!req.orgId || (!req.scanId && !req.researchRunId)) {
+          lastError = new ProviderError("PROVIDER_ERROR", "AI_UNATTRIBUTED: provider calls require an organization and a scan or research run context", false);
           break attempts;
         }
         if (modelAttempt === 1) {
@@ -120,7 +122,8 @@ export class OxAlphaExecutor {
             model,
             agentType: req.agentType ?? "ox_alpha",
             taskDescription: req.taskDescription ?? "",
-            scanId: req.scanId!,
+            scanId: req.scanId ?? null,
+            researchRunId: req.researchRunId ?? null,
             orgId: req.orgId!,
             attemptNumber: globalAttempt + 1,
           }));
@@ -262,7 +265,8 @@ export class OxAlphaExecutor {
     model: string;
     agentType: string;
     taskDescription: string;
-    scanId: string;
+    scanId: string | null;
+    researchRunId: string | null;
     orgId: string;
     attemptNumber: number;
   }): Promise<string> {
@@ -270,14 +274,14 @@ export class OxAlphaExecutor {
     // provider call is made without a recorded (and therefore counted) attempt.
     const { rows } = await db.query<{ id: string }>(
       `INSERT INTO agent_executions
-          (scan_id, org_id, agent_type, model_id, task, status,
+          (scan_id, research_run_id, org_id, agent_type, model_id, task, status,
           attempt_number, execution_kind, logical_execution_id, started_at, correlation_id, execution_id, provider)
-        VALUES ($1, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
+        VALUES ($1, $10, $2, $3, $4, $5, 'running', $6, 'MODEL_ATTEMPT', $7, NOW(), $7, $8, $9)
        RETURNING id`,
       [
         params.scanId, params.orgId, params.agentType, params.model,
         params.taskDescription, params.attemptNumber,
-        params.correlationId, params.executionId, this.provider.name,
+        params.correlationId, params.executionId, this.provider.name, params.researchRunId,
       ]
     );
     return rows[0]?.id ?? "";

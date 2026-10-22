@@ -16,10 +16,10 @@ const AIVisibilityPage = lazy(() => import("./pages/intelligence/AIVisibilityPag
 const PerformancePage = lazy(() => import("./pages/intelligence/PerformancePage").then(({ PerformancePage }) => ({ default: PerformancePage })));
 const AccessibilityPage = lazy(() => import("./pages/intelligence/AccessibilityPage").then(({ AccessibilityPage }) => ({ default: AccessibilityPage })));
 const SearchPerformancePage = lazy(() => import("./pages/search/SearchPerformancePage").then(({ SearchPerformancePage }) => ({ default: SearchPerformancePage })));
-const KeywordsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ KeywordsPage }) => ({ default: KeywordsPage })));
+const KeywordsPage = lazy(() => import("./pages/search/KeywordResearchPage").then(({ KeywordResearchPage }) => ({ default: KeywordResearchPage })));
 const RankingsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ RankingsPage }) => ({ default: RankingsPage })));
 const BacklinksPage = lazy(() => import("./pages/search/SearchDataPages").then(({ BacklinksPage }) => ({ default: BacklinksPage })));
-const CompetitorsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ CompetitorsPage }) => ({ default: CompetitorsPage })));
+const CompetitorsPage = lazy(() => import("./pages/search/CompetitorGapPage").then(({ CompetitorGapPage }) => ({ default: CompetitorGapPage })));
 const TechnicalHealthPage = lazy(() => import("./pages/intelligence/TechnicalHealthPage").then(({ TechnicalHealthPage }) => ({ default: TechnicalHealthPage })));
 const BrowserTestsPage = lazy(() => import("./pages/testing/BrowserTestsPage").then(({ BrowserTestsPage }) => ({ default: BrowserTestsPage })));
 const RegressionPage = lazy(() => import("./pages/testing/RegressionPage").then(({ RegressionPage }) => ({ default: RegressionPage })));
