@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Network, AlertCircle, Loader, Eye, EyeOff, Sparkles } from "lucide-react";
 import { apiLogin, apiRegister, setToken } from "../../services/api";
 
@@ -210,6 +210,11 @@ export function LoginPage() {
                 {loading && <Loader size={14} className="animate-spin" />}
                 {mode === "login" ? "Sign in" : "Create account"}
               </button>
+              {mode === "login" ? (
+                <p className="text-center text-xs">
+                  <Link to="/reset-password" className="font-600 text-blue-700 hover:underline">Forgot password?</Link>
+                </p>
+              ) : null}
             </form>
           </div>
 

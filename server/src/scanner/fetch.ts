@@ -257,7 +257,7 @@ function requestPinned(url: string, address: string | undefined, method: string,
       method,
       headers: {
         Host: parsed.host,
-        "User-Agent": "ZigmaNeural-Scanner/1.0 (+https://zignaneural.com/scanner)",
+        "User-Agent": "ZigmaNeural-Scanner/1.0 (+https://zigmaneural.com/scanner)",
         Accept: "text/html,application/xhtml+xml,*/*",
         "Accept-Encoding": "gzip, deflate, br",
       },

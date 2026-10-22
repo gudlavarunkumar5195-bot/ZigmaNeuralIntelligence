@@ -1,9 +1,17 @@
 import bcrypt from "bcryptjs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { query, withTransaction } from "../db/client.js";
 import type { JwtPayload } from "../types.js";
 
 const BCRYPT_ROUNDS = 12;
+
+/** bcrypt only uses the first 72 bytes; longer passwords are rejected rather than silently truncated. */
+export const PASSWORD_MAX_BYTES = 72;
+export const passwordWithinBcryptLimit = (password: string) => Buffer.byteLength(password, "utf8") <= PASSWORD_MAX_BYTES;
+
+export function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, BCRYPT_ROUNDS);
+}
 
 // Valid-format bcrypt hash (same cost as real hashes) of random bytes, computed
 // lazily once. Comparing against it makes unknown-email logins cost the same as
@@ -30,7 +38,7 @@ export interface RegisterResult {
 
 export async function register(input: RegisterInput): Promise<RegisterResult> {
   const email = input.email.toLowerCase().trim();
-  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+  const passwordHash = await hashPassword(input.password);
   const slug = input.orgName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60) +
                "-" + randomBytes(4).toString("hex");
 
@@ -114,6 +122,7 @@ export async function login(input: LoginInput): Promise<LoginResult> {
     [user.id]
   );
   const orgIds = memberRows.map((r) => r.org_id);
+  await query("UPDATE users SET last_login_at = NOW() WHERE id = $1", [user.id]);
 
   return { userId: user.id, email, fullName: user.full_name, orgIds };
 }
@@ -228,4 +237,71 @@ export async function revokeAllUserTokens(userId: string): Promise<void> {
 
 export function buildJwtPayload(userId: string, email: string, orgIds: string[]): JwtPayload {
   return { sub: userId, email, orgIds };
+}
+
+// ─── Password reset ───────────────────────────────────────────────────────────
+//
+// Single-use, short-lived tokens; only the SHA-256 of a token is stored, the
+// raw token exists only in the delivered link. Using a token sets the new
+// bcrypt hash, burns every outstanding token of the user and revokes all
+// refresh tokens (sessions).
+
+export const PASSWORD_RESET_TTL_MS = 30 * 60_000;
+const tokenHash = (raw: string) => createHash("sha256").update(raw, "utf8").digest("hex");
+
+export async function createPasswordResetToken(userId: string, requestedBy: string | null, now = new Date()): Promise<string> {
+  const raw = randomBytes(32).toString("base64url");
+  await query(
+    "INSERT INTO password_reset_tokens (user_id, token_hash, requested_by, expires_at) VALUES ($1, $2, $3, $4)",
+    [userId, tokenHash(raw), requestedBy, new Date(now.getTime() + PASSWORD_RESET_TTL_MS)],
+  );
+  return raw;
+}
+
+export class PasswordResetError extends Error {
+  readonly statusCode = 400;
+  readonly code = "RESET_TOKEN_INVALID";
+  constructor() {
+    super("This password reset link is invalid, already used or expired. Request a new one.");
+  }
+}
+
+/** Consumes a reset token and sets the password. One generic error for every failure. */
+export async function resetPasswordWithToken(rawToken: string, newPassword: string): Promise<{ userId: string }> {
+  if (!passwordWithinBcryptLimit(newPassword)) {
+    throw Object.assign(new Error(`Password must be at most ${PASSWORD_MAX_BYTES} bytes`), { statusCode: 400, code: "VALIDATION_ERROR" });
+  }
+  const passwordHash = await hashPassword(newPassword);
+  return withTransaction(async (tx) => {
+    const { rows } = await tx.query<{ id: string; user_id: string }>(
+      `SELECT t.id, t.user_id FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
+        WHERE t.token_hash = $1 AND t.used_at IS NULL AND t.expires_at > NOW() AND u.active = TRUE
+        FOR UPDATE OF t`,
+      [tokenHash(rawToken)],
+    );
+    if (!rows[0]) throw new PasswordResetError();
+    const { user_id: userId } = rows[0];
+    await tx.query("UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1", [userId, passwordHash]);
+    await tx.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [userId]);
+    await tx.query("UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [userId]);
+    return { userId };
+  });
+}
+
+// ─── Generated passwords ──────────────────────────────────────────────────────
+
+// No look-alike characters (0/O, 1/l/I); symbols that survive copy/paste.
+const LOWER = "abcdefghijkmnpqrstuvwxyz";
+const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const DIGITS = "23456789";
+const SYMBOLS = "!#%+-=?@_";
+const ALPHABET = LOWER + UPPER + DIGITS + SYMBOLS;
+
+/** A 20-character password from the CSPRNG (~120 bits), with every character class present. */
+export function generatePassword(length = 20): string {
+  for (;;) {
+    let out = "";
+    for (let i = 0; i < length; i++) out += ALPHABET[randomInt(ALPHABET.length)];
+    if ([LOWER, UPPER, DIGITS, SYMBOLS].every((set) => [...out].some((c) => set.includes(c)))) return out;
+  }
 }

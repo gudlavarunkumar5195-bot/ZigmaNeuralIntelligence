@@ -5,6 +5,7 @@ import { OpenRouterProvider } from "./providers/openrouter.js";
 import { query, type Queryable } from "../db/client.js";
 import { audit } from "../services/audit.service.js";
 import { config } from "../config.js";
+import { resolveSecret } from "../platform/credential-store.js";
 import { AiBudgetError, isModelCallable, reserveOrgAiAttempt } from "./budget.js";
 import { AI_AGENT_DEADLINE_MS, AI_MAX_ATTEMPTS_PER_MODEL, AI_MAX_CALL_TIMEOUT_MS, AI_MAX_TOTAL_ATTEMPTS, clampInt } from "./limits.js";
 
@@ -339,11 +340,16 @@ export class OxAlphaExecutor {
 // and surface an appropriate "integration required" state, not a fake result.
 
 let _executor: OxAlphaExecutor | null = null;
+let _executorKey: string | null = null;
 
+// The key comes from the platform credential registry (admin-managed key,
+// else OPENROUTER_API_KEY); a rotated key replaces the executor.
 export function getOxAlphaExecutor(): OxAlphaExecutor | null {
-  if (!config.OPENROUTER_API_KEY) return null;
-  if (!_executor) {
-    _executor = new OxAlphaExecutor(new OpenRouterProvider(config.OPENROUTER_API_KEY));
+  const key = resolveSecret("openrouter")?.secret;
+  if (!key) return null;
+  if (!_executor || _executorKey !== key) {
+    _executor = new OxAlphaExecutor(new OpenRouterProvider(key));
+    _executorKey = key;
   }
   return _executor;
 }

@@ -107,6 +107,23 @@ export async function exchangeAuthorizationCode(code: string, codeVerifier: stri
   return tokenSet(body, now);
 }
 
+/**
+ * Checks the configured OAuth client without any user data or cost: a code
+ * that cannot exist is exchanged. Google answers invalid_grant only after it
+ * has authenticated the client, and invalid_client when the ID or secret is
+ * wrong.
+ */
+export async function probeOAuthClient(): Promise<"valid" | "invalid_client" | { unexpected: string }> {
+  const { clientId, clientSecret, redirectUri } = assertOAuthConfigured();
+  const { status, body } = await tokenRequest({
+    grant_type: "authorization_code", code: "zni-client-validation-probe", client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri,
+  });
+  const reason = String(body.error ?? `http_${status}`);
+  if (reason === "invalid_grant") return "valid";
+  if (reason === "invalid_client" || reason === "unauthorized_client") return "invalid_client";
+  return { unexpected: reason };
+}
+
 export class RefreshTokenRevokedError extends Error {
   constructor(readonly reason: string) {
     super("Google refresh token is no longer valid; the user must reconnect");

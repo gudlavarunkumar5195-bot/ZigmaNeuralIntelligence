@@ -7,6 +7,7 @@ import {
   getEligibleModels, getOrgPreferences, upsertOrgPreference,
 } from "../ai/registry.service.js";
 import { config } from "../config.js";
+import { resolveSecret } from "../platform/credential-store.js";
 import { uuidParams } from "../middleware/validate.js";
 
 const disableSchema = z.object({
@@ -62,11 +63,11 @@ export async function modelRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ─── POST /api/v1/models/catalog/refresh — admin only ─────────────────────
   fastify.post("/catalog/refresh", { preHandler: platformAdminPreHandler }, async (request, reply) => {
-    if (!config.OPENROUTER_API_KEY) {
+    if (!resolveSecret("openrouter")) {
       return reply.status(503).send({
         error: {
           code: "INTEGRATION_REQUIRED",
-          message: "OPENROUTER_API_KEY is not configured. Catalog refresh requires live OpenRouter credentials.",
+          message: "No OpenRouter key is configured (Admin → Integrations & API Keys, or OPENROUTER_API_KEY). Catalog refresh requires live OpenRouter credentials.",
         },
       });
     }

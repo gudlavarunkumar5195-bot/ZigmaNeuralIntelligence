@@ -4,9 +4,31 @@ import { startScanWorker, stopScanWorker } from "./services/scan.service.js";
 import { closePool } from "./db/client.js";
 import { startEventPipeline, stopEventPipeline } from "./analytics/events.js";
 import { closeAllScanStreams } from "./routes/scans.js";
+import { maybeRefreshPlatformCredentials, storedSecret } from "./platform/credential-store.js";
+import { testIntegration } from "./platform/integrations.js";
+
+const CREDENTIAL_RELOAD_MS = 60_000;
+const CREDENTIAL_REVALIDATE_MS = 6 * 60 * 60_000;
+
+/** Re-checks a stored admin-managed key (startup and every few hours); never deletes it. */
+async function revalidateStoredCredentials(): Promise<void> {
+  if (!storedSecret("openrouter")) return;
+  try {
+    const r = await testIntegration("openrouter", null, "scheduled");
+    console.log(JSON.stringify({ event: "platform_credential_revalidated", provider: "openrouter", status: r.status }));
+  } catch (err) {
+    console.error(JSON.stringify({ event: "platform_credential_revalidation_failed", provider: "openrouter", error: (err as Error).name }));
+  }
+}
 
 async function start() {
   const app = await buildApp();
+  // Admin-managed provider credentials (decrypted into memory; reloaded so
+  // changes made by another process converge within a minute).
+  await maybeRefreshPlatformCredentials(0);
+  setInterval(() => void maybeRefreshPlatformCredentials(CREDENTIAL_RELOAD_MS), CREDENTIAL_RELOAD_MS).unref();
+  void revalidateStoredCredentials();
+  setInterval(() => void revalidateStoredCredentials(), CREDENTIAL_REVALIDATE_MS).unref();
 
   try {
     await app.listen({ host: config.HOST, port: config.PORT });

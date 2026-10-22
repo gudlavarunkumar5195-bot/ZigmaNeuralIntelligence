@@ -6,6 +6,9 @@ import {
   revokeRefreshToken, buildJwtPayload,
 } from "../services/auth.service.js";
 import { audit } from "../services/audit.service.js";
+import { createPasswordResetToken, PASSWORD_MAX_BYTES, passwordWithinBcryptLimit, resetPasswordWithToken } from "../services/auth.service.js";
+import { emailDeliveryConfigured, sendPasswordResetEmail } from "../platform/mailer.js";
+import { query } from "../db/client.js";
 import { authenticate } from "../middleware/auth.js";
 import { isAppError } from "../middleware/error.js";
 import { config } from "../config.js";
@@ -19,9 +22,11 @@ const COOKIE_OPTS = {
   maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
 };
 
+const passwordSchema = z.string().min(8).refine(passwordWithinBcryptLimit, `Password must be at most ${PASSWORD_MAX_BYTES} bytes`);
+
 const registerSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  password: passwordSchema,
   fullName: z.string().min(1).optional(),
   orgName: z.string().min(1),
 });
@@ -140,6 +145,41 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ data: { ok: true } });
   });
 
+  // POST /api/v1/auth/password-reset/request — always the same answer, whether or
+  // not the email exists or email delivery is configured (no enumeration).
+  fastify.post("/password-reset/request", { onRequest: [ipBucket(20)], config: { rateLimit: { max: 5, timeWindow: "15 minutes", hook: "preHandler", keyGenerator: emailKey } } }, async (request, reply) => {
+    const parsed = z.object({ email: z.string().email().max(320) }).safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: { code: "VALIDATION_ERROR", message: "A valid email is required" } });
+    if (emailDeliveryConfigured()) {
+      const { rows } = await query<{ id: string; email: string }>("SELECT id, email FROM users WHERE email = $1 AND active = TRUE", [parsed.data.email.toLowerCase().trim()]);
+      if (rows[0]) {
+        const raw = await createPasswordResetToken(rows[0].id, null);
+        try {
+          await sendPasswordResetEmail(rows[0].email, `${config.APP_PUBLIC_URL ?? ""}/reset-password?token=${raw}`);
+          await audit({ userId: rows[0].id, requestId: request.id, action: "password_reset_requested", resourceType: "user", resourceId: rows[0].id, result: "success" });
+        } catch {
+          await audit({ userId: rows[0].id, requestId: request.id, action: "password_reset_requested", resourceType: "user", resourceId: rows[0].id, result: "failure", metadata: { reason: "delivery_failed" } });
+        }
+      }
+    }
+    return reply.status(202).send({ data: { message: "If an account exists for this email and email delivery is available, a reset link has been sent." } });
+  });
+
+  // POST /api/v1/auth/password-reset/confirm
+  fastify.post("/password-reset/confirm", { onRequest: [ipBucket(30)], config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (request, reply) => {
+    const parsed = z.object({ token: z.string().min(20).max(200), password: passwordSchema }).safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: { code: "VALIDATION_ERROR", message: parsed.error.issues[0]?.message ?? "Invalid request" } });
+    try {
+      const { userId } = await resetPasswordWithToken(parsed.data.token, parsed.data.password);
+      reply.clearCookie(REFRESH_COOKIE, { path: COOKIE_OPTS.path });
+      await audit({ userId, requestId: request.id, action: "password_reset_completed", resourceType: "user", resourceId: userId, result: "success" });
+      return reply.send({ data: { message: "Your password has been changed. Sign in with the new password; other sessions were signed out." } });
+    } catch (err) {
+      if (isAppError(err)) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } });
+      throw err;
+    }
+  });
+
   // GET /api/v1/auth/me
   fastify.get("/me", { preHandler: [authenticate] }, async (request, reply) => {
     return reply.send({
@@ -147,6 +187,8 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         id: request.authUser.id,
         email: request.authUser.email,
         orgIds: request.authUser.orgIds,
+        // Lets the UI show the Administration section; the backend enforces it on every admin route.
+        isPlatformAdmin: config.PLATFORM_ADMIN_USER_IDS.includes(request.authUser.id.toLowerCase()),
       },
     });
   });

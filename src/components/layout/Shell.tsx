@@ -145,6 +145,9 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <ShieldCheck size={15} />,
     basePath: "/admin",
     items: [
+      { label: "Control Center", path: "/admin/control-center" },
+      { label: "Integrations & API Keys", path: "/admin/integrations" },
+      { label: "Users & Access", path: "/admin/users" },
       { label: "Infrastructure Health", path: "/admin/infrastructure/health" },
       { label: "PostgreSQL", path: "/admin/infrastructure/postgresql" },
       { label: "ClickHouse", path: "/admin/infrastructure/clickhouse" },
@@ -200,10 +203,16 @@ function SidebarGroup({ group, defaultOpen }: { group: NavGroup; defaultOpen: bo
 function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
   const [email, setEmail] = useState<string | null>(null);
+  // Only hides navigation; every admin endpoint enforces platform-admin access itself.
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   useEffect(() => {
     let active = true;
     void apiGetMe()
-      .then((result) => { if (active && result.data?.email) setEmail(result.data.email); })
+      .then((result) => {
+        if (!active) return;
+        if (result.data?.email) setEmail(result.data.email);
+        setIsPlatformAdmin(result.data?.isPlatformAdmin === true);
+      })
       .catch(() => {});
     return () => { active = false; };
   }, []);
@@ -249,7 +258,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
               <span>Overview</span>
             </NavLink>
 
-            {NAV_GROUPS.map((group) => (
+            {NAV_GROUPS.filter((group) => group.basePath !== "/admin" || isPlatformAdmin).map((group) => (
               <SidebarGroup
                 key={group.basePath}
                 group={group}

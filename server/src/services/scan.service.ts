@@ -1171,15 +1171,28 @@ let workerActive: Promise<void> | null = null
 
 export const SCAN_SWEEP_INTERVAL_MS = 30_000
 
+// Worker liveness for admin diagnostics (this process only).
+const workerHeartbeat = { startedAt: null as Date | null, lastTickAt: null as Date | null, lastTickError: null as string | null, lastTickErrorAt: null as Date | null, intervalMs: 0 }
+export function getWorkerHeartbeat() {
+  return { ...workerHeartbeat, running: !!workerTimer && !workerStopping }
+}
+
 export function startScanWorker(intervalMs: number): NodeJS.Timeout {
   console.log(`[worker] Starting scan worker (poll interval: ${intervalMs}ms)`)
 
   workerStopping = false
+  workerHeartbeat.startedAt = new Date()
+  workerHeartbeat.intervalMs = intervalMs
   workerTimer = setInterval(async () => {
     if (workerRunning || workerStopping) return
     workerRunning = true
+    workerHeartbeat.lastTickAt = new Date()
     workerActive = processNextQueuedScan()
-      .catch((err: unknown) => console.error("[worker] Queue poll failed:", (err as Error).message))
+      .catch((err: unknown) => {
+        workerHeartbeat.lastTickError = (err as Error).name
+        workerHeartbeat.lastTickErrorAt = new Date()
+        console.error("[worker] Queue poll failed:", (err as Error).message)
+      })
       .finally(() => { workerRunning = false; workerActive = null })
   }, intervalMs)
 

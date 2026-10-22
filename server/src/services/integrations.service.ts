@@ -37,7 +37,7 @@ export const OAUTH_STATE_TTL_MS = 10 * 60_000;
 export const RETURN_PATHS = ["/settings/integrations", "/search/performance"] as const;
 export type ReturnPath = (typeof RETURN_PATHS)[number];
 
-const credentialAad = (orgId: string, integrationId: string) => `integration:${PROVIDER}:${orgId}:${integrationId}`;
+export const credentialAad = (orgId: string, integrationId: string) => `integration:${PROVIDER}:${orgId}:${integrationId}`;
 const verifierAad = (stateHash: string) => `oauth_state:${stateHash}`;
 
 export class IntegrationError extends Error {

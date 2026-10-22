@@ -1,4 +1,5 @@
 import type { FastifyError, FastifyRequest, FastifyReply } from "fastify";
+import { recordServerError } from "../platform/error-log.js";
 
 export function errorHandler(
   error: FastifyError,
@@ -43,6 +44,7 @@ export function errorHandler(
   // Log unexpected errors but never expose stack traces in the response.
   if (statusCode >= 500) {
     request.log.error(context, "Internal server error");
+    recordServerError({ requestId, method: request.method, route: request.routeOptions?.url ?? "(unmatched)", statusCode, errorClass: error.name || "Error" });
     reply.status(500).send({
       error: {
         code: "INTERNAL_ERROR",
@@ -50,6 +52,13 @@ export function errorHandler(
         requestId,
       },
     });
+    return;
+  }
+
+  // @fastify/rate-limit errors carry no code; give clients a stable one (Retry-After is set by the plugin).
+  if (statusCode === 429) {
+    request.log.warn(context, "Rate limited");
+    reply.status(429).send({ error: { code: "RATE_LIMITED", message: error.message || "Too many requests", requestId } });
     return;
   }
 
