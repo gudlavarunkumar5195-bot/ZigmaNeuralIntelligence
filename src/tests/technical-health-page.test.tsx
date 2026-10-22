@@ -231,16 +231,5 @@ describe("TechnicalHealthPage", () => {
   });
 });
 
-describe("search data pages", () => {
-  it("say plainly that ranking data is unavailable and shows no figures", async () => {
-    const pages = await import("../pages/search/SearchDataPages");
-    // Keywords and Competitors are real pages now (keyword-research-pages.test.tsx).
-    // Backlinks is a real section now (backlink-pages.test.tsx).
-    for (const Page of [pages.RankingsPage]) {
-      const { container, unmount } = render(<Page />);
-      expect(screen.getByText("Unavailable: no data source connected")).toBeTruthy();
-      expect(container.textContent).not.toMatch(/\d/);
-      unmount();
-    }
-  });
-});
+// The search-data placeholders (keywords, competitors, backlinks, rankings) are real pages now:
+// keyword-research-pages.test.tsx, backlink-pages.test.tsx and rank-tracking-pages.test.tsx.

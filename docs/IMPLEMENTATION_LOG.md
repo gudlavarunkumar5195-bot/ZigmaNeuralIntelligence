@@ -153,3 +153,16 @@ Branch `feat/p5-backlinks`, from `main` after PR #7. Not deployed; no production
 - Competitor gap on referring domains, with compatibility checks and limitations; shared anchors.
 - Deterministic, inspectable opportunity score that uses only available evidence.
 - A Backlink Intelligence section with eight tabs replaces the placeholder. Migration 035 (additive). Details: `docs/BACKLINKS.md`.
+
+---
+
+# Phase 6: Rank tracking and SERP intelligence
+
+Branch `feat/p6-rank-tracking`, from `main` after PR #8. Not deployed; no production migration run; no provider called.
+
+- Projects per website and search configuration (unique). Keywords with groups, landing pages, CSV import, pause and confirmed soft removal; competitors.
+- Observations with explicit statuses (ranked, not found to depth N, no data, failed), unique per keyword, site, day and source. Ranking-report import with preview and per-row reasons; idempotent.
+- Change classification only between comparable (same-source) observations; distribution, top-10 share, top pages, history, SERP features (seen vs owned), competitor comparison (same day and source only).
+- Evidence-based alerts, deduplicated per rule and triggering observation; failures only trigger collection-failure alerts.
+- Provider-neutral SERP adapter, scheduler and leased jobs with backoff, quotas, recovery and idempotency, tested with a fake provider. No real provider is registered (paid; needs approval).
+- The Rank Tracking section replaces the last search-data placeholder; the placeholder module is removed. Migration 036 (additive). Details: `docs/RANK_TRACKING.md`.

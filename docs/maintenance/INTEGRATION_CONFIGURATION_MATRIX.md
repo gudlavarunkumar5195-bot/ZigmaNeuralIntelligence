@@ -12,6 +12,7 @@ The single source of status is `GET /api/v1/admin/integrations`, backed by `serv
 | ClickHouse | Deployment: `CLICKHOUSE_HOST`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_CA_CERT` | ClickHouse Cloud or self-hosted, HTTPS | `testClickHouse("connection")`: DNS, TLS (certificate is always verified), auth, query | `analytics_events` (outbox dispatch) | Events stay in the PostgreSQL outbox; analytics pages read PostgreSQL |
 | Transactional email | **Not implemented** | — | — | Password-reset links, alert emails | Reset links cannot be delivered (`EMAIL_NOT_CONFIGURED`); notification deliveries are marked FAILED with the reason |
 | Backlink data | CSV import of authorized exports (no credential); live link check through `safeFetch` | — | — | Backlink intelligence (`docs/BACKLINKS.md`) | Import a CSV; the Search Console API has no links endpoint |
+| Ranking data | Ranking-report import (no credential); provider-neutral SERP adapter with no provider registered | — | — | Rank tracking (`docs/RANK_TRACKING.md`) | Import reports; scheduled tracking and refresh are disabled |
 | Licensed keyword / SERP / backlink data | **Not implemented** | Needs approval (paid) | — | Volume, difficulty, CPC, rankings, backlinks, competitor discovery | Shown as unsupported, never estimated |
 | Anthropic, Sarvam, other AI providers | **Not implemented** (only OpenRouter exists in the server) | — | — | — | — |
 

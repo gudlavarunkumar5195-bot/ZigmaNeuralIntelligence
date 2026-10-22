@@ -167,6 +167,13 @@ const envSchema = z.object({
 
   // Keyword research. Only implemented providers may be listed; licensed
   // providers need a contract and spending approval before an adapter exists.
+  // Rank tracking (docs/RANK_TRACKING.md).
+  RANK_MAX_KEYWORDS_PER_PROJECT: z.coerce.number().int().min(1).max(10_000).default(500),
+  RANK_MAX_COMPETITORS: z.coerce.number().int().min(1).max(20).default(10),
+  RANK_MAX_REQUESTS_PER_ORG_PER_DAY: z.coerce.number().int().min(1).max(1_000_000).default(1_000),
+  RANK_IMPORT_MAX_ROWS: z.coerce.number().int().min(100).max(200_000).default(50_000),
+  RANK_IMPORT_MAX_BYTES: z.coerce.number().int().min(10_000).max(25_000_000).default(10_000_000),
+  RANK_PROVIDER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   // Backlink intelligence (docs/BACKLINKS.md).
   BACKLINK_IMPORT_MAX_ROWS: z.coerce.number().int().min(100).max(200_000).default(50_000),
   BACKLINK_IMPORT_MAX_BYTES: z.coerce.number().int().min(10_000).max(25_000_000).default(10_000_000),

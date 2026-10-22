@@ -20,6 +20,7 @@ import { integrationRoutes } from "./routes/integrations.js";
 import { keywordResearchRoutes } from "./routes/keyword-research.js";
 import { adminRoutes } from "./routes/admin.js";
 import { backlinkRoutes } from "./routes/backlinks.js";
+import { rankTrackingRoutes } from "./routes/rank-tracking.js";
 import { scanRoutes } from "./routes/scans.js";
 import { modelRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
@@ -118,6 +119,7 @@ export async function buildApp() {
   await fastify.register(keywordResearchRoutes, { prefix: "/api/v1/keyword-research" });
   await fastify.register(adminRoutes, { prefix: "/api/v1/admin" });
   await fastify.register(backlinkRoutes, { prefix: "/api/v1/websites" });
+  await fastify.register(rankTrackingRoutes, { prefix: "/api/v1/rank-tracking" });
   await fastify.register(scanRoutes, { prefix: "/api/v1/scans" });
   await fastify.register(modelRoutes, { prefix: "/api/v1/models" });
   await fastify.register(routingRoutes, { prefix: "/api/v1/routing" });
