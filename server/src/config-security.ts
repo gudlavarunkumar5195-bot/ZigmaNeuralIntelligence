@@ -1,3 +1,5 @@
+import { parseKeyRing } from "./integrations/crypto.js";
+
 /**
  * Strict environment boolean parser. Unlike z.coerce.boolean() (which uses
  * Boolean(value) and therefore turns the string "false" into true), only
@@ -46,6 +48,27 @@ export function validateProductionSecurityConfig(env: NodeJS.ProcessEnv): void {
   if (!env.CORS_ORIGIN || env.CORS_ORIGIN.trim() === "" || /localhost|127\.0\.0\.1/.test(env.CORS_ORIGIN)) {
     throw new Error("Production requires an explicit non-localhost CORS_ORIGIN");
   }
+  validateGoogleIntegrationConfig(env);
+}
+
+/**
+ * Google Search Console is optional, but a half-configured or insecure setup
+ * must not start in production: once any OAuth variable is set, all of them
+ * and a valid encryption key are required, and the redirect URI must be https.
+ */
+export function validateGoogleIntegrationConfig(env: NodeJS.ProcessEnv): void {
+  const names = ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI"] as const;
+  if (!names.some((n) => env[n]?.trim())) return;
+  const missing = names.filter((n) => !env[n]?.trim());
+  if (missing.length) throw new Error(`Production Google OAuth is partially configured; missing ${missing.join(", ")}`);
+  if (!/^https:\/\//.test(env.GOOGLE_OAUTH_REDIRECT_URI!.trim())) {
+    throw new Error("Production GOOGLE_OAUTH_REDIRECT_URI must use https");
+  }
+  if (!env.INTEGRATION_ENCRYPTION_KEYS?.trim()) {
+    throw new Error("Production Google OAuth requires INTEGRATION_ENCRYPTION_KEYS to encrypt refresh tokens");
+  }
+  // Throws on malformed keys or an unknown active key id.
+  parseKeyRing(env.INTEGRATION_ENCRYPTION_KEYS, env.INTEGRATION_ENCRYPTION_ACTIVE_KEY_ID);
 }
 
 /**

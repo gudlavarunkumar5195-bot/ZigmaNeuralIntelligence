@@ -800,6 +800,185 @@ export async function apiStartCrawl(websiteId: string, crawl: { maxPages?: numbe
   }) as WithMeta<{ id: string; status: string }, { deduplicated?: boolean; idempotentReplay?: boolean }>
 }
 
+// ─── Google Search Console ────────────────────────────────────────────────────
+
+export interface IntegrationRecord {
+  id: string
+  provider: "google_search_console"
+  account_email: string | null
+  scopes: string[]
+  status: "active" | "reauth_required" | "error"
+  status_reason: string | null
+  connected_at: string
+  connected_by_name: string | null
+  properties: Array<{ websiteId: string; siteUrl: string; status: string; domain: string }>
+}
+
+export interface GoogleConfigStatus {
+  configured: boolean
+  missing: string[]
+}
+
+export interface GscPropertyOption {
+  siteUrl: string
+  permissionLevel: string
+  propertyType: "domain" | "url_prefix"
+  canReadData: boolean
+  linkedWebsiteIds: string[]
+}
+
+export interface GscSyncJob {
+  id: string
+  kind: "initial" | "incremental" | "manual"
+  status: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled"
+  date_from: string
+  date_to: string
+  units_total: number
+  units_done: number
+  units_failed: number
+  rows_written?: number
+  quota_pauses?: number
+  error_code: string | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  run_after?: string
+}
+
+export interface GscLinkStatus {
+  property: {
+    id: string
+    site_url: string
+    property_type: "domain" | "url_prefix"
+    permission_level: string
+    status: "active" | "access_lost"
+    status_reason: string | null
+    last_sync_success_at: string | null
+    last_synced_through: string | null
+    first_incomplete_date: string | null
+    next_sync_at: string | null
+    integration_id: string
+  }
+  integration: { id: string; account_email: string | null; status: string; status_reason: string | null } | null
+  activeJob: GscSyncJob | null
+  recentJobs: GscSyncJob[]
+  freshness: { latestFinalDay: string | null; latestDay: string | null; firstIncompleteDate: string | null }
+}
+
+export interface SearchMetrics {
+  clicks: number | null
+  impressions: number | null
+  ctr: number | null
+  position: number | null
+}
+
+export interface SearchSeriesPoint extends SearchMetrics {
+  date: string
+  state: "complete" | "fresh" | "missing" | "not_returned"
+}
+
+export interface SearchPerformanceRange {
+  dimensionSet: string
+  totals: SearchMetrics
+  coverage: { days: number; daysWithData: number; daysMissing: number; daysFresh: number; daysNotReturned: number }
+  series: SearchSeriesPoint[]
+}
+
+export interface SearchPerformance {
+  current: SearchPerformanceRange
+  previous: SearchPerformanceRange | null
+  comparison: Record<"clicks" | "impressions" | "ctr" | "position", { change: number | null; changePct: number | null }> | null
+}
+
+export interface SearchTopRow {
+  key: string
+  clicks: number
+  impressions: number
+  ctr: number | null
+  position: number | null
+  daysWithRows: number
+}
+
+export type SearchDimension = "query" | "page" | "country" | "device" | "searchAppearance"
+
+const gscPath = (websiteId: string) => `/websites/${encodeURIComponent(websiteId)}/search-console`
+
+export async function apiListIntegrations() {
+  if (IS_DEMO) throw new IntegrationRequired("integrations.list")
+  return apiFetch<IntegrationRecord[]>("/integrations") as WithMeta<IntegrationRecord[], { googleSearchConsole: GoogleConfigStatus }>
+}
+
+export async function apiStartGoogleConnect(returnTo: "/settings/integrations" | "/search/performance" = "/settings/integrations") {
+  if (IS_DEMO) throw new IntegrationRequired("integrations.connect")
+  return apiFetch<{ authorizationUrl: string }>("/integrations/google/oauth/start", { method: "POST", body: JSON.stringify({ returnTo }) }) as Promise<
+    ApiResponse<{ authorizationUrl: string }> & { error: (ApiResponse<unknown>["error"] & { missing?: string[] }) | null }
+  >
+}
+
+export async function apiListGscProperties(integrationId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("integrations.properties")
+  return apiFetch<GscPropertyOption[]>(`/integrations/${encodeURIComponent(integrationId)}/properties`)
+}
+
+export async function apiDisconnectIntegration(integrationId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("integrations.disconnect")
+  return apiFetch<{ revokedAtGoogle: boolean }>(`/integrations/${encodeURIComponent(integrationId)}`, { method: "DELETE" })
+}
+
+export async function apiGetSearchConsoleStatus(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.status")
+  return apiFetch<GscLinkStatus | null>(gscPath(websiteId)) as WithMeta<GscLinkStatus | null, { websiteVerified: boolean }>
+}
+
+export async function apiLinkSearchConsole(websiteId: string, integrationId: string, siteUrl: string) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.link")
+  return apiFetch<{ propertyType: string; permissionLevel: string }>(gscPath(websiteId), { method: "PUT", body: JSON.stringify({ integrationId, siteUrl }) })
+}
+
+export async function apiUnlinkSearchConsole(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.unlink")
+  return apiFetch<null>(gscPath(websiteId), { method: "DELETE" })
+}
+
+export async function apiStartSearchConsoleSync(websiteId: string, range?: { from: string; to: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.sync")
+  return apiFetch<GscSyncJob>(`${gscPath(websiteId)}/sync`, { method: "POST", body: JSON.stringify(range ?? {}) }) as WithMeta<GscSyncJob, { deduplicated: boolean }>
+}
+
+export async function apiCancelSearchConsoleSync(websiteId: string, jobId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.cancel")
+  return apiFetch<GscSyncJob>(`${gscPath(websiteId)}/sync-jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" })
+}
+
+export async function apiListSearchConsoleJobs(websiteId: string, cursor?: string | null) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.jobs")
+  return apiFetch<GscSyncJob[]>(`${gscPath(websiteId)}/sync-jobs${queryString({ limit: 10, cursor })}`) as WithMeta<GscSyncJob[], CursorMeta>
+}
+
+export async function apiGetSearchPerformance(
+  websiteId: string,
+  params: { from: string; to: string; compareFrom?: string; compareTo?: string } & Partial<Record<SearchDimension, string>>,
+) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.performance")
+  return apiFetch<SearchPerformance>(`${gscPath(websiteId)}/performance${queryString(params)}`) as WithMeta<
+    SearchPerformance,
+    { source: string; siteUrl: string; searchType: string; firstIncompleteDate: string | null; lastSyncSuccessAt: string | null }
+  >
+}
+
+export async function apiGetSearchTop(
+  websiteId: string,
+  dimension: SearchDimension,
+  params: { from: string; to: string; sort?: string; order?: "asc" | "desc"; search?: string; cursor?: string | null; limit?: number },
+) {
+  if (IS_DEMO) throw new IntegrationRequired("gsc.top")
+  return apiFetch<SearchTopRow[]>(`${gscPath(websiteId)}/top/${dimension}${queryString({ ...params, limit: params.limit ?? 25 })}`) as WithMeta<
+    SearchTopRow[],
+    CursorMeta & { coverage: { days: number; daysFetched: number; daysTruncated: number }; firstIncompleteDate: string | null }
+  >
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
 export async function apiGetReport(scanId: string) {

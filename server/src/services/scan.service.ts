@@ -1417,6 +1417,16 @@ async function processNextQueuedScan(): Promise<void> {
 
   if (workerStopping) return
 
+  // Search Console syncs: time-boxed slices, so scans and the monitoring
+  // scheduler keep running between them.
+  await import("./search-console.service.js")
+    .then(({ processSearchConsoleTick }) => processSearchConsoleTick())
+    .catch((err: unknown) => {
+      console.error("[worker] Search Console sync tick failed:", (err as Error).message)
+    })
+
+  if (workerStopping) return
+
   const claimed = await claimNextQueuedScan()
   if (!claimed) return
   const { scanId, orgId, ownerId } = claimed

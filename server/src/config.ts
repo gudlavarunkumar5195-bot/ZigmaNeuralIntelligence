@@ -138,6 +138,32 @@ const envSchema = z.object({
   // The optional LLM "routing advisor" call is an extra provider call per
   // agent run. Off by default: deterministic scoring selects the model.
   AI_ROUTER_LLM_ENABLED: strictBoolean("AI_ROUTER_LLM_ENABLED"),
+
+  // Google Search Console integration. Optional: without these the feature
+  // reports "not configured" and makes no Google call. Secrets are server-side
+  // only (never sent to the browser or logged).
+  GOOGLE_OAUTH_CLIENT_ID: z.string().trim().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().trim().optional(),
+  // Must exactly match an authorized redirect URI of the OAuth client, e.g.
+  // https://app.example.com/api/v1/integrations/google/oauth/callback
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().trim().url().optional(),
+  // Where the browser lands after the OAuth callback (the app's public origin).
+  // Defaults to the first CORS_ORIGIN. Never taken from the request.
+  APP_PUBLIC_URL: z.string().trim().url().optional(),
+  // Versioned AES-256-GCM keys for integration credentials:
+  // "k1:<base64 32 bytes>[,k2:<base64 32 bytes>]". New writes use
+  // INTEGRATION_ENCRYPTION_ACTIVE_KEY_ID (default: the last key listed); old
+  // keys stay listed until every row is re-encrypted.
+  INTEGRATION_ENCRYPTION_KEYS: z.string().trim().optional(),
+  INTEGRATION_ENCRYPTION_ACTIVE_KEY_ID: z.string().trim().optional(),
+  // Sync scheduling and API budget (Search Analytics: 1,200 QPM per site and
+  // per user; we stay far below it).
+  GSC_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(60).max(10_080).default(1_440),
+  GSC_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(480).default(90),
+  GSC_REVISIT_DAYS: z.coerce.number().int().min(0).max(30).default(5),
+  GSC_MAX_REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(60),
+  GSC_DATA_RETENTION_DAYS: z.coerce.number().int().min(30).max(1_000).default(490),
+  GSC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
