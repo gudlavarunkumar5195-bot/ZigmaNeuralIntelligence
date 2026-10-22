@@ -979,6 +979,160 @@ export async function apiGetSearchTop(
   >
 }
 
+// ─── Keyword research ─────────────────────────────────────────────────────────
+
+export type ResearchKind = "overview" | "ideas" | "related" | "organic" | "gap"
+export type ResearchMetric = "search_volume" | "keyword_difficulty" | "cpc" | "competition" | "clicks" | "impressions" | "ctr" | "position"
+export type ResearchIntent = "informational" | "navigational" | "commercial" | "transactional"
+
+export interface ResearchProviderInfo {
+  id: string
+  name: string
+  kind: "first_party" | "licensed"
+  capabilities: string[]
+  unsupported: string[]
+  metrics: ResearchMetric[]
+  metricScope: string
+  targeting: { countries: string[] | "all"; languages: string[] | "all"; devices: string[] | "all"; note?: string }
+  caching: { allowed: boolean; maxAgeMinutes: number }
+  attribution: string
+  costNote: string
+  configured: boolean
+  missingConfiguration: string[]
+}
+
+export interface ResearchCapabilities {
+  providers: ResearchProviderInfo[]
+  capabilities: string[]
+  metrics: ResearchMetric[]
+  limits: { maxResults: number; runsPerDay: number; maxCompetitors: number; maxOverviewKeywords: number }
+}
+
+export interface ResearchRun {
+  id: string
+  website_id: string
+  kind: ResearchKind
+  provider: string
+  capability: string
+  params: Record<string, unknown>
+  status: "running" | "completed" | "partial" | "failed"
+  result_count: number
+  sample: boolean
+  observed_through: string | null
+  notes: string[]
+  summary: {
+    counts?: { shared: number; missing: number; unique: number }
+    datasets?: Array<{ id: string; label: string; role: string; complete: boolean; observedAt: string | null; keywords: number }>
+    unavailable?: Array<{ domain: string; reason: string }>
+  }
+  error_code: string | null
+  error: string | null
+  created_at: string
+  finished_at: string | null
+}
+
+export interface ResearchResult {
+  seq: number
+  keyword_key: string
+  keyword: string
+  metrics: Partial<Record<ResearchMetric, number>>
+  intent: ResearchIntent | null
+  intent_rule: string | null
+  gap_category: "shared" | "missing" | "unique" | null
+  absence_from_sample: boolean | null
+  competitors_present: number | null
+  observations: Record<string, { position: number | null; clicks: number | null; impressions: number | null }> | null
+}
+
+export interface ResearchInsight {
+  status: "completed" | "failed"
+  model: string | null
+  summary: string | null
+  items: Array<{ keyword: string; keywordKey: string; priority: "high" | "medium" | "low"; rationale: string; intentNote: string | null; evidence: string[]; missingData: string[] }>
+  error: string | null
+  created_at: string
+}
+
+export interface KeywordListSummary {
+  id: string
+  name: string
+  created_at: string
+  items: number
+}
+
+type ResearchError = { code: string; message: string; details?: Record<string, unknown>; runId?: string }
+
+export async function apiResearchCapabilities() {
+  if (IS_DEMO) throw new IntegrationRequired("research.capabilities")
+  return apiFetch<ResearchCapabilities>("/keyword-research/capabilities")
+}
+
+export async function apiRunResearch(kind: ResearchKind, body: Record<string, unknown>) {
+  if (IS_DEMO) throw new IntegrationRequired("research.run")
+  return apiFetch<{ run: ResearchRun; results: ResearchResult[] }>(`/keyword-research/${kind}`, { method: "POST", body: JSON.stringify(body) }) as Promise<
+    Omit<ApiResponse<{ run: ResearchRun; results: ResearchResult[] }>, "error"> & { error: ResearchError | null; meta?: { reused: "cache" | "in_progress" | null; nextCursor: string | null } }
+  >
+}
+
+export async function apiListResearchRuns(params: { websiteId?: string; kind?: ResearchKind; cursor?: string | null; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("research.runs")
+  return apiFetch<ResearchRun[]>(`/keyword-research/runs${queryString({ ...params, limit: params.limit ?? 10 })}`) as WithMeta<ResearchRun[], CursorMeta>
+}
+
+export async function apiGetResearchRun(
+  runId: string,
+  params: { sort?: string; order?: "asc" | "desc"; intent?: string; gap?: string; search?: string; cursor?: string | null; limit?: number } = {},
+) {
+  if (IS_DEMO) throw new IntegrationRequired("research.run.get")
+  return apiFetch<{ run: ResearchRun; results: ResearchResult[]; insight: ResearchInsight | null }>(
+    `/keyword-research/runs/${encodeURIComponent(runId)}${queryString({ ...params, limit: params.limit ?? 50 })}`,
+  ) as WithMeta<{ run: ResearchRun; results: ResearchResult[]; insight: ResearchInsight | null }, CursorMeta & { provider: ResearchProviderInfo | null }>
+}
+
+export async function apiCompareResearchRuns(runId: string, otherId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("research.compare")
+  return apiFetch<{ older: { id: string; createdAt: string }; newer: { id: string; createdAt: string }; added: string[]; removed: string[]; changed: Array<{ key: string; changes: Record<string, { from: number | null; to: number | null }> }> }>(
+    `/keyword-research/runs/${encodeURIComponent(runId)}/compare/${encodeURIComponent(otherId)}`,
+  )
+}
+
+export async function apiResearchInsights(runId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("research.insights")
+  return apiFetch<ResearchInsight>(`/keyword-research/runs/${encodeURIComponent(runId)}/insights`, { method: "POST" })
+}
+
+/** CSV export: an authenticated download (the bearer token cannot ride on a plain link). */
+export async function apiExportResearchCsv(runId: string): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("research.export")
+  const res = await fetch(`${config.apiBaseUrl}/keyword-research/runs/${encodeURIComponent(runId)}/export`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: res.status === 403 ? "Your role cannot export research results." : message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? "keyword-research.csv" }
+}
+
+export async function apiListKeywordLists() {
+  if (IS_DEMO) throw new IntegrationRequired("research.lists")
+  return apiFetch<KeywordListSummary[]>("/keyword-research/lists")
+}
+
+export async function apiCreateKeywordList(name: string) {
+  if (IS_DEMO) throw new IntegrationRequired("research.lists.create")
+  return apiFetch<KeywordListSummary>("/keyword-research/lists", { method: "POST", body: JSON.stringify({ name }) })
+}
+
+export async function apiAddToKeywordList(listId: string, runId: string, keywords: string[]) {
+  if (IS_DEMO) throw new IntegrationRequired("research.lists.add")
+  return apiFetch<{ added: number }>(`/keyword-research/lists/${encodeURIComponent(listId)}/items`, { method: "POST", body: JSON.stringify({ runId, keywords }) })
+}
+
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
 export async function apiGetReport(scanId: string) {

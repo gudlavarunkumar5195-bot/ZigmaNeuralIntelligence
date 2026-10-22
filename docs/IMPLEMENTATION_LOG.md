@@ -112,3 +112,18 @@ Branch `feat/p3-search-console`, from `main` after PRs #3 and #4. Not deployed; 
 - Migration 032 (additive). Details, configuration, limits and the staging procedure: `docs/SEARCH_CONSOLE.md`.
 
 Known limitations: web search type only; one performance filter at a time; no ClickHouse copy yet; per-process pacing (fine for one worker instance, needs a shared limiter if web/worker scale out); a Google OAuth app in Testing mode expires refresh tokens after 7 days.
+
+---
+
+# Phase 4: Keyword research and competitor intelligence
+
+Branch `feat/p4-keyword-research`, from `main` after PR #5. Not deployed; no production migration run; no paid provider call made.
+
+- Provider-neutral interface (`server/src/research/providers`) with declared capabilities, metrics, targeting, caching, attribution and cost; registry with explicit `CAPABILITY_UNSUPPORTED` / `PROVIDER_NOT_CONFIGURED` errors.
+- Search Console provider (first-party): organic keywords, ideas, related, overview, and gap between an organization's own websites, from the Phase 3 data. Search volume, difficulty, CPC, competition, SERPs and competitor discovery are unsupported (no licensed provider approved).
+- Runs with provenance (source, data date, sample flag, notes), params-hash caching, concurrent de-duplication, per-org daily quota, timeouts, safe errors, retention pruning.
+- Deterministic normalization, rule-based intent, gap classification (shared / missing / unique, with sample-absence flags), run comparison, CSV export, saved keyword lists, optional AI prioritization grounded in the run's rows and labelled as AI.
+- Keywords and Competitors pages replace the placeholders; Rankings and Backlinks stay placeholders.
+- Migration 033 (additive). Details: `docs/KEYWORD_RESEARCH.md`.
+
+Known limitations: first-party data only; gap limited to own websites; runs execute in the request (no queue); ideas only from queries the site already has.

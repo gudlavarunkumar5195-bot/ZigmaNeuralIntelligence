@@ -164,6 +164,18 @@ const envSchema = z.object({
   GSC_MAX_REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(60),
   GSC_DATA_RETENTION_DAYS: z.coerce.number().int().min(30).max(1_000).default(490),
   GSC_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+
+  // Keyword research. Only implemented providers may be listed; licensed
+  // providers need a contract and spending approval before an adapter exists.
+  KEYWORD_RESEARCH_PROVIDERS: z
+    .string()
+    .trim()
+    .default("google_search_console")
+    .refine((v) => v.split(",").map((s) => s.trim()).filter(Boolean).every((id) => ["google_search_console"].includes(id)), "KEYWORD_RESEARCH_PROVIDERS lists a provider that is not implemented (available: google_search_console)"),
+  KEYWORD_RESEARCH_MAX_RUNS_PER_ORG_PER_DAY: z.coerce.number().int().min(1).max(100_000).default(200),
+  KEYWORD_RESEARCH_MAX_RESULTS: z.coerce.number().int().min(10).max(5_000).default(500),
+  KEYWORD_RESEARCH_RETENTION_DAYS: z.coerce.number().int().min(7).max(1_000).default(400),
+  KEYWORD_RESEARCH_PROVIDER_TIMEOUT_MS: z.coerce.number().int().min(500).max(120_000).default(30_000),
 });
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {

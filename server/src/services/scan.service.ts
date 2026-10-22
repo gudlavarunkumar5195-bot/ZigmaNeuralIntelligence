@@ -1425,6 +1425,13 @@ async function processNextQueuedScan(): Promise<void> {
       console.error("[worker] Search Console sync tick failed:", (err as Error).message)
     })
 
+  // Keyword research retention (bounded batch, at most hourly).
+  await import("./keyword-research.service.js")
+    .then(({ pruneResearch }) => pruneResearch())
+    .catch((err: unknown) => {
+      console.error("[worker] Keyword research retention failed:", (err as Error).message)
+    })
+
   if (workerStopping) return
 
   const claimed = await claimNextQueuedScan()

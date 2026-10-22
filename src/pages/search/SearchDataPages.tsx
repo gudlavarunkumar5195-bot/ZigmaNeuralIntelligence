@@ -2,7 +2,7 @@ import { DatabaseZap } from "lucide-react";
 import { EmptyState } from "../../components/ui/DataState";
 
 /**
- * Search-data features (keywords, rankings, backlinks, competitors) need an
+ * Search-data features without a real source yet (rankings, backlinks) need an
  * authorized external data source. Until one is connected these views say so
  * plainly and show no numbers: nothing here is estimated or simulated.
  */
@@ -21,15 +21,9 @@ function SearchDataUnavailable({ title, needs, why }: { title: string; needs: st
 
 const OWN_CRAWL = "The ZigmaNeural crawler only measures your own verified site, so it cannot produce this data.";
 
-export function KeywordsPage() {
-  return <SearchDataUnavailable title="Keywords" needs="Keyword volumes and difficulty require a licensed keyword data provider. The queries your site already appears for, with clicks and impressions from Google Search Console, are under Search performance." why={OWN_CRAWL} />;
-}
 export function RankingsPage() {
   return <SearchDataUnavailable title="Rankings" needs="Exact daily SERP positions by location and device require a licensed SERP data provider. Average positions reported by Google Search Console are under Search performance." why={OWN_CRAWL} />;
 }
 export function BacklinksPage() {
   return <SearchDataUnavailable title="Backlinks" needs="Backlinks and referring domains require a licensed backlink index provider." why={OWN_CRAWL} />;
-}
-export function CompetitorsPage() {
-  return <SearchDataUnavailable title="Competitors" needs="Competitor keyword and traffic comparisons require a licensed search data provider." why={OWN_CRAWL} />;
 }
