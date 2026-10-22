@@ -171,6 +171,27 @@ const envSchema = z.object({
   CONTENT_THIN_WORDS: z.coerce.number().int().min(10).max(5_000).default(200),
   CONTENT_STALE_MONTHS: z.coerce.number().int().min(1).max(120).default(24),
   CONTENT_MAX_PAGES: z.coerce.number().int().min(10).max(20_000).default(5_000),
+  // AI search visibility (docs/AI_VISIBILITY.md). Model answers go through the
+  // OX Alpha executor (free models only unless AI_ALLOW_PAID_MODELS). Web
+  // search is billed per request by OpenRouter, so it stays off until an
+  // operator approves the cost and sets AIV_WEB_SEARCH_ENABLED=true.
+  AIV_ANSWER_MODEL: z.string().trim().max(200).default(""),
+  AIV_WEB_SEARCH_ENABLED: strictBoolean("AIV_WEB_SEARCH_ENABLED"),
+  AIV_WEB_SEARCH_MAX_RESULTS: z.coerce.number().int().min(1).max(10).default(5),
+  AIV_MAX_BRANDS_PER_ORG: z.coerce.number().int().min(1).max(500).default(20),
+  AIV_MAX_COMPETITORS: z.coerce.number().int().min(1).max(50).default(10),
+  AIV_MAX_QUERIES_PER_BRAND: z.coerce.number().int().min(1).max(5_000).default(200),
+  AIV_MAX_REQUESTS_PER_RUN: z.coerce.number().int().min(1).max(1_000).default(100),
+  AIV_MAX_REQUESTS_PER_ORG_PER_DAY: z.coerce.number().int().min(1).max(100_000).default(100),
+  AIV_PROVIDER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+  AIV_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(180_000).default(60_000),
+  // Characters of each answer kept for review; 0 keeps none (only a hash, mentions and citations).
+  AIV_RESPONSE_MAX_CHARS: z.coerce.number().int().min(0).max(100_000).default(20_000),
+  AIV_IMPORT_MAX_ROWS: z.coerce.number().int().min(10).max(50_000).default(5_000),
+  AIV_IMPORT_MAX_BYTES: z.coerce.number().int().min(10_000).max(25_000_000).default(5_000_000),
+  // Metrics over fewer eligible observations than this are flagged as a small sample.
+  AIV_MIN_SAMPLE: z.coerce.number().int().min(1).max(1_000).default(10),
+  AIV_VERIFY_MAX_PER_DAY: z.coerce.number().int().min(1).max(5_000).default(100),
   // Rank tracking (docs/RANK_TRACKING.md).
   RANK_MAX_KEYWORDS_PER_PROJECT: z.coerce.number().int().min(1).max(10_000).default(500),
   RANK_MAX_COMPETITORS: z.coerce.number().int().min(1).max(20).default(10),

@@ -18,7 +18,18 @@ export interface ModelRequest {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: "text" | "json_object";
+  /** Provider-side web search (OpenRouter "web" plugin). Billed separately; only set when explicitly enabled. */
+  webSearch?: { maxResults: number };
   signal?: AbortSignal;
+}
+
+/** A source the provider itself attributes to the answer (never inferred from the text). */
+export interface ProviderCitation {
+  url: string;
+  title: string | null;
+  /** 1-based order in the provider's list. */
+  position: number;
+  kind: "provider_annotation" | "provider_citation_list";
 }
 
 export interface TokenUsage {
@@ -35,6 +46,10 @@ export interface ModelResponse {
   finishReason: FinishReason;
   usage: TokenUsage | null;
   durationMs: number;
+  /** The provider's own request/generation id, when it returns one. */
+  providerRequestId?: string | null;
+  /** Citations returned in the provider's structured response (empty when none). */
+  citations?: ProviderCitation[];
 }
 
 // ─── Error Types ──────────────────────────────────────────────────────────────

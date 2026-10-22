@@ -2621,3 +2621,497 @@ export async function apiContentExport(websiteId: string, kind: "pages" | "findi
   const disposition = res.headers.get("content-disposition") ?? ""
   return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `content-${kind}.csv` }
 }
+
+// ─── AI search visibility (server/src/routes/ai-visibility.ts) ───────────────
+
+export type AivProviderStatus = "available" | "not_configured" | "requires_approval" | "model_not_allowed" | "manual_import_only"
+
+export interface AivProvider {
+  id: string
+  name: string
+  surface: string
+  collection: "provider_api" | "manual_import"
+  capabilities: Record<string, boolean | string>
+  explanation: string
+  limitations: string[]
+  costNote: string
+  status: AivProviderStatus
+  detail: string
+  model: string | null
+}
+
+export interface AivMetricDefinition { label: string; numerator: string; denominator: string; missing: string }
+
+export interface AivUsage { day: string; limit: number; used: number; remaining: number }
+
+export interface AivProviders {
+  providers: AivProvider[]
+  usage: AivUsage
+  surfaces: Record<string, string>
+  importSurfaces: string[]
+  promptVersion: string
+  metricDefinitions: Record<string, AivMetricDefinition>
+  priorityFormula: string
+  ai: { available: boolean }
+  limits: Record<string, number>
+}
+
+export interface AivBrand {
+  id: string
+  kind: "target" | "competitor"
+  parent_id: string | null
+  website_id: string | null
+  website_domain: string | null
+  name: string
+  domains: string[]
+  aliases: string[]
+  products: string[]
+  exclude_terms: string[]
+  disambiguation: string | null
+  topics: string[]
+  locations: string[]
+  language: string | null
+  country: string | null
+  status: "active" | "disabled" | "archived"
+  owner_id: string | null
+  schedule: "off" | "weekly"
+  schedule_provider: string | null
+  schedule_repeats: number | null
+  schedule_max_requests: number | null
+  schedule_approved_at: string | null
+  config_version: number
+  created_at: string
+  updated_at: string
+  competitors?: number
+  active_queries?: number
+  observations?: number
+  last_observed_at?: string | null
+}
+
+export interface AivBrandInput {
+  name?: string
+  domains?: string[]
+  aliases?: string[]
+  products?: string[]
+  excludeTerms?: string[]
+  disambiguation?: string | null
+  topics?: string[]
+  locations?: string[]
+  language?: string | null
+  country?: string | null
+  websiteId?: string | null
+  status?: "active" | "disabled" | "archived"
+}
+
+export interface AivQuery {
+  id: string
+  text: string
+  topic: string | null
+  language: string | null
+  country: string | null
+  providers: string[]
+  status: "active" | "paused" | "archived"
+  version: number
+  source: "manual" | "import"
+  last_run_at: string | null
+  last_observed_at: string | null
+  created_at: string
+  observations: number
+  answered: number
+  mentioned: number
+}
+
+export interface AivMetric { value: number | null; numerator: number; denominator: number; smallSample: boolean }
+export interface AivGroupKey { method: "provider_api" | "manual_import"; provider: string; surface: string; model: string | null }
+
+export interface AivGroupMetrics {
+  key: AivGroupKey
+  sample: { observations: number; answered: number; unanswered: number; queries: number; withCitations: number; firstObservedAt: string | null; lastObservedAt: string | null; languages: string[]; countries: string[] }
+  brands: Array<{ brandId: string; name: string; kind: "target" | "competitor"; mentionRate: AivMetric; queryCoverage: AivMetric; mentionShare: AivMetric; citationRate: AivMetric; citationShare: AivMetric; firstMentionAt: string | null; lastMentionAt: string | null }>
+  coMentions: Array<{ brandId: string; name: string; rate: AivMetric }>
+  sources: { citations: number; distinctHosts: number; topHosts: Array<{ host: string; observations: number }>; topSourceShare: AivMetric }
+  consistency: AivMetric
+  trend: Array<{ period: string; answered: number; mentioned: number; rate: number | null }>
+}
+
+export interface AivMetrics {
+  window: { from: string; to: string | null }
+  brands: Array<{ id: string; name: string; kind: "target" | "competitor" }>
+  groups: AivGroupMetrics[]
+  definitions: Record<string, AivMetricDefinition>
+  minSample: number
+  surfaces: Record<string, string>
+  observations: number
+  truncated: boolean
+  staleMentions: number
+  note: string
+}
+
+export interface AivRun {
+  id: string
+  provider: string
+  model: string | null
+  trigger: "manual" | "scheduled"
+  status: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled"
+  repeats: number
+  items_total: number
+  items_done: number
+  items_failed: number
+  schedule_slot: string | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface AivRunDetail extends AivRun {
+  items: Array<{ query_id: string; query_text: string; query_version: number; repeat_index: number; status: "pending" | "done" | "failed"; attempts: number; error_code: string | null; observation_id: string | null }>
+}
+
+export interface AivRunPreview {
+  provider: { id: string; name: string; status: AivProviderStatus; detail: string; costNote: string; limitations: string[] }
+  model: string | null
+  queries: number
+  repeats: number
+  requests: number
+  usage: AivUsage
+  maxRequestsPerRun: number
+  costEstimate: string | null
+  canRun: boolean
+  blockers: string[]
+}
+
+export interface AivOverview {
+  brand: AivBrand
+  competitors: number
+  counts: { active_queries: number; queries_observed: number; observations: number; api_observations: number; imported_observations: number; excluded_observations: number; last_observed_at: string | null }
+  providers: Array<{ id: string; name: string; status: AivProviderStatus; detail: string; collection: string }>
+  usage: AivUsage
+  runs: AivRun[]
+  metrics: AivMetrics
+  changes: Array<{ key: AivGroupKey; from: { period: string; answered: number; rate: number | null }; to: { period: string; answered: number; rate: number | null }; delta: number }>
+  topOpportunities: Array<{ id: string; kind: string; title: string; priority: number; confidence: string; status: string }>
+}
+
+export interface AivMentionRef { brandId: string; name: string; kind: "target" | "competitor"; count: number }
+
+export interface AivObservationRow {
+  id: string
+  query_id: string
+  query_text: string
+  query_version: number
+  provider: string
+  surface: string
+  model: string | null
+  collection_method: "provider_api" | "manual_import"
+  observed_at: string
+  language: string | null
+  country: string | null
+  web_grounded: boolean | null
+  answer_status: "answered" | "truncated" | "empty" | "refused"
+  response_retention: "full" | "truncated" | "none"
+  excerpt: string | null
+  excluded_at: string | null
+  mentions: AivMentionRef[]
+  citations: number
+}
+
+export interface AivCitation {
+  id: string
+  position: number | null
+  original_url: string
+  title: string | null
+  kind: "provider_annotation" | "provider_citation_list" | "inline_text_url" | "imported"
+  cited_brand_id: string | null
+  cited_brand: string | null
+  source_id: string
+  normalized_url: string
+  host: string
+  registrable_domain: string | null
+  idn: boolean
+  verification_status: string
+  verified_at: string | null
+}
+
+export interface AivObservation extends Omit<AivObservationRow, "excerpt" | "mentions" | "citations"> {
+  response_text: string | null
+  response_chars: number
+  response_sha256: string
+  provider_request_id: string | null
+  usage: Record<string, number> | null
+  prompt_version: string | null
+  notes: string | null
+  run_id: string | null
+  run_trigger: string | null
+  import_id: string | null
+  import_label: string | null
+  import_filename: string | null
+  exclusion_reason: string | null
+  detector_version: number
+  mentionsCurrent: boolean
+  mentions: Array<{ brand_id: string; name: string; kind: string; match_count: number; matched_terms: string[]; matched_by: string[]; excerpt: string | null }>
+  citations: AivCitation[]
+  events: Array<{ event: string; detail: Record<string, unknown>; created_at: string }>
+}
+
+export interface AivSource {
+  id: string
+  normalized_url: string
+  host: string
+  registrable_domain: string | null
+  idn: boolean
+  title: string | null
+  first_observed_at: string
+  last_observed_at: string
+  verification_status: string
+  verification_http_status: number | null
+  verified_at: string | null
+  cited_brand: string | null
+  cited_brand_kind: string | null
+  observations: number
+  queries: number
+  kinds: string[]
+}
+
+export interface AivDomains {
+  window: { from: string; to: string | null }
+  domains: Array<{ host: string; registrable_domain: string | null; cited_brand: string | null; cited_brand_kind: string | null; observations: number; queries: number; urls: number; first_observed_at: string; last_observed_at: string; imported_observations: number }>
+  diversity: Array<{ week: string; hosts: number; observations: number }>
+}
+
+export interface AivQueryEvidence { queryId: string; query: string | null; observationIds: string[] }
+
+export interface AivComparison {
+  window: { from: string; to: string | null }
+  target: { id: string; name: string }
+  competitors: Array<{ id: string; name: string }>
+  minSample: number
+  truncated: boolean
+  note: string
+  groups: Array<{
+    key: AivGroupKey
+    sample: { answered: number; queries: number; languages: string[]; countries: string[]; firstObservedAt: string | null; lastObservedAt: string | null }
+    competitors: Array<{
+      brandId: string
+      name: string
+      target: { mentioned: number; rate: AivMetric; cited: number }
+      competitor: { mentioned: number; rate: AivMetric; cited: number }
+      competitorOnlyQueries: AivQueryEvidence[]
+      targetOnlyQueries: AivQueryEvidence[]
+      bothQueries: number
+      sharedSourceHosts: string[]
+      history: { status: "ok" | "insufficient"; splitAt: string | null; earlier: { answered: number; targetRate: number | null; competitorRate: number | null } | null; later: { answered: number; targetRate: number | null; competitorRate: number | null } | null }
+    }>
+  }>
+}
+
+export interface AivOpportunity {
+  id: string
+  kind: string
+  title: string
+  explanation: string
+  action: string
+  evidence: { observationIds: string[]; queryIds: string[]; brandIds: string[]; hosts: string[]; urls: string[]; counts: Record<string, number> }
+  limitations: string[]
+  priority: number
+  priority_factors: Array<{ name: string; weight: number; value: number | null; explanation: string }>
+  confidence: "high" | "medium" | "low"
+  status: "open" | "in_progress" | "done" | "dismissed" | "obsolete"
+  owner_id: string | null
+  first_detected_at: string
+  last_detected_at: string
+  resolved_at: string | null
+}
+
+export interface AivOpportunityDetail extends AivOpportunity {
+  formula: string
+  events: Array<{ event: string; from_status: string | null; to_status: string | null; note: string | null; created_at: string }>
+  observations: Array<{ id: string; observed_at: string; query_text: string; provider: string; surface: string; collection_method: string; excluded_at: string | null }>
+  queries: Array<{ id: string; text: string }>
+}
+
+export interface AivImportPreview {
+  format: "csv" | "json"
+  rowsTotal: number
+  accepted: number
+  duplicatesInFile: number
+  duplicatesExisting: number
+  rejected: number
+  rejectedSamples: Array<{ line: number; reason: string }>
+  newQueries: number
+  truncated: boolean
+  mapping: Record<string, string>
+  sample: Array<{ line: number; query: string; surface: string; model: string | null; observedAt: string; citations: number; responseChars: number }>
+  note: string
+}
+
+export interface AivImportResult { importId: string; duplicateImport: boolean; inserted: number; duplicates: number; rejected: number; rejectedSamples?: Array<{ line: number; reason: string }>; queriesCreated: number }
+
+export interface AivImportRecord { id: string; format: string; source_label: string; filename: string | null; rows_total: number; rows_accepted: number; rows_rejected: number; rows_duplicate: number; queries_created: number; created_at: string }
+
+export interface AivAiSummary {
+  id: string
+  model: string
+  body: { summary: string; patterns: Array<{ statement: string; observationIds: string[] }>; sourceCategories: Array<{ host: string; category: string }>; caveats: string[] }
+  observation_ids: string[]
+  created_at: string
+  dropped?: number
+}
+
+export type AivWindow = { from?: string; to?: string; provider?: string; surface?: string; method?: "provider_api" | "manual_import"; queryId?: string }
+
+const aiv = (path = "") => `/ai-visibility${path}`
+const ab = (brandId: string, path = "") => aiv(`/brands/${encodeURIComponent(brandId)}${path}`)
+const aj = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+
+export async function apiAivProviders() {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.providers")
+  return apiFetch<AivProviders>(aiv("/providers"))
+}
+export async function apiAivBrands(includeArchived = false) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.brands")
+  return apiFetch<AivBrand[]>(aiv(`/brands${queryString({ includeArchived: includeArchived || undefined })}`))
+}
+export async function apiAivCreateBrand(input: AivBrandInput & { name: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.brand.create")
+  return apiFetch<AivBrand>(aiv("/brands"), aj("POST", input))
+}
+export async function apiAivUpdateBrand(brandId: string, patch: AivBrandInput) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.brand.update")
+  return apiFetch<AivBrand>(ab(brandId), aj("PATCH", patch))
+}
+export async function apiAivOverview(brandId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.overview")
+  return apiFetch<AivOverview>(ab(brandId, "/overview"))
+}
+export async function apiAivSetSchedule(brandId: string, body: { schedule: "off" } | { schedule: "weekly"; provider: string; repeats: number; maxRequests: number; confirm: true }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.schedule")
+  return apiFetch<AivBrand>(ab(brandId, "/schedule"), aj("PUT", body))
+}
+export async function apiAivCompetitors(brandId: string, includeArchived = false) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.competitors")
+  return apiFetch<AivBrand[]>(ab(brandId, `/competitors${queryString({ includeArchived: includeArchived || undefined })}`))
+}
+export async function apiAivAddCompetitor(brandId: string, input: AivBrandInput & { name: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.competitor.add")
+  return apiFetch<AivBrand>(ab(brandId, "/competitors"), aj("POST", input))
+}
+export async function apiAivUpdateCompetitor(brandId: string, competitorId: string, patch: AivBrandInput) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.competitor.update")
+  return apiFetch<AivBrand>(ab(brandId, `/competitors/${encodeURIComponent(competitorId)}`), aj("PATCH", patch))
+}
+export async function apiAivQueries(brandId: string, params: { status?: string; topic?: string; search?: string; limit?: number; offset?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.queries")
+  return apiFetch<AivQuery[]>(ab(brandId, `/queries${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<AivQuery[], { total: number; topics: string[]; limit: number; offset: number }>
+}
+export async function apiAivAddQueries(brandId: string, queries: Array<{ text: string; topic?: string | null; language?: string | null; country?: string | null; providers?: string[] }>) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.queries.add")
+  return apiFetch<{ added: number; alreadyExists: number; invalid: Array<{ text: string; reason: string }> }>(ab(brandId, "/queries"), aj("POST", { queries }))
+}
+export async function apiAivUpdateQuery(brandId: string, queryId: string, patch: { text?: string; topic?: string | null; providers?: string[]; status?: "active" | "paused" | "archived" }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.query.update")
+  return apiFetch<AivQuery & { versionCreated: boolean }>(ab(brandId, `/queries/${encodeURIComponent(queryId)}`), aj("PATCH", patch))
+}
+export async function apiAivQueryVersions(brandId: string, queryId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.query.versions")
+  return apiFetch<Array<{ version: number; text: string; topic: string | null; created_at: string }>>(ab(brandId, `/queries/${encodeURIComponent(queryId)}/versions`))
+}
+export async function apiAivPreviewRun(brandId: string, body: { provider: string; queryIds?: string[]; repeats: number }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.run.preview")
+  return apiFetch<AivRunPreview>(ab(brandId, "/runs/preview"), aj("POST", body))
+}
+export async function apiAivStartRun(brandId: string, body: { provider: string; queryIds?: string[]; repeats: number; idempotencyKey: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.run.start")
+  return apiFetch<{ run: AivRun; deduplicated: boolean }>(ab(brandId, "/runs"), aj("POST", { ...body, confirm: true }))
+}
+export async function apiAivRuns(brandId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.runs")
+  return apiFetch<AivRun[]>(ab(brandId, "/runs"))
+}
+export async function apiAivRun(brandId: string, runId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.run")
+  return apiFetch<AivRunDetail>(ab(brandId, `/runs/${encodeURIComponent(runId)}`))
+}
+export async function apiAivCancelRun(brandId: string, runId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.run.cancel")
+  return apiFetch<{ cancelled: boolean }>(ab(brandId, `/runs/${encodeURIComponent(runId)}/cancel`), aj("POST", {}))
+}
+export async function apiAivObservations(brandId: string, params: AivWindow & { mentions?: string; notMentioned?: boolean; hasCitations?: boolean; includeExcluded?: boolean; limit?: number; cursor?: string } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.observations")
+  return apiFetch<AivObservationRow[]>(ab(brandId, `/observations${queryString({ ...params, notMentioned: params.notMentioned || undefined, includeExcluded: params.includeExcluded || undefined })}`)) as WithMeta<AivObservationRow[], { nextCursor: string | null }>
+}
+export async function apiAivObservation(brandId: string, observationId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.observation")
+  return apiFetch<AivObservation>(ab(brandId, `/observations/${encodeURIComponent(observationId)}`))
+}
+export async function apiAivSetExcluded(brandId: string, observationId: string, exclude: boolean, reason?: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.observation.exclude")
+  return apiFetch<{ changed: boolean }>(ab(brandId, `/observations/${encodeURIComponent(observationId)}/${exclude ? "exclude" : "include"}`), aj("POST", exclude ? { reason } : {}))
+}
+export async function apiAivSources(brandId: string, params: { host?: string; search?: string; verification?: string; owner?: string; from?: string; to?: string; sort?: string; limit?: number; offset?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.sources")
+  return apiFetch<AivSource[]>(ab(brandId, `/sources${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<AivSource[], { total: number; limit: number; offset: number }>
+}
+export async function apiAivDomains(brandId: string, params: AivWindow = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.domains")
+  return apiFetch<AivDomains>(ab(brandId, `/domains${queryString(params)}`))
+}
+export async function apiAivVerifySource(brandId: string, sourceId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.source.verify")
+  return apiFetch<{ sourceId: string; url: string; status: string; httpStatus: number | null }>(ab(brandId, `/sources/${encodeURIComponent(sourceId)}/verify`), aj("POST", {}))
+}
+export async function apiAivMetrics(brandId: string, params: AivWindow = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.metrics")
+  return apiFetch<AivMetrics>(ab(brandId, `/metrics${queryString(params)}`))
+}
+export async function apiAivComparison(brandId: string, params: AivWindow = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.comparison")
+  return apiFetch<AivComparison>(ab(brandId, `/competitor-comparison${queryString(params)}`))
+}
+export async function apiAivOpportunities(brandId: string, params: { status?: string; kind?: string } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.opportunities")
+  return apiFetch<AivOpportunity[]>(ab(brandId, `/opportunities${queryString(params)}`)) as WithMeta<AivOpportunity[], { formula: string }>
+}
+export async function apiAivOpportunity(brandId: string, id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.opportunity")
+  return apiFetch<AivOpportunityDetail>(ab(brandId, `/opportunities/${encodeURIComponent(id)}`))
+}
+export async function apiAivUpdateOpportunity(brandId: string, id: string, patch: { status?: "open" | "in_progress" | "done" | "dismissed"; note?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.opportunity.update")
+  return apiFetch<{ updated: boolean }>(ab(brandId, `/opportunities/${encodeURIComponent(id)}`), aj("PATCH", patch))
+}
+export async function apiAivPreviewImport(brandId: string, body: { content: string; format?: "csv" | "json" }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.import.preview")
+  return apiFetch<AivImportPreview>(ab(brandId, "/imports/preview"), aj("POST", body))
+}
+export async function apiAivImport(brandId: string, body: { content: string; format?: "csv" | "json"; filename?: string; sourceLabel: string; createMissingQueries: boolean }) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.import")
+  return apiFetch<AivImportResult>(ab(brandId, "/imports"), aj("POST", body))
+}
+export async function apiAivImports(brandId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.imports")
+  return apiFetch<AivImportRecord[]>(ab(brandId, "/imports"))
+}
+export async function apiAivAiSummaries(brandId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.ai.list")
+  return apiFetch<AivAiSummary[]>(ab(brandId, "/ai/summaries")) as WithMeta<AivAiSummary[], { available: boolean }>
+}
+export async function apiAivCreateAiSummary(brandId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.ai.create")
+  return apiFetch<AivAiSummary>(ab(brandId, "/ai/summaries"), aj("POST", {}))
+}
+export async function apiAivExport(brandId: string, kind: "observations" | "sources" | "metrics"): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("aiv.export")
+  const res = await fetch(`${config.apiBaseUrl}${ab(brandId, `/export${queryString({ kind })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: res.status === 403 ? "Your role cannot export AI visibility data." : message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `ai-visibility-${kind}.csv` }
+}

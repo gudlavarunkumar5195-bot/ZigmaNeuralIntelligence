@@ -1,4 +1,4 @@
-import type { ModelProvider, ModelRequest, ModelResponse } from "../provider.js";
+import type { ModelProvider, ModelRequest, ModelResponse, ProviderCitation } from "../provider.js";
 import { ProviderError } from "../provider.js";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -38,6 +38,9 @@ export class OpenRouterProvider implements ModelProvider {
 
     if (request.responseFormat === "json_object") {
       body.response_format = { type: "json_object" };
+    }
+    if (request.webSearch) {
+      body.plugins = [{ id: "web", max_results: request.webSearch.maxResults }];
     }
 
     let res: Response;
@@ -160,8 +163,34 @@ export class OpenRouterProvider implements ModelProvider {
           }
         : null,
       durationMs,
+      providerRequestId: typeof raw.id === "string" ? raw.id.slice(0, 200) : null,
+      citations: parseCitations(raw, choice),
     };
   }
+}
+
+const MAX_CITATIONS = 50;
+
+/**
+ * Structured citations only: OpenRouter "url_citation" message annotations,
+ * else a top-level `citations` URL list (returned by some search models).
+ * Malformed entries are skipped; URLs are validated later by the caller.
+ */
+export function parseCitations(raw: OpenRouterResponse, choice: NonNullable<OpenRouterResponse["choices"]>[number]): ProviderCitation[] {
+  const out: ProviderCitation[] = [];
+  for (const a of Array.isArray(choice.message?.annotations) ? choice.message.annotations : []) {
+    const c = a?.type === "url_citation" ? a.url_citation : undefined;
+    if (c && typeof c.url === "string" && c.url.length <= 2048) {
+      out.push({ url: c.url, title: typeof c.title === "string" ? c.title.slice(0, 300) : null, position: out.length + 1, kind: "provider_annotation" });
+    }
+    if (out.length >= MAX_CITATIONS) return out;
+  }
+  if (out.length) return out;
+  for (const u of Array.isArray(raw.citations) ? raw.citations : []) {
+    if (typeof u === "string" && u.length <= 2048) out.push({ url: u, title: null, position: out.length + 1, kind: "provider_citation_list" });
+    if (out.length >= MAX_CITATIONS) break;
+  }
+  return out;
 }
 
 function normalizeFinishReason(raw?: string | null): ModelResponse["finishReason"] {
@@ -182,15 +211,21 @@ interface OpenRouterRequestBody {
   max_tokens: number;
   temperature: number;
   response_format?: { type: string };
+  plugins?: Array<{ id: string; max_results: number }>;
 }
 
-interface OpenRouterResponse {
+export interface OpenRouterResponse {
   id?: string;
   model?: string;
   choices?: Array<{
-    message?: { role?: string; content?: string };
+    message?: {
+      role?: string;
+      content?: string;
+      annotations?: Array<{ type?: string; url_citation?: { url?: unknown; title?: unknown } }>;
+    };
     finish_reason?: string;
   }>;
+  citations?: unknown[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
