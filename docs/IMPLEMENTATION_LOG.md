@@ -166,3 +166,17 @@ Branch `feat/p6-rank-tracking`, from `main` after PR #8. Not deployed; no produc
 - Evidence-based alerts, deduplicated per rule and triggering observation; failures only trigger collection-failure alerts.
 - Provider-neutral SERP adapter, scheduler and leased jobs with backoff, quotas, recovery and idempotency, tested with a fake provider. No real provider is registered (paid; needs approval).
 - The Rank Tracking section replaces the last search-data placeholder; the placeholder module is removed. Migration 036 (additive). Details: `docs/RANK_TRACKING.md`.
+
+---
+
+# Phase 7: Content intelligence
+
+Branch `feat/p7-content-intelligence`, from `main` after PR #9. Not deployed; no production migration run; no AI provider called (AI is tested with a fake executor).
+
+- The crawler computes bounded content features; a persistent `content_pages` inventory is upserted in the crawl transaction. Crawl failures are kept apart from content quality.
+- Content audit (rule set content-1, heuristics labelled, no overlap with the technical audit), with stable fingerprints and a lifecycle (only an analysis resolves; regressions reopen; failed re-crawls keep findings). Analyses run as leased jobs, one per crawl.
+- Deterministic topic clusters of pages and Search Console queries, with manual corrections kept; under-covered and overlapping topics; competitor gaps from rank tracking.
+- Opportunities from measured data with visible priority factors, confidence, missing data, heuristic effort and a lifecycle, plus an observational baseline on completion.
+- Briefs: deterministic first revision, revisions with conflict detection, checklist approval, and optional AI suggestions (grounded, injection-aware, sanitized, flagged for review).
+- Fixes found by tests: block elements merged words in extracted text; events written in one transaction lost their order (`clock_timestamp()`); a pre-existing race in Generate Login Credentials (from the intermediate phase) let two concurrent confirmations both replace the password, because the duplicate guard read an audit event written after the transaction. It is now written inside the locked transaction.
+- Migration 037 (additive). Details: `docs/CONTENT_INTELLIGENCE.md`.

@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { decodeCursor, encodeCursor } from "../http/pagination.js";
-import { query, withTransaction } from "../db/client.js";
+import { query, withTransaction, type Queryable } from "../db/client.js";
 import { generatePassword, hashPassword, register } from "../services/auth.service.js";
 import { AdminError } from "./integrations.js";
 import type { Role } from "../types.js";
@@ -138,8 +138,16 @@ export type GenerateOutcome =
  * bcrypt hash, and returned to the caller once. Requests are serialized, and
  * a second request within a few seconds is refused (double clicks).
  */
-export async function generateAccountCredentials(confirmReset: boolean): Promise<GenerateOutcome> {
+export async function generateAccountCredentials(confirmReset: boolean, ctx: { actorId: string; requestId: string }): Promise<GenerateOutcome> {
   const email = config.ADMIN_CREDENTIAL_ACCOUNT_EMAIL;
+  // The success event is written inside the locked transaction: the next request
+  // (waiting on the lock) then always sees it, so two concurrent confirmations
+  // cannot both replace the password. It never contains the password.
+  const recordGenerated = (tx: Queryable, userId: string, metadata: Record<string, unknown>) =>
+    tx.query(
+      "INSERT INTO audit_log (user_id, request_id, action, resource_type, resource_id, result, metadata) VALUES ($1,$2,'admin_credentials_generated','user',$3,'success',$4)",
+      [ctx.actorId, ctx.requestId, userId, JSON.stringify(metadata)],
+    );
   return withTransaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('admin-credential-generation', 0))");
     const { rows } = await tx.query<{ id: string; active: boolean }>("SELECT id, active FROM users WHERE email = $1", [email]);
@@ -156,11 +164,13 @@ export async function generateAccountCredentials(confirmReset: boolean): Promise
       await tx.query("UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1", [existing.id, await hashPassword(password)]);
       await tx.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [existing.id]);
       const revoked = await tx.query("UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [existing.id]);
+      await recordGenerated(tx, existing.id, { created: false, revokedSessions: revoked.rowCount ?? 0 });
       return { kind: "generated", userId: existing.id, email, password, created: false, active: existing.active, revokedSessions: revoked.rowCount ?? 0 };
     }
     const password = generatePassword();
     // Same provisioning as self-registration (user + organization + owner membership).
     const { userId } = await register({ email, password, fullName: "ZigmaNeural", orgName: "ZigmaNeural" });
+    await recordGenerated(tx, userId, { created: true, revokedSessions: 0 });
     return { kind: "generated", userId, email, password, created: true, active: true, revokedSessions: 0 };
   });
 }

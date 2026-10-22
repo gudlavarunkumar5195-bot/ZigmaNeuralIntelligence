@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as cheerio from "cheerio";
 import { safeFetch, type SafeFetchOptions, type SafeFetchResult } from "./fetch.js";
 import { parseRobotsTxt, robotsAllows, type RobotsFetchOutcome } from "./robots.js";
+import { extractContentFeatures, type ContentFeatures } from "../content/extract.js";
 import { parseSitemapXml } from "./sitemap.js";
 import type { ModuleResult, NewFinding, Severity } from "../types.js";
 
@@ -111,6 +112,8 @@ export interface CrawlPage {
   inSitemap: boolean;
   fetchError: string | null;
   responseMs: number;
+  /** Bounded content features for the content inventory (HTML pages fetched OK only). */
+  content?: ContentFeatures | null;
 }
 
 export type TruncatedReason = "page_limit" | "time_limit" | "depth_limit" | "discovery_limit" | "cancelled";
@@ -275,6 +278,7 @@ function parsePage(html: string, pageUrl: string, inScope: (url: string) => bool
     imagesMissingAltSample: missingAlt
       .slice(0, IMAGE_SAMPLE)
       .map((el) => normalizeUrl($(el).attr("src") ?? "", resolveBase) ?? ($(el).attr("src") ?? "").slice(0, 300)),
+    content: extractContentFeatures($, resolveBase, inScope),
   };
 }
 
@@ -439,7 +443,7 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
 
   const emptyContent = {
     title: null, metaDescription: null, canonicals: [] as string[], robotsMeta: null, h1Count: null,
-    imagesTotal: null, imagesMissingAlt: null, imagesMissingAltSample: [] as string[], internalLinks: [] as string[],
+    imagesTotal: null, imagesMissingAlt: null, imagesMissingAltSample: [] as string[], internalLinks: [] as string[], content: null,
   };
 
   const recordBlocked = (item: { url: string; depth: number; from: string | null }) => {
@@ -488,6 +492,7 @@ export async function crawlSite(startUrl: string, options: CrawlOptions): Promis
       imagesMissingAlt: parsed ? parsed.imagesMissingAlt : null,
       imagesMissingAltSample: parsed?.imagesMissingAltSample ?? [],
       internalLinks: parsed?.links ?? [],
+      content: parsed?.content ?? null,
       indexable: outcome === "ok" && reasons.length === 0,
       indexabilityReasons: reasons,
       fetchError: outcome === "ok" || outcome === "non_html" || outcome === "redirect" ? null : res.error ?? null,

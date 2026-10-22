@@ -247,12 +247,12 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(400).send({ error: { code: "HTTPS_REQUIRED", message: "Generated passwords are only returned over HTTPS (check TRUST_PROXY behind the load balancer)." } });
     }
     try {
-      const out = await generateAccountCredentials(body.confirmReset);
+      const out = await generateAccountCredentials(body.confirmReset, { actorId: request.authUser.id, requestId: request.id });
       if (out.kind === "confirmation_required") {
         return reply.status(409).send({ error: { code: "CONFIRMATION_REQUIRED", message: `${config.ADMIN_CREDENTIAL_ACCOUNT_EMAIL} already exists. Confirm to replace its password; its current sessions will be signed out.`, details: { exists: true, active: out.active } } });
       }
-      // The password is in this response only: never logged, audited or stored in plaintext.
-      await act(request, "admin_credentials_generated", "success", { resourceType: "user", resourceId: out.userId, metadata: { created: out.created, revokedSessions: out.revokedSessions } });
+      // The password is in this response only: never logged, audited or stored in plaintext
+      // (the success audit event was written inside the generation transaction).
       return reply
         .header("cache-control", "no-store")
         .header("pragma", "no-cache")
