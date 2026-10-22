@@ -41,6 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Search size={15} />,
     basePath: "/intelligence",
     items: [
+      { label: "SEO Workspace", path: "/intelligence/workspace" },
       { label: "SEO", path: "/intelligence/seo" },
       { label: "AI Visibility", path: "/intelligence/ai-visibility" },
       { label: "Security", path: "/intelligence/security" },
@@ -398,6 +399,7 @@ function TopBar() {
     if (path === "/intelligence/performance") return "Performance";
     if (path === "/intelligence/accessibility") return "Accessibility";
     if (path === "/intelligence/technical-health") return "Technical Health";
+    if (path === "/intelligence/workspace" || path.startsWith("/intelligence/workspace/")) return "SEO Workspace";
     if (path === "/intelligence/content" || path.startsWith("/intelligence/content/")) return "Content";
     if (path === "/search/keywords") return "Keywords";
     if (path === "/search/rankings" || path.startsWith("/search/rankings/")) return "Rankings";

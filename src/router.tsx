@@ -62,6 +62,7 @@ const ResetPasswordPage = lazy(() => import("./pages/auth/ResetPasswordPage").th
 const ControlCenterPage = lazy(() => import("./pages/admin/ControlCenterPage").then(({ ControlCenterPage }) => ({ default: ControlCenterPage })));
 const IntegrationsAdminPage = lazy(() => import("./pages/admin/IntegrationsAdminPage").then(({ IntegrationsAdminPage }) => ({ default: IntegrationsAdminPage })));
 const UsersAdminPage = lazy(() => import("./pages/admin/UsersAdminPage").then(({ UsersAdminPage }) => ({ default: UsersAdminPage })));
+const WorkspacePage = lazy(() => import("./pages/intelligence/workspace/WorkspacePage").then(({ WorkspacePage }) => ({ default: WorkspacePage })));
 const ContentPage = lazy(() => import("./pages/intelligence/content/ContentPage").then(({ ContentPage }) => ({ default: ContentPage })));
 const PlaceholderPage = lazy(() => import("./pages/PlaceholderPage").then(({ PlaceholderPage }) => ({ default: PlaceholderPage })));
 
@@ -108,6 +109,8 @@ export const router = createBrowserRouter([
       { path: "intelligence/performance", Component: PerformancePage },
       { path: "intelligence/accessibility", Component: AccessibilityPage },
       { path: "intelligence/technical-health", Component: TechnicalHealthPage },
+      { path: "intelligence/workspace", Component: WorkspacePage },
+      { path: "intelligence/workspace/:tab", Component: WorkspacePage },
       { path: "intelligence/content", Component: ContentPage },
       { path: "intelligence/content/:tab", Component: ContentPage },
       { path: "search/performance", Component: SearchPerformancePage },
