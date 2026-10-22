@@ -55,6 +55,23 @@ services:
       - key: OPENROUTER_API_KEY
         scope: RUN_TIME
         type: SECRET
+      # ── Optional Google Search Console (see docs/SEARCH_CONSOLE.md) ────────
+      # All four or none; production refuses a partial setup.
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: GOOGLE_OAUTH_REDIRECT_URI
+        scope: RUN_TIME
+        value: "${APP_URL}/api/v1/integrations/google/oauth/callback"
+      - key: INTEGRATION_ENCRYPTION_KEYS
+        scope: RUN_TIME
+        type: SECRET
+      - key: APP_PUBLIC_URL
+        scope: RUN_TIME
+        value: "${APP_URL}"
       # ── Non-secret runtime config ─────────────────────────────────────────
       - key: NODE_ENV
         scope: RUN_TIME
