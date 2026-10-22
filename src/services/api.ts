@@ -2098,3 +2098,276 @@ export async function apiBacklinkExport(websiteId: string, kind: "links" | "refe
   const disposition = res.headers.get("content-disposition") ?? ""
   return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `backlinks-${kind}.csv` }
 }
+
+// ─── Rank tracking (/rank-tracking) ──────────────────────────────────────────
+// Observations come from imported ranking reports or a configured provider.
+
+export type RankStatus = "ranked" | "not_in_results" | "no_data" | "failed"
+export type RankChangeKind = "improved" | "declined" | "unchanged" | "entered" | "dropped_out" | "unavailable"
+
+export interface RankProject {
+  id: string
+  website_id: string
+  website_domain: string
+  name: string
+  search_engine: "google" | "bing"
+  country: string | null
+  language: string | null
+  device: "desktop" | "mobile" | null
+  location: string | null
+  timezone: string
+  frequency: "manual" | "daily" | "weekly"
+  status: "active" | "paused" | "archived"
+  created_at: string
+  keywords?: number
+  last_observed?: string | null
+}
+
+export interface RankSource {
+  id: string
+  name: string
+  status: "available" | "not_configured" | "not_supported"
+  explanation: string
+  setup: string | null
+  costNote: string
+}
+
+export interface RankSources {
+  sources: RankSource[]
+  usage: { day: string; limit: number; used: number }
+  features: string[]
+  limits: { keywordsPerProject: number; competitorsPerProject: number; requestsPerDay: number; importRows: number; importBytes: number }
+}
+
+export interface RankKeyword {
+  id: string
+  keyword: string
+  group_name: string | null
+  landing_page: string | null
+  status: "active" | "paused"
+  source: string
+  created_at: string
+}
+
+export interface RankObservation {
+  id: string
+  keyword_id: string
+  subject_domain: string
+  observed_date: string
+  status: RankStatus
+  position: number | null
+  result_depth: number | null
+  ranking_url: string | null
+  source: string
+  source_label: string
+  serp_features: string[]
+  owned_features: string[]
+  result_type: string | null
+  error_code: string | null
+}
+
+export interface RankRow {
+  keywordId: string
+  keyword: string
+  group: string | null
+  status: string
+  landingPage: string | null
+  latest: RankObservation | null
+  previous: RankObservation | null
+  change: { kind: RankChangeKind; delta: number | null; reason: string }
+}
+
+export interface RankDashboard {
+  keywords: { tracked: number; active: number; paused: number; withObservations: number }
+  changes: Record<RankChangeKind, number>
+  distribution: Record<string, number>
+  topPages: Array<{ url: string; keywords: number; averagePosition: number; bestPosition: number }>
+  top10Trend: Array<{ day: string; source: string; share: number | null; top10: number; conclusive: number; excluded: number }>
+  range: { from: string; to: string }
+  activity: {
+    lastImport: null | { created_at: string; source_label: string; rows_accepted: number }
+    lastJob: null | { id: string; status: string; provider: string; keywords_total: number; keywords_done: number; keywords_failed: number; error: string | null; created_at: string; finished_at: string | null }
+    usageToday: { limit: number; used: number }
+  }
+}
+
+export interface RankCompetitorComparison {
+  competitors: Array<{
+    competitor: string
+    counts: Record<string, number>
+    keywords: Array<{
+      keywordId: string
+      keyword: string
+      date: string | null
+      relation: "both_ranked" | "own_only" | "competitor_only" | "neither" | "not_comparable"
+      ahead: "own" | "competitor" | "tie" | null
+      reason: string
+      own: null | { position: number | null; status: RankStatus; url: string | null; ownedFeatures: string[] }
+      competitor: null | { position: number | null; status: RankStatus; url: string | null; ownedFeatures: string[] }
+      competitorMovement: { kind: RankChangeKind; delta: number | null; reason: string }
+    }>
+  }>
+  note: string
+}
+
+export interface RankAlertRule {
+  id: string
+  rule_type: "threshold_cross" | "position_change" | "url_change" | "became_unavailable" | "competitor_overtake" | "collection_failures"
+  params: Record<string, unknown>
+  keyword_id: string | null
+  enabled: boolean
+  notify: "in_app" | "none"
+  created_at: string
+}
+
+export interface RankAlertEvent {
+  id: string
+  rule_id: string
+  rule_type: string
+  keyword_id: string
+  keyword: string
+  message: string
+  evidence: Record<string, unknown>
+  created_at: string
+  acknowledged_at: string | null
+}
+
+export interface RankImportPreview {
+  columns: Record<string, string>
+  unmappedColumns: string[]
+  missingRequired: string[]
+  rowLimitExceeded: boolean
+  rows: { total: number; accepted: number; rejected: number; duplicate: number; skipped: number }
+  rejectedSamples: Array<{ row: number; reason: string }>
+  warnings: string[]
+  newKeywords: number
+  statuses: Record<string, number>
+}
+
+const rt = (path: string) => `/rank-tracking${path}`
+const rp = (projectId: string, path = "") => rt(`/projects/${encodeURIComponent(projectId)}${path}`)
+const jsonBody = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+
+export async function apiRankSources() {
+  if (IS_DEMO) throw new IntegrationRequired("rank.sources")
+  return apiFetch<RankSources>(rt("/sources"))
+}
+export async function apiRankProjects() {
+  if (IS_DEMO) throw new IntegrationRequired("rank.projects")
+  return apiFetch<RankProject[]>(rt("/projects"))
+}
+export async function apiRankCreateProject(body: { websiteId: string; name: string; searchEngine: "google" | "bing"; country?: string | null; language?: string | null; device?: "desktop" | "mobile" | null; location?: string | null; timezone: string; frequency: "manual" | "daily" | "weekly" }) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.project.create")
+  return apiFetch<RankProject>(rt("/projects"), jsonBody("POST", body))
+}
+export async function apiRankUpdateProject(projectId: string, body: { name?: string; frequency?: string; status?: "active" | "paused" | "archived"; timezone?: string }) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.project.update")
+  return apiFetch<RankProject>(rp(projectId), jsonBody("PATCH", body))
+}
+export async function apiRankKeywords(projectId: string, params: { search?: string; group?: string; status?: string; cursor?: string | null; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.keywords")
+  return apiFetch<RankKeyword[]>(rp(projectId, `/keywords${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<RankKeyword[], { nextCursor: string | null; groups: string[] }>
+}
+export async function apiRankAddKeywords(projectId: string, keywords: Array<{ keyword: string; group?: string | null; landingPage?: string | null }>) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.keywords.add")
+  return apiFetch<{ added: number; restored: number; alreadyTracked: number; invalid: Array<{ keyword: string; reason: string }>; warnings: string[]; limit: number }>(rp(projectId, "/keywords"), jsonBody("POST", { keywords }))
+}
+export async function apiRankImportKeywords(projectId: string, csv: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.keywords.import")
+  return apiFetch<{ added: number; restored: number; alreadyTracked: number; invalid: Array<{ keyword: string; reason: string }>; warnings: string[] }>(rp(projectId, "/keywords/import"), jsonBody("POST", { csv }))
+}
+export async function apiRankUpdateKeyword(projectId: string, keywordId: string, body: { group?: string | null; landingPage?: string | null; status?: "active" | "paused" }) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.keyword.update")
+  return apiFetch<{ updated: boolean }>(rp(projectId, `/keywords/${encodeURIComponent(keywordId)}`), jsonBody("PATCH", body))
+}
+export async function apiRankRemoveKeyword(projectId: string, keywordId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.keyword.remove")
+  return apiFetch<{ removed: boolean }>(rp(projectId, `/keywords/${encodeURIComponent(keywordId)}`), jsonBody("DELETE", { confirm: true }))
+}
+export async function apiRankCompetitors(projectId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.competitors")
+  return apiFetch<Array<{ domain: string; created_at: string }>>(rp(projectId, "/competitors"))
+}
+export async function apiRankAddCompetitor(projectId: string, domain: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.competitor.add")
+  return apiFetch<{ domain: string; added: boolean }>(rp(projectId, "/competitors"), jsonBody("POST", { domain }))
+}
+export async function apiRankRemoveCompetitor(projectId: string, domain: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.competitor.remove")
+  return apiFetch<{ removed: boolean }>(rp(projectId, `/competitors/${encodeURIComponent(domain)}`), { method: "DELETE" })
+}
+export async function apiRankPreviewObservations(projectId: string, csv: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.observations.preview")
+  return apiFetch<RankImportPreview>(rp(projectId, "/observations/preview"), jsonBody("POST", { csv }))
+}
+export async function apiRankImportObservations(projectId: string, body: { csv: string; filename?: string; sourceLabel: string; createMissingKeywords: boolean }) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.observations.import")
+  return apiFetch<{ importId: string; duplicateImport: boolean; inserted: number; alreadyObserved: number; keywordsCreated: number; rejected: number; duplicates: number; alertsCreated: number; warnings: string[] }>(rp(projectId, "/observations/import"), jsonBody("POST", body))
+}
+export async function apiRankImports(projectId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.imports")
+  return apiFetch<Array<{ id: string; source_label: string; filename: string | null; rows_total: number; rows_accepted: number; rows_rejected: number; rows_duplicate: number; rows_skipped: number; keywords_created: number; created_at: string }>>(rp(projectId, "/imports"))
+}
+export async function apiRankDashboard(projectId: string, params: { group?: string; from?: string; to?: string } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.dashboard")
+  return apiFetch<RankDashboard>(rp(projectId, `/dashboard${queryString(params)}`))
+}
+export async function apiRankRankings(projectId: string, params: { group?: string; change?: string; search?: string; sort?: string; offset?: number; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.rankings")
+  return apiFetch<RankRow[]>(rp(projectId, `/rankings${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<RankRow[], { total: number; limit: number; offset: number }>
+}
+export async function apiRankHistory(projectId: string, keywordId: string, params: { from?: string; to?: string } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.history")
+  return apiFetch<{ keyword: { id: string; keyword: string }; observations: RankObservation[] }>(rp(projectId, `/keywords/${encodeURIComponent(keywordId)}/history${queryString(params)}`))
+}
+export async function apiRankSerpFeatures(projectId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.features")
+  return apiFetch<{ keywordsObserved: number; keywordsWithFeatureData: number; features: Array<{ feature: string; present: number; owned: number; keywords: Array<{ keyword: string; owned: boolean }> }> }>(rp(projectId, "/serp-features"))
+}
+export async function apiRankCompetitorComparison(projectId: string, competitor?: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.comparison")
+  return apiFetch<RankCompetitorComparison>(rp(projectId, `/competitor-comparison${queryString({ competitor })}`))
+}
+export async function apiRankRefresh(projectId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.refresh")
+  return apiFetch<{ job: { id: string; status: string; keywords_total: number }; deduplicated: boolean }>(rp(projectId, "/refresh"), jsonBody("POST"))
+}
+export async function apiRankJobs(projectId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.jobs")
+  return apiFetch<Array<{ id: string; status: string; provider: string; trigger: string; observed_date: string; keywords_total: number; keywords_done: number; keywords_failed: number; error: string | null; created_at: string; finished_at: string | null }>>(rp(projectId, "/jobs"))
+}
+export async function apiRankAlertRules(projectId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.alert-rules")
+  return apiFetch<RankAlertRule[]>(rp(projectId, "/alert-rules"))
+}
+export async function apiRankCreateAlertRule(projectId: string, body: { type: RankAlertRule["rule_type"]; params: Record<string, unknown>; keywordId?: string | null; notify?: "in_app" | "none" }) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.alert-rule.create")
+  return apiFetch<RankAlertRule>(rp(projectId, "/alert-rules"), jsonBody("POST", body))
+}
+export async function apiRankUpdateAlertRule(projectId: string, ruleId: string, body: { enabled?: boolean; notify?: "in_app" | "none" }) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.alert-rule.update")
+  return apiFetch<{ updated: boolean }>(rp(projectId, `/alert-rules/${encodeURIComponent(ruleId)}`), jsonBody("PATCH", body))
+}
+export async function apiRankAlerts(projectId: string, params: { unacknowledged?: boolean; cursor?: string | null } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.alerts")
+  return apiFetch<RankAlertEvent[]>(rp(projectId, `/alerts${queryString({ unacknowledged: params.unacknowledged ? "true" : undefined, cursor: params.cursor ?? undefined })}`)) as WithMeta<RankAlertEvent[], { nextCursor: string | null }>
+}
+export async function apiRankAcknowledge(projectId: string, eventId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("rank.alert.ack")
+  return apiFetch<{ acknowledged: boolean }>(rp(projectId, `/alerts/${encodeURIComponent(eventId)}/acknowledge`), jsonBody("POST"))
+}
+export async function apiRankExport(projectId: string, kind: "rankings" | "history" | "keywords"): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("rank.export")
+  const res = await fetch(`${config.apiBaseUrl}${rp(projectId, `/export${queryString({ kind })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: res.status === 403 ? "Your role cannot export ranking data." : message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `rank-${kind}.csv` }
+}

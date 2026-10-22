@@ -17,7 +17,7 @@ const PerformancePage = lazy(() => import("./pages/intelligence/PerformancePage"
 const AccessibilityPage = lazy(() => import("./pages/intelligence/AccessibilityPage").then(({ AccessibilityPage }) => ({ default: AccessibilityPage })));
 const SearchPerformancePage = lazy(() => import("./pages/search/SearchPerformancePage").then(({ SearchPerformancePage }) => ({ default: SearchPerformancePage })));
 const KeywordsPage = lazy(() => import("./pages/search/KeywordResearchPage").then(({ KeywordResearchPage }) => ({ default: KeywordResearchPage })));
-const RankingsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ RankingsPage }) => ({ default: RankingsPage })));
+const RankingsPage = lazy(() => import("./pages/search/rankings/RankTrackingPage").then(({ RankTrackingPage }) => ({ default: RankTrackingPage })));
 const BacklinksPage = lazy(() => import("./pages/search/backlinks/BacklinkIntelligencePage").then(({ BacklinkIntelligencePage }) => ({ default: BacklinkIntelligencePage })));
 const CompetitorsPage = lazy(() => import("./pages/search/CompetitorGapPage").then(({ CompetitorGapPage }) => ({ default: CompetitorGapPage })));
 const TechnicalHealthPage = lazy(() => import("./pages/intelligence/TechnicalHealthPage").then(({ TechnicalHealthPage }) => ({ default: TechnicalHealthPage })));
@@ -109,6 +109,7 @@ export const router = createBrowserRouter([
       { path: "search/performance", Component: SearchPerformancePage },
       { path: "search/keywords", Component: KeywordsPage },
       { path: "search/rankings", Component: RankingsPage },
+      { path: "search/rankings/:tab", Component: RankingsPage },
       { path: "search/backlinks", Component: BacklinksPage },
       { path: "search/backlinks/:tab", Component: BacklinksPage },
       { path: "search/competitors", Component: CompetitorsPage },

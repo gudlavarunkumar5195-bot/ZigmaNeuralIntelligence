@@ -1454,6 +1454,15 @@ async function processNextQueuedScan(): Promise<void> {
       })
   }
 
+  // Rank tracking collection (only runs when a SERP provider is configured; one bounded slice per tick).
+  if (!workerStopping) {
+    await import("./rank-tracking.service.js")
+      .then(({ processRankTrackingTick }) => processRankTrackingTick(15_000))
+      .catch((err: unknown) => {
+        console.error("[worker] Rank tracking tick failed:", (err as Error).message)
+      })
+  }
+
   if (workerStopping) return
 
   const claimed = await claimNextQueuedScan()
