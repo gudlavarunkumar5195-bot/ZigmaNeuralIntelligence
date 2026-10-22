@@ -140,3 +140,16 @@ Branch `feat/admin-control-center`, from `main` after PR #6. Not deployed; no pr
 - Password reset: hashed single-use tokens with a 30-minute expiry, sessions revoked on use. Email delivery is not implemented, so links cannot be sent yet.
 - Fixes: a `RATE_LIMITED` code for 429s; bcrypt's 72-byte limit enforced; the domain typo in outbound headers corrected; AI key rotation without redeploy; sessions revoked on deactivation; `users.last_login_at`.
 - Migration 034 (additive).
+
+---
+
+# Phase 5: Backlink intelligence
+
+Branch `feat/p5-backlinks`, from `main` after PR #7. Not deployed; no production migration run; no provider called.
+
+- Data: authorized CSV imports (Search Console, Ahrefs, Semrush, Majestic, generic), with preview, accurate accepted, rejected, duplicate and blank counts, limits, encoding checks and idempotent re-imports. No licensed provider is integrated; the Search Console API has no links endpoint.
+- Live link checks through `safeFetch` (SSRF and DNS-rebinding protection), with robots.txt honoured, in bounded leased jobs (one active per dataset).
+- History: snapshot comparison with no false losses (`potentially_lost` unless the snapshot is complete, the source reports the loss, or two consecutive checks miss the link); deduplicated change events.
+- Competitor gap on referring domains, with compatibility checks and limitations; shared anchors.
+- Deterministic, inspectable opportunity score that uses only available evidence.
+- A Backlink Intelligence section with eight tabs replaces the placeholder. Migration 035 (additive). Details: `docs/BACKLINKS.md`.

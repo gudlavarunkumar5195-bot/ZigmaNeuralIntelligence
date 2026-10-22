@@ -232,10 +232,11 @@ describe("TechnicalHealthPage", () => {
 });
 
 describe("search data pages", () => {
-  it("say plainly that ranking and backlink data are unavailable and show no figures", async () => {
+  it("say plainly that ranking data is unavailable and shows no figures", async () => {
     const pages = await import("../pages/search/SearchDataPages");
     // Keywords and Competitors are real pages now (keyword-research-pages.test.tsx).
-    for (const Page of [pages.RankingsPage, pages.BacklinksPage]) {
+    // Backlinks is a real section now (backlink-pages.test.tsx).
+    for (const Page of [pages.RankingsPage]) {
       const { container, unmount } = render(<Page />);
       expect(screen.getByText("Unavailable: no data source connected")).toBeTruthy();
       expect(container.textContent).not.toMatch(/\d/);

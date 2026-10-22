@@ -167,6 +167,12 @@ const envSchema = z.object({
 
   // Keyword research. Only implemented providers may be listed; licensed
   // providers need a contract and spending approval before an adapter exists.
+  // Backlink intelligence (docs/BACKLINKS.md).
+  BACKLINK_IMPORT_MAX_ROWS: z.coerce.number().int().min(100).max(200_000).default(50_000),
+  BACKLINK_IMPORT_MAX_BYTES: z.coerce.number().int().min(10_000).max(25_000_000).default(10_000_000),
+  BACKLINK_STALE_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  BACKLINK_VERIFY_MAX_LINKS: z.coerce.number().int().min(1).max(2_000).default(200),
+  BACKLINK_VERIFY_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(4),
   // The one account the Admin → Users "Generate login credentials" action may provision or reset.
   ADMIN_CREDENTIAL_ACCOUNT_EMAIL: z.string().trim().toLowerCase().email().default("info@zigmaneural.com"),
   KEYWORD_RESEARCH_PROVIDERS: z
