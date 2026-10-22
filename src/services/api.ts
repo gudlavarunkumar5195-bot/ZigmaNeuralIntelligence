@@ -1853,3 +1853,248 @@ export async function apiConfirmPasswordReset(token: string, password: string) {
   if (IS_DEMO) throw new IntegrationRequired("auth.reset.confirm")
   return apiFetch<{ message: string }>("/auth/password-reset/confirm", adminJson("POST", { token, password }))
 }
+
+// ─── Backlink intelligence (/websites/:id/backlinks) ─────────────────────────
+// Imported datasets and our own live checks only; no estimated metrics.
+
+export type BacklinkLinkType = "follow" | "nofollow" | "sponsored" | "ugc"
+export type BacklinkLinkState = "verified_live" | "lost_verified" | "provider_reported_lost" | "verification_missing_once" | "unverified_check_failed" | "unverified"
+export type BacklinkChangeType = "new" | "lost" | "potentially_lost" | "anchor_changed" | "target_changed" | "attributes_changed"
+
+export interface BacklinkSource {
+  id: string
+  name: string
+  kind: "import" | "first_party" | "licensed" | "verification"
+  status: "available" | "not_configured" | "not_supported"
+  capabilities: string[]
+  explanation: string
+  setup: string | null
+  costNote: string
+}
+
+export interface BacklinkDataset {
+  id: string
+  website_id: string
+  subject_kind: "own" | "competitor"
+  subject_domain: string
+  source: string
+  source_label: string
+  coverage: "complete" | "partial" | "unknown"
+  exported_at: string | null
+  retrieved_at: string
+  observed_from: string | null
+  observed_to: string | null
+  filename: string | null
+  rows_total: number
+  rows_accepted: number
+  rows_rejected: number
+  rows_duplicate: number
+  rows_skipped: number
+  rejected_samples: Array<{ row: number; reason: string }>
+  column_mapping: Record<string, string>
+  referring_domains: number
+  created_at: string
+  stale: boolean
+}
+
+export interface BacklinkSummary {
+  siteDomain: string
+  own: null | { dataset: BacklinkDataset; links: number; referringDomains: number; linkTypes: Record<string, number>; states: Partial<Record<BacklinkLinkState, number>> }
+  competitors: Array<{ dataset: BacklinkDataset }>
+  changesLast90Days: Partial<Record<BacklinkChangeType, number>>
+  latestVerification: null | { id: string; status: string; links_total: number; links_checked: number; created_at: string; finished_at: string | null; error: string | null }
+  staleAfterDays: number
+}
+
+export interface BacklinkLink {
+  id: string
+  source_url: string
+  source_domain: string
+  target_url: string | null
+  anchor: string | null
+  link_type: BacklinkLinkType | null
+  first_seen: string | null
+  last_seen: string | null
+  provider_lost: boolean | null
+  state: BacklinkLinkState
+  checked_at: string | null
+  check_outcome: string | null
+  check_http_status: number | null
+  observed_link_type: BacklinkLinkType | null
+  observed_anchor: string | null
+}
+
+export interface BacklinkReferringDomain {
+  source_domain: string
+  links: number
+  follow: number
+  not_followed: number
+  attributes_unknown: number
+  first_seen: string | null
+  last_seen: string | null
+  verified_live: number
+}
+
+export interface BacklinkChange {
+  id: string
+  change_type: BacklinkChangeType
+  source_url: string
+  target_url: string | null
+  evidence: string
+  details: Record<string, unknown>
+  detected_at: string
+}
+
+export interface BacklinkDatasetBrief {
+  id: string
+  subject: string
+  sourceLabel: string
+  coverage: string
+  exportedAt: string | null
+  retrievedAt: string
+  observedFrom: string | null
+  observedTo: string | null
+  links: number
+  stale: boolean
+}
+
+export interface BacklinkGap {
+  datasets: BacklinkDatasetBrief[]
+  missingCompetitors: string[]
+  warnings: string[]
+  counts: { shared: number; competitor_only: number; own_only: number }
+  rows: Array<{ domain: string; category: "shared" | "competitor_only" | "own_only"; competitors: string[] }>
+  total: number
+  sharedAnchors: Array<{ anchor: string; own: number; competitors: number }>
+}
+
+export interface BacklinkSignal {
+  id: string
+  weight: number
+  value: number | null
+  explanation: string
+}
+
+export interface BacklinkOpportunity {
+  domain: string
+  kind: "competitor_only" | "reclaim"
+  competitors: string[]
+  links: number
+  sampleUrls: string[]
+  score: number
+  basis: number
+  signals: BacklinkSignal[]
+  why: string
+}
+
+export interface BacklinkOpportunities {
+  datasets: BacklinkDatasetBrief[]
+  missingCompetitors: string[]
+  warnings: string[]
+  topics: { terms: string[]; source: "input" | "search_console" | null }
+  total: number
+  opportunities: BacklinkOpportunity[]
+}
+
+export interface BacklinkImportPreview {
+  subjectDomain: string
+  delimiter: string
+  columns: Record<string, string>
+  unmappedColumns: string[]
+  missingRequired: string[]
+  rowLimitExceeded: boolean
+  rows: { total: number; accepted: number; rejected: number; duplicate: number; skipped: number }
+  rejectedSamples: Array<{ row: number; reason: string }>
+  warnings: string[]
+  observed: { from: string | null; to: string | null }
+  sample: Array<{ sourceUrl: string; targetUrl: string | null; anchor: string | null; linkType: BacklinkLinkType | null; firstSeen: string | null; lastSeen: string | null }>
+}
+
+export interface BacklinkImportInput {
+  csv: string
+  subject: "own" | "competitor"
+  competitorDomain?: string
+  filename?: string
+  sourceLabel: string
+  coverage: "complete" | "partial" | "unknown"
+  exportedAt?: string
+}
+
+const blPath = (websiteId: string, path: string) => `${sitePath(websiteId)}/backlinks${path}`
+
+export async function apiBacklinkSources(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.sources")
+  return apiFetch<{ sources: BacklinkSource[]; scoreWeights: Record<string, number>; limits: { maxRows: number; maxBytes: number; staleAfterDays: number; verifyMaxLinks: number } }>(blPath(websiteId, "/sources"))
+}
+
+export async function apiBacklinkSummary(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.summary")
+  return apiFetch<BacklinkSummary>(blPath(websiteId, "/summary"))
+}
+
+export async function apiBacklinkDatasets(websiteId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.datasets")
+  return apiFetch<BacklinkDataset[]>(blPath(websiteId, "/datasets"))
+}
+
+export async function apiBacklinkLinks(websiteId: string, params: { subject?: string; linkType?: string; state?: string; domain?: string; search?: string; sort?: string; order?: "asc" | "desc"; cursor?: string | null; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.links")
+  return apiFetch<{ dataset: BacklinkDataset | null; links: BacklinkLink[] }>(blPath(websiteId, `/links${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<{ dataset: BacklinkDataset | null; links: BacklinkLink[] }, { nextCursor: string | null }>
+}
+
+export async function apiBacklinkReferringDomains(websiteId: string, params: { subject?: string; search?: string; sort?: string; offset?: number; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.domains")
+  return apiFetch<{ dataset: BacklinkDataset | null; domains: BacklinkReferringDomain[] }>(blPath(websiteId, `/referring-domains${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<{ dataset: BacklinkDataset | null; domains: BacklinkReferringDomain[] }, { total: number; offset: number; limit: number }>
+}
+
+export async function apiBacklinkChanges(websiteId: string, params: { type?: string; subject?: string; cursor?: string | null; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.changes")
+  return apiFetch<BacklinkChange[]>(blPath(websiteId, `/changes${queryString({ ...params, limit: params.limit ?? 50 })}`)) as WithMeta<BacklinkChange[], { nextCursor: string | null }>
+}
+
+export async function apiBacklinkGap(websiteId: string, params: { competitors?: string; category?: string; offset?: number; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.gap")
+  return apiFetch<BacklinkGap>(blPath(websiteId, `/gap${queryString({ ...params, limit: params.limit ?? 100 })}`))
+}
+
+export async function apiBacklinkOpportunities(websiteId: string, params: { competitors?: string; topics?: string; kind?: string; minScore?: number; linkType?: "follow" | "any"; offset?: number; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.opportunities")
+  return apiFetch<BacklinkOpportunities>(blPath(websiteId, `/opportunities${queryString({ ...params, limit: params.limit ?? 50 })}`))
+}
+
+export async function apiBacklinkPreview(websiteId: string, body: Pick<BacklinkImportInput, "csv" | "subject" | "competitorDomain">) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.preview")
+  return apiFetch<BacklinkImportPreview>(blPath(websiteId, "/imports/preview"), { method: "POST", body: JSON.stringify(body) })
+}
+
+export async function apiBacklinkImport(websiteId: string, body: BacklinkImportInput) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.import")
+  return apiFetch<{ dataset: BacklinkDataset; duplicateImport: boolean; changes: number; warnings?: string[] }>(blPath(websiteId, "/imports"), { method: "POST", body: JSON.stringify(body) })
+}
+
+export async function apiBacklinkVerify(websiteId: string, datasetId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.verify")
+  return apiFetch<{ job: { id: string; status: string; links_total: number; links_checked: number }; deduplicated: boolean; capped: boolean }>(blPath(websiteId, "/verifications"), { method: "POST", body: JSON.stringify({ datasetId }) })
+}
+
+export async function apiBacklinkVerification(websiteId: string, jobId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("backlinks.verification")
+  return apiFetch<{ id: string; dataset_id: string; status: string; links_total: number; links_checked: number; error: string | null; created_at: string; finished_at: string | null }>(blPath(websiteId, `/verifications/${encodeURIComponent(jobId)}`))
+}
+
+/** CSV export: an authenticated download. */
+export async function apiBacklinkExport(websiteId: string, kind: "links" | "referring_domains" | "opportunities" | "changes", params: { subject?: string; competitors?: string } = {}): Promise<{ blob: Blob; filename: string } | { error: string }> {
+  if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("backlinks.export")
+  const res = await fetch(`${config.apiBaseUrl}${blPath(websiteId, `/export${queryString({ kind, ...params })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      message = ((await res.json()) as { error?: { message?: string } }).error?.message ?? message
+    } catch {
+      /* non-JSON error */
+    }
+    return { error: res.status === 403 ? "Your role cannot export backlink data." : message }
+  }
+  const disposition = res.headers.get("content-disposition") ?? ""
+  return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? `backlinks-${kind}.csv` }
+}

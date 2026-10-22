@@ -280,7 +280,7 @@ function parsePage(html: string, pageUrl: string, inScope: (url: string) => bool
 
 const NOINDEX = /\bnoindex\b|\bnone\b/;
 
-async function fetchRobots(origin: string, fetch: Fetcher, scope: SafeFetchOptions): Promise<RobotsFetchOutcome> {
+export async function fetchRobots(origin: string, fetch: Fetcher, scope: SafeFetchOptions): Promise<RobotsFetchOutcome> {
   const res = await fetch(`${origin}/robots.txt`, scope);
   // An oversized file is still parsed: RFC 9309 requires only the first 500 KiB.
   if (res.status >= 200 && res.status < 300 && (res.ok || res.limited)) return { kind: "parsed", policy: parseRobotsTxt(res.body) };

@@ -1445,6 +1445,15 @@ async function processNextQueuedScan(): Promise<void> {
       console.error("[worker] Keyword research retention failed:", (err as Error).message)
     })
 
+  // Backlink live verification (one bounded, leased slice per tick).
+  if (!workerStopping) {
+    await import("./backlinks.service.js")
+      .then(({ processBacklinkVerificationTick }) => processBacklinkVerificationTick(15_000))
+      .catch((err: unknown) => {
+        console.error("[worker] Backlink verification failed:", (err as Error).message)
+      })
+  }
+
   if (workerStopping) return
 
   const claimed = await claimNextQueuedScan()
