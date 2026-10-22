@@ -54,6 +54,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <LineChart size={15} />,
     basePath: "/search",
     items: [
+      { label: "Search performance", path: "/search/performance" },
       { label: "Keywords", path: "/search/keywords" },
       { label: "Rankings", path: "/search/rankings" },
       { label: "Backlinks", path: "/search/backlinks" },

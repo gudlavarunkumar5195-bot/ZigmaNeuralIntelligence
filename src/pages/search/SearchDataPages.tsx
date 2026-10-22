@@ -22,10 +22,10 @@ function SearchDataUnavailable({ title, needs, why }: { title: string; needs: st
 const OWN_CRAWL = "The ZigmaNeural crawler only measures your own verified site, so it cannot produce this data.";
 
 export function KeywordsPage() {
-  return <SearchDataUnavailable title="Keywords" needs="Keyword volumes and difficulty require a licensed keyword data provider or your Google Search Console data." why={OWN_CRAWL} />;
+  return <SearchDataUnavailable title="Keywords" needs="Keyword volumes and difficulty require a licensed keyword data provider. The queries your site already appears for, with clicks and impressions from Google Search Console, are under Search performance." why={OWN_CRAWL} />;
 }
 export function RankingsPage() {
-  return <SearchDataUnavailable title="Rankings" needs="Ranking positions require a connected Google Search Console property or a licensed SERP data provider." why={OWN_CRAWL} />;
+  return <SearchDataUnavailable title="Rankings" needs="Exact daily SERP positions by location and device require a licensed SERP data provider. Average positions reported by Google Search Console are under Search performance." why={OWN_CRAWL} />;
 }
 export function BacklinksPage() {
   return <SearchDataUnavailable title="Backlinks" needs="Backlinks and referring domains require a licensed backlink index provider." why={OWN_CRAWL} />;

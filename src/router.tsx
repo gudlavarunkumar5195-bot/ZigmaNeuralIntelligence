@@ -15,6 +15,7 @@ const SecurityPage = lazy(() => import("./pages/intelligence/SecurityPage").then
 const AIVisibilityPage = lazy(() => import("./pages/intelligence/AIVisibilityPage").then(({ AIVisibilityPage }) => ({ default: AIVisibilityPage })));
 const PerformancePage = lazy(() => import("./pages/intelligence/PerformancePage").then(({ PerformancePage }) => ({ default: PerformancePage })));
 const AccessibilityPage = lazy(() => import("./pages/intelligence/AccessibilityPage").then(({ AccessibilityPage }) => ({ default: AccessibilityPage })));
+const SearchPerformancePage = lazy(() => import("./pages/search/SearchPerformancePage").then(({ SearchPerformancePage }) => ({ default: SearchPerformancePage })));
 const KeywordsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ KeywordsPage }) => ({ default: KeywordsPage })));
 const RankingsPage = lazy(() => import("./pages/search/SearchDataPages").then(({ RankingsPage }) => ({ default: RankingsPage })));
 const BacklinksPage = lazy(() => import("./pages/search/SearchDataPages").then(({ BacklinksPage }) => ({ default: BacklinksPage })));
@@ -95,6 +96,7 @@ export const router = createBrowserRouter([
       { path: "intelligence/performance", Component: PerformancePage },
       { path: "intelligence/accessibility", Component: AccessibilityPage },
       { path: "intelligence/technical-health", Component: TechnicalHealthPage },
+      { path: "search/performance", Component: SearchPerformancePage },
       { path: "search/keywords", Component: KeywordsPage },
       { path: "search/rankings", Component: RankingsPage },
       { path: "search/backlinks", Component: BacklinksPage },

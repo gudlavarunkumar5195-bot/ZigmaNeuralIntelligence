@@ -52,5 +52,6 @@ The repository is a two-package app: the Vite frontend (root) and a Fastify API 
 - Quality gate: `pnpm exec tsc --noEmit && pnpm test && pnpm --dir server build && pnpm --dir server test && pnpm build && git diff --check`. CI (`.github/workflows/ci.yml`) runs the same gate plus `server/scripts/verify-migrations.mjs` (non-superuser fresh migrate, upgrade from earlier releases), a fresh-database migration, the integration suites and `audit --prod`. Server unit tests need no `.env.test`.
 - Migrations run once per release (App Platform `PRE_DEPLOY` job, `DIRECT_DATABASE_URL` preferred), never from the web `run_command`.
 - Release procedure, branch protection, staging checks and credential rotation: `docs/RELEASE_RUNBOOK.md`.
+- Google Search Console (OAuth, encrypted refresh tokens, sync jobs, analytics): `docs/SEARCH_CONSOLE.md`. Google is only called through `server/src/integrations/google/http.ts`; tests mock that module, never the network.
 - `POST /api/v1/scans` accepts an optional `Idempotency-Key` header (per organization); one queued/running scan per website is enforced in the service and by a partial unique index.
 - Paid AI models stay off until `AI_ALLOW_PAID_MODELS=true` is explicitly approved. Keyword, ranking, backlink and competitor data must come from an authorized source; never show estimated figures.

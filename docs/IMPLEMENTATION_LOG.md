@@ -98,3 +98,17 @@ crawl page outcome / redirect target / X-Robots-Tag / image alt / indexability r
 - `hreflang` reciprocity and orphan-page detection are not implemented.
 - Crawl pages are kept for the latest 2 crawls per website; older page-level history is not retained (ClickHouse later).
 - The frontend tests use mocked responses shaped like the backend's (the same contract is asserted against PostgreSQL in `site-audit-api.integration.test.ts`); there is no browser E2E of the workflow against a live backend yet.
+
+---
+
+# Phase 3: Google Search Console integration
+
+Branch `feat/p3-search-console`, from `main` after PRs #3 and #4. Not deployed; no production migration run; no live Google call made (no OAuth client is configured).
+
+- OAuth: authorization code + PKCE, read-only scope, single-use browser-bound state, encrypted refresh tokens (AES-256-GCM, versioned keys), reauthorization on `invalid_grant`, disconnect revokes and deletes.
+- Properties: live list, domain / URL-prefix matching against the website, ZigmaNeural verification and Google permission both required.
+- Sync: checkpointed (set x day) units, 20 s worker slices, leases, one active job per property, quota pauses, never wiping data with an empty or failed fetch, coverage that separates missing days from zeros.
+- API and UI: Integrations settings (connect, reconnect, link, disconnect) and Search performance (freshness, sync, KPIs with comparison, daily chart + table, query/page/country/device/appearance breakdowns).
+- Migration 032 (additive). Details, configuration, limits and the staging procedure: `docs/SEARCH_CONSOLE.md`.
+
+Known limitations: web search type only; one performance filter at a time; no ClickHouse copy yet; per-process pacing (fine for one worker instance, needs a shared limiter if web/worker scale out); a Google OAuth app in Testing mode expires refresh tokens after 7 days.
