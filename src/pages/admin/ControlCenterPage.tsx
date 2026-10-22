@@ -74,7 +74,7 @@ export function ControlCenterPage() {
   const integrationsConfigured = data.integrations.filter((i) => i.configured).length;
 
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
+    <div>
       <PageHeader eyebrow="Administration" title="Control Center">
         <button type="button" className={btn} onClick={() => void load()} disabled={loading}>{loading ? "Checking…" : "Re-run checks"}</button>
         <button type="button" className={btnPrimary} onClick={() => void exportReport()}>Export redacted report</button>

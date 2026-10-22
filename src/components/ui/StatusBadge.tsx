@@ -1,61 +1,45 @@
+import { pill, type Tone } from "./styles";
+
 interface StatusBadgeProps {
   status: string;
   size?: "sm" | "md";
 }
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; dot?: string }> = {
-  complete: { label: "Complete", color: "#10b981", bg: "#ecfdf5", dot: "#10b981" },
-  completed: { label: "Completed", color: "#10b981", bg: "#ecfdf5", dot: "#10b981" },
-  running: { label: "Running", color: "#3b82f6", bg: "#eff6ff", dot: "#3b82f6" },
-  scanning: { label: "Scanning", color: "#3b82f6", bg: "#eff6ff", dot: "#3b82f6" },
-  waiting: { label: "Waiting", color: "#94a3b8", bg: "#f1f5f9", dot: "#94a3b8" },
-  failed: { label: "Failed", color: "#ef4444", bg: "#fef2f2", dot: "#ef4444" },
-  rejected: { label: "Rejected", color: "#ef4444", bg: "#fef2f2" },
-  improve: { label: "Improve", color: "#f59e0b", bg: "#fffbeb" },
-  accepted: { label: "Accepted", color: "#10b981", bg: "#ecfdf5" },
-  online: { label: "Online", color: "#10b981", bg: "#ecfdf5", dot: "#10b981" },
-  critical: { label: "Critical", color: "#ef4444", bg: "#fef2f2" },
-  high: { label: "High", color: "#f97316", bg: "#fff7ed" },
-  medium: { label: "Medium", color: "#f59e0b", bg: "#fffbeb" },
-  low: { label: "Low", color: "#6366f1", bg: "#eef2ff" },
-  info: { label: "Info", color: "#3b82f6", bg: "#eff6ff" },
-  "human-review": { label: "Human Review", color: "#8b5cf6", bg: "#f5f3ff" },
-  enabled: { label: "Enabled", color: "#10b981", bg: "#ecfdf5" },
-  disabled: { label: "Disabled", color: "#94a3b8", bg: "#f1f5f9" },
-  "integration-required": { label: "Integration Required", color: "#f59e0b", bg: "#fffbeb" },
-  verified: { label: "Verified", color: "#10b981", bg: "#ecfdf5" },
-  pending: { label: "Pending", color: "#94a3b8", bg: "#f1f5f9" },
+const STATUS_CONFIG: Record<string, { label: string; tone: Tone; live?: boolean }> = {
+  complete: { label: "Complete", tone: "success" },
+  completed: { label: "Completed", tone: "success" },
+  running: { label: "Running", tone: "accent", live: true },
+  scanning: { label: "Scanning", tone: "accent", live: true },
+  waiting: { label: "Waiting", tone: "neutral" },
+  failed: { label: "Failed", tone: "danger" },
+  rejected: { label: "Rejected", tone: "danger" },
+  improve: { label: "Improve", tone: "warning" },
+  accepted: { label: "Accepted", tone: "success" },
+  online: { label: "Online", tone: "success" },
+  critical: { label: "Critical", tone: "danger" },
+  high: { label: "High", tone: "danger" },
+  medium: { label: "Medium", tone: "warning" },
+  low: { label: "Low", tone: "info" },
+  info: { label: "Info", tone: "neutral" },
+  "human-review": { label: "Human Review", tone: "accent" },
+  enabled: { label: "Enabled", tone: "success" },
+  disabled: { label: "Disabled", tone: "neutral" },
+  "integration-required": { label: "Integration Required", tone: "warning" },
+  verified: { label: "Verified", tone: "success" },
+  pending: { label: "Pending", tone: "neutral" },
 };
 
+/** Status as a labelled pill; the text carries the meaning, the tone reinforces it. */
 export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
-  const config = STATUS_CONFIG[status.toLowerCase()] || { label: status, color: "#64748b", bg: "#f1f5f9" };
-  const padClass = size === "md" ? "px-2.5 py-1 text-xs" : "px-2 py-0.5 text-xs";
-
+  const config = STATUS_CONFIG[status.toLowerCase()] ?? { label: status, tone: "neutral" as Tone };
   return (
-    <span role="status" aria-label={`Status: ${config.label}`}
-      className={`inline-flex items-center gap-1.5 rounded font-500 ${padClass}`}
-      style={{ color: config.color, background: config.bg }}
-    >
-      {config.dot && (
-        <span
-          className="flex-shrink-0 rounded-full"
-          style={{
-            width: 6,
-            height: 6,
-            background: config.dot,
-            animation: status === "running" || status === "scanning" ? "pulse-dot 1.5s ease-in-out infinite" : "none",
-          }}
-        />
-      )}
+    <span role="status" aria-label={`Status: ${config.label}`} className={`${pill(config.tone)} ${size === "md" ? "px-2 py-1 text-xs" : ""}`}>
+      {config.live ? <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> : null}
       {config.label}
     </span>
   );
 }
 
-interface SeverityBadgeProps {
-  severity: string;
-}
-
-export function SeverityBadge({ severity }: SeverityBadgeProps) {
+export function SeverityBadge({ severity }: { severity: string }) {
   return <StatusBadge status={severity} />;
 }

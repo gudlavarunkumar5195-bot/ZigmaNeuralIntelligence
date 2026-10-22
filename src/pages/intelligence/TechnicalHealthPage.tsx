@@ -22,6 +22,7 @@ import { CATEGORY_LABEL, SEVERITIES, TRUNCATION_LABEL, formatDate } from "./tech
 import { RunCrawlForm } from "./technical-health/RunCrawlForm";
 import { IssueDetailPanel } from "./technical-health/IssueDetailPanel";
 import { CrawlInventory } from "./technical-health/CrawlInventory";
+import { PageHeader } from "../../components/ui/Card";
 
 const STATUS_TABS: SiteIssueStatus[] = ["OPEN", "FIXED", "IGNORED"];
 const ACTIVE = new Set(["queued", "running"]);
@@ -239,9 +240,8 @@ export function TechnicalHealthPage() {
   const filtersActive = filters.severity || filters.category || filters.rule || filters.url;
 
   return (
-    <div className="mx-auto max-w-5xl p-6 md:p-10">
-      <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Technical health</p>
-      <h2 className="mt-2 text-2xl font-800 text-slate-950">{site.domain}</h2>
+    <div>
+      <PageHeader eyebrow="Website Intelligence" title="Technical health" subtitle={<>Crawl results, rule-based issues and their history for <span className="font-600 text-slate-700">{site.domain}</span>.</>} />
 
       <p role="status" aria-live="polite" className="mt-2 min-h-4 text-xs text-slate-700">{progress}</p>
 
@@ -395,7 +395,7 @@ export function TechnicalHealthPage() {
                       confirmReopen === issue.id ? (
                         <span className="flex items-center gap-2 text-xs">
                           <span>Reopen this issue?</span>
-                          <button type="button" disabled={busy} onClick={() => void act(issue, "reopen")} className="rounded bg-slate-900 px-2 py-1 font-600 text-white">Confirm reopen</button>
+                          <button type="button" disabled={busy} onClick={() => void act(issue, "reopen")} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 text-white shadow-sm hover:bg-blue-700 font-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 h-7 px-2 text-xs">Confirm reopen</button>
                           <button type="button" onClick={() => setConfirmReopen(null)} className="text-slate-600">Cancel</button>
                         </span>
                       ) : (
@@ -424,7 +424,7 @@ export function TechnicalHealthPage() {
                           className="rounded border border-slate-300 px-2 py-1 text-xs"
                         />
                         <span id={`reason-help-${issue.id}`} className="sr-only">Ignored issues stay ignored in later scans until someone reopens them.</span>
-                        <button type="submit" disabled={busy} className="rounded bg-slate-900 px-2 py-1 text-xs font-600 text-white">Ignore</button>
+                        <button type="submit" disabled={busy} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 text-white shadow-sm hover:bg-blue-700 font-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 h-7 px-2 text-xs">Ignore</button>
                         <button type="button" onClick={() => setIgnoring(null)} className="text-xs text-slate-600">Cancel</button>
                       </form>
                     ) : (

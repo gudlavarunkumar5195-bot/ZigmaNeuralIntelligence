@@ -3,6 +3,7 @@ import { apiListResearchRuns, apiResearchCapabilities, apiRunResearch, Integrati
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
 import { errorText, ProviderNotice, useWebsites } from "./research/shared";
 import { RunView } from "./research/RunView";
+import { PageHeader } from "../../components/ui/Card";
 
 /** Competitor keyword gap: shared, missing and unique keywords from real, permitted datasets. */
 export function CompetitorGapPage() {
@@ -62,9 +63,8 @@ export function CompetitorGapPage() {
   if (websites.length === 0) return <EmptyState title="No websites yet" description="Add and verify a website first." />;
 
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
-      <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Competitor intelligence</p>
-      <h2 className="mt-2 text-2xl font-800 text-slate-950">Keyword gap</h2>
+    <div>
+      <PageHeader eyebrow="SEO Research" title="Keyword gap" subtitle="Shared, missing and unique keywords against competitors, from real and permitted datasets." />
       {!provider ? (
         <p role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">Keyword gap analysis is not supported by the enabled data source.</p>
       ) : (
@@ -90,7 +90,7 @@ export function CompetitorGapPage() {
             Competitor domains (up to {caps.limits.maxCompetitors}, comma or line separated)
             <textarea value={competitors} rows={2} maxLength={2_000} onChange={(e) => setCompetitors(e.target.value)} className="mt-1 block w-80 rounded border border-slate-300 px-2 py-1 text-sm" />
           </label>
-          <button type="submit" disabled={running || !provider} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-700 text-white disabled:opacity-50">{running ? "Comparing…" : "Compare"}</button>
+          <button type="submit" disabled={running || !provider} className="rounded-lg bg-blue-600 shadow-sm hover:bg-blue-700 px-3 py-2 text-sm font-700 text-white disabled:opacity-50">{running ? "Comparing…" : "Compare"}</button>
         </div>
         {runError ? <p role="alert" className="mt-2 rounded bg-red-50 px-3 py-2 text-xs text-red-800">{runError}</p> : null}
       </form>

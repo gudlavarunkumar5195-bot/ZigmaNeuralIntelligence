@@ -38,8 +38,8 @@ export function Instructions() {
   if (error instanceof IntegrationRequired) return <IntegrationRequiredState feature="Instruction Intelligence" description="Instruction profiles and simulation require the connected backend; demo mode does not fabricate instruction decisions." />;
   if (error) return <ErrorState title="Unable to load instruction profiles" message={error.message} onRetry={load} />;
 
-  return <div className="p-6 max-w-screen-xl mx-auto animate-slide-in">
-    <PageHeader title="Instruction Intelligence" subtitle="Versioned agent contracts, deterministic validation, and controlled task specialization." />
+  return <div className="animate-slide-in">
+    <PageHeader eyebrow="AI Agents" title="Instruction Intelligence" subtitle="Versioned agent contracts, deterministic validation, and controlled task specialization." />
     <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr] gap-6 items-start">
       <div className="space-y-3">
         <div className="flex items-center gap-2 px-1 text-xs text-slate-500"><ShieldCheck size={14} className="text-emerald-600" /><span>System safety → platform policy → agent contract → task specialization</span></div>

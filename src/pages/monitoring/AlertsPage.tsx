@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react"
+import { PageHeader } from "../../components/ui/Card";
+import { btn, buttonClass } from "../../components/ui/styles";
 import {
   EmptyState,
   ErrorState,
@@ -80,21 +82,19 @@ export function AlertsPage() {
       />
     )
   return (
-    <div className="mx-auto max-w-6xl animate-slide-in p-6 md:p-8">
-      <h2 className="mb-6 text-3xl font-800 tracking-[-0.05em] text-slate-950">
-        Alerts
-      </h2>
+    <div className="animate-slide-in">
+      <PageHeader eyebrow="Monitoring" title="Alerts" subtitle="Alerts raised by monitoring runs. Acknowledge or resolve them as you act." />
       {actionError && (
-        <p role="alert" className="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {actionError}
         </p>
       )}
       {items?.length ? (
         <section className="space-y-3">
           {items.map((item) => (
-            <article key={item.id} className="card-panel p-5">
+            <article key={item.id} className="rounded-xl border border-slate-200 bg-white shadow-sm p-5">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="font-800 text-slate-900">{item.title}</h3>
+                <h3 className="text-card-title text-slate-900">{item.title}</h3>
                 <span className="text-xs font-700 uppercase text-blue-700">
                   {item.severity} · {item.status}
                 </span>
@@ -108,7 +108,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiAcknowledgeAlert(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Acknowledge
                   </button>
@@ -116,7 +116,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiResolveAlert(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Resolve
                   </button>
@@ -124,7 +124,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiDismissAlert(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Dismiss
                   </button>
@@ -136,7 +136,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiResolveAlert(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Resolve
                   </button>
@@ -144,7 +144,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiDismissAlert(item.id))
                     }
-                    className="rounded border px-3 py-2 text-xs font-700"
+                    className={btn}
                   >
                     Dismiss
                   </button>
@@ -163,7 +163,7 @@ export function AlertsPage() {
         <button
           disabled={loadingMore}
           onClick={() => void loadMore()}
-          className="mt-4 rounded border px-4 py-2 text-sm font-700 disabled:opacity-60"
+          className={`${buttonClass("secondary", "md")} mt-4`}
         >
           Load more
         </button>

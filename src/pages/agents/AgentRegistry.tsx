@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { PageHeader } from "../../components/ui/Card";
 import {
   Bot, Shield, Search, Eye, Zap, Code, FileText, Cpu,
   Lock, AlertCircle, CheckCircle2, XCircle, Clock, ChevronRight,
@@ -19,16 +20,16 @@ import {
 type Tab = "registry" | "simulator";
 
 const RISK_COLORS: Record<string, string> = {
-  LOW: "text-emerald-400 bg-emerald-900/30 border-emerald-800/50",
-  MEDIUM: "text-amber-400 bg-amber-900/30 border-amber-800/50",
+  LOW: "text-emerald-700 bg-emerald-50 border-emerald-200",
+  MEDIUM: "text-amber-700 bg-amber-50 border-amber-200",
   HIGH: "text-orange-400 bg-orange-900/30 border-orange-800/50",
-  CRITICAL: "text-red-400 bg-red-900/30 border-red-800/50",
+  CRITICAL: "text-red-700 bg-red-50 border-red-200",
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  ACTIVE: "text-emerald-400",
+  ACTIVE: "text-emerald-700",
   DISABLED: "text-slate-500",
-  DEPRECATED: "text-amber-400",
+  DEPRECATED: "text-amber-700",
   REQUIRES_REVIEW: "text-orange-400",
 };
 
@@ -47,11 +48,11 @@ const AGENT_ICONS: Record<string, typeof Bot> = {
 };
 
 const PERM_COLORS: Record<string, string> = {
-  READ: "text-blue-400",
-  ANALYZE: "text-violet-400",
-  GENERATE: "text-amber-400",
+  READ: "text-blue-700",
+  ANALYZE: "text-violet-700",
+  GENERATE: "text-amber-700",
   PROPOSE: "text-orange-400",
-  EXECUTE: "text-red-400",
+  EXECUTE: "text-red-700",
 };
 
 const TABS: Tab[] = ["registry", "simulator"];
@@ -166,23 +167,24 @@ export function AgentRegistry() {
 
   if (integrationRequired) {
     return (
-      <div className="p-6">
+      <div>
+        <PageHeader eyebrow="AI Agents" title="Agent Registry" subtitle="Specialist agents, their capabilities and tool permissions." />
         <IntegrationRequiredState
           feature="Agent Registry"
           description="The Specialist Agent Registry requires a connected backend. Agents are globally defined with capabilities, tool permissions, and routing integration. Model selection is delegated to the Phase 3C router — agents never hard-code models."
         />
         <div className="mt-8 max-w-2xl mx-auto">
-          <h3 className="text-sm font-600 text-slate-300 mb-3">Agent Architecture</h3>
-          <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-400 leading-6">
-            <div className="text-slate-300">OX Alpha</div>
-            <div className="pl-4 text-slate-400">↓ orchestrates</div>
-            <div className="pl-4 text-slate-300">Specialist Agent</div>
-            <div className="pl-8 text-slate-400">↓ declares requirements</div>
-            <div className="pl-8 text-slate-300">Task Requirements</div>
-            <div className="pl-12 text-slate-400">↓ routes via</div>
-            <div className="pl-12 text-slate-300">Phase 3C Model Router</div>
-            <div className="pl-16 text-slate-400">↓ selects best eligible model</div>
-            <div className="pl-16 text-emerald-400">Best Eligible Model</div>
+          <h3 className="text-sm font-600 text-slate-700 mb-3">Agent Architecture</h3>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 font-mono text-xs text-slate-600 leading-6">
+            <div className="text-slate-700">OX Alpha</div>
+            <div className="pl-4 text-slate-600">↓ orchestrates</div>
+            <div className="pl-4 text-slate-700">Specialist Agent</div>
+            <div className="pl-8 text-slate-600">↓ declares requirements</div>
+            <div className="pl-8 text-slate-700">Task Requirements</div>
+            <div className="pl-12 text-slate-600">↓ routes via</div>
+            <div className="pl-12 text-slate-700">Phase 3C Model Router</div>
+            <div className="pl-16 text-slate-600">↓ selects best eligible model</div>
+            <div className="pl-16 text-emerald-700">Best Eligible Model</div>
           </div>
           <p className="text-xs text-slate-500 mt-3">
             Agent ≠ Model. An agent defines responsibility, tools, and output contracts.
@@ -195,16 +197,17 @@ export function AgentRegistry() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      <PageHeader eyebrow="AI Agents" title="Agent Registry" subtitle="Specialist agents, their capabilities and tool permissions. Model selection is delegated to the router." />
       {/* Tabs */}
-      <div className="flex gap-1 px-6 pt-4 pb-0 border-b border-slate-800">
+      <div className="flex gap-1 border-b border-slate-200">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-500 rounded-t border-b-2 transition-colors capitalize ${
               tab === t
-                ? "border-blue-500 text-blue-400"
-                : "border-transparent text-slate-400 hover:text-slate-300"
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
             {t === "registry" ? "Agent Registry" : "Simulator"}
@@ -213,7 +216,7 @@ export function AgentRegistry() {
       </div>
 
       {toggleError && (
-        <div role="alert" className="mx-6 mt-3 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded px-3 py-2">{toggleError}</div>
+        <div role="alert" className="mt-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded px-3 py-2">{toggleError}</div>
       )}
 
       {tab === "registry" && (
@@ -264,14 +267,14 @@ function RegistryTab({
   if (agents.length === 0) return <EmptyState title="No agents found" description="Agent definitions have not been seeded into the database." />;
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden">
+    <div className="flex h-[calc(100vh-14rem)] min-h-[420px] overflow-hidden rounded-xl border border-slate-200 bg-white">
       {/* Agent list */}
-      <div className="w-72 border-r border-slate-800 overflow-y-auto flex-shrink-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-          <span className="text-xs font-600 text-slate-400 uppercase tracking-wide">
+      <div className="w-72 border-r border-slate-200 overflow-y-auto flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+          <span className="text-xs font-600 text-slate-600 uppercase tracking-wide">
             {agents.length} Agents
           </span>
-          <button onClick={onRefresh} className="p-1 text-slate-500 hover:text-slate-300 transition-colors">
+          <button onClick={onRefresh} aria-label="Refresh agents" className="rounded-md p-1 text-slate-500 hover:text-slate-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
             <RefreshCw size={13} />
           </button>
         </div>
@@ -282,18 +285,18 @@ function RegistryTab({
             <button
               key={agent.agentType}
               onClick={() => onSelect(agent)}
-              className={`w-full text-left px-4 py-3 border-b border-slate-800/50 flex items-start gap-3 transition-colors ${
-                isSelected ? "bg-blue-950/40" : "hover:bg-slate-800/40"
+              className={`w-full text-left px-4 py-3 border-b border-slate-100 flex items-start gap-3 transition-colors ${
+                isSelected ? "bg-blue-50" : "hover:bg-slate-50"
               }`}
             >
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                agent.enabled ? "bg-blue-950/60" : "bg-slate-800"
+                agent.enabled ? "bg-blue-50" : "bg-slate-100"
               }`}>
-                <Icon size={15} className={agent.enabled ? "text-blue-400" : "text-slate-500"} />
+                <Icon size={15} className={agent.enabled ? "text-blue-700" : "text-slate-500"} />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className={`text-sm font-500 truncate ${agent.enabled ? "text-slate-200" : "text-slate-500"}`}>
+                  <span className={`text-sm font-500 truncate ${agent.enabled ? "text-slate-800" : "text-slate-500"}`}>
                     {agent.name}
                   </span>
                 </div>
@@ -306,7 +309,7 @@ function RegistryTab({
                   </span>
                 </div>
               </div>
-              <ChevronRight size={14} className="text-slate-600 flex-shrink-0 mt-2" />
+              <ChevronRight size={14} className="text-slate-500 flex-shrink-0 mt-2" />
             </button>
           );
         })}
@@ -341,18 +344,18 @@ function AgentDetail({
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-950/60 flex items-center justify-center">
-            <Icon size={20} className="text-blue-400" />
+          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <Icon size={20} className="text-blue-700" />
           </div>
           <div>
-            <h2 className="text-lg font-600 text-slate-100">{agent.name}</h2>
+            <h2 className="text-lg font-600 text-slate-900">{agent.name}</h2>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-xs text-slate-500">v{agent.version}</span>
-              <span className="text-slate-700">·</span>
+              <span className="text-slate-400">·</span>
               <span className={`text-xs font-600 ${STATUS_COLORS[agent.status]}`}>
                 {agent.enabled ? agent.status : "DISABLED"}
               </span>
-              <span className="text-slate-700">·</span>
+              <span className="text-slate-400">·</span>
               <span className={`text-xs px-1.5 py-0.5 rounded border font-600 ${RISK_COLORS[agent.riskLevel]}`}>
                 {agent.riskLevel} RISK
               </span>
@@ -363,8 +366,8 @@ function AgentDetail({
           onClick={onToggle}
           className={`px-3 py-1.5 rounded text-xs font-600 border transition-colors ${
             agent.enabled
-              ? "border-red-800 text-red-400 hover:bg-red-950/30"
-              : "border-emerald-800 text-emerald-400 hover:bg-emerald-950/30"
+              ? "border-red-200 text-red-700 hover:bg-red-50"
+              : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
           }`}
         >
           {agent.enabled ? "Disable" : "Enable"}
@@ -372,19 +375,19 @@ function AgentDetail({
       </div>
 
       {/* Description */}
-      <p className="text-sm text-slate-400 leading-relaxed">{agent.description}</p>
+      <p className="text-sm text-slate-600 leading-relaxed">{agent.description}</p>
 
       {loading && <LoadingState label="Loading agent details…" />}
 
       {/* Model routing */}
       <Section title="Model Routing">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
-          <Cpu size={14} className="text-blue-400" />
+        <div className="flex items-center gap-2 text-sm text-slate-600">
+          <Cpu size={14} className="text-blue-700" />
           <span>Dynamic via Phase 3C Model Router — no hard-coded model</span>
         </div>
         <div className="mt-2 text-xs text-slate-500">
           Agent type maps to{" "}
-          <code className="font-mono bg-slate-800 px-1 rounded">{agent.agentType}</code>{" "}
+          <code className="font-mono bg-slate-100 px-1 rounded">{agent.agentType}</code>{" "}
           task requirements, routed to the best currently eligible model.
         </div>
       </Section>
@@ -393,7 +396,7 @@ function AgentDetail({
       <Section title="Agent Capabilities">
         <div className="flex flex-wrap gap-2">
           {agent.capabilities.map((cap) => (
-            <span key={cap} className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-xs font-mono border border-slate-700">
+            <span key={cap} className="px-2 py-1 rounded bg-slate-100 text-slate-700 text-xs font-mono border border-slate-300">
               {cap}
             </span>
           ))}
@@ -404,10 +407,10 @@ function AgentDetail({
       <Section title="Allowed Tools">
         <div className="space-y-1.5">
           {agent.allowedTools.map((tool) => (
-            <div key={tool.name} className="flex items-center justify-between py-1.5 px-2 rounded bg-slate-900 border border-slate-800">
+            <div key={tool.name} className="flex items-center justify-between py-1.5 px-2 rounded bg-slate-50 border border-slate-200">
               <div className="flex items-center gap-2">
-                <CheckCircle2 size={12} className="text-emerald-500" />
-                <span className="text-xs font-mono text-slate-300">{tool.name}</span>
+                <CheckCircle2 size={12} className="text-emerald-600" />
+                <span className="text-xs font-mono text-slate-700">{tool.name}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className={`text-[10px] font-600 ${PERM_COLORS[tool.permissionLevel]}`}>
@@ -418,7 +421,7 @@ function AgentDetail({
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-600 mt-2">
+        <p className="text-xs text-slate-500 mt-2">
           Agents never receive unrestricted system access. EXECUTE permission is not granted by default.
         </p>
       </Section>
@@ -432,7 +435,7 @@ function AgentDetail({
                 <span className={dep.dependencyType === "REQUIRED" ? "text-orange-400" : "text-slate-500"}>
                   {dep.dependencyType === "REQUIRED" ? "REQUIRED" : "OPTIONAL"}
                 </span>
-                <span className="text-slate-400 font-mono">{dep.agentType}</span>
+                <span className="text-slate-600 font-mono">{dep.agentType}</span>
               </div>
             ))}
           </div>
@@ -442,10 +445,10 @@ function AgentDetail({
       {/* Instruction profile summary */}
       {agent.instructionProfileSummary && (
         <Section title="Instruction Profile">
-          <p className="text-xs text-slate-400 font-mono leading-relaxed">
+          <p className="text-xs text-slate-600 font-mono leading-relaxed">
             {agent.instructionProfileSummary}
           </p>
-          <p className="text-xs text-slate-600 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             Full instruction profile is predefined (Phase 3E will enable dynamic generation).
             Internal chain-of-thought is never exposed.
           </p>
@@ -454,12 +457,12 @@ function AgentDetail({
 
       {/* Output contract */}
       <Section title="Output Contract">
-        <div className="text-xs font-mono text-slate-400 space-y-0.5">
-          <div><span className="text-blue-400">status</span>: SUCCESS | PARTIAL | FAILED</div>
-          <div><span className="text-blue-400">findings</span>: AgentFinding[] — validated severity + evidence refs</div>
-          <div><span className="text-blue-400">confidence</span>: 0–100 (agent analysis confidence, not routing)</div>
-          <div><span className="text-blue-400">recommendations</span>: string[]</div>
-          <div><span className="text-blue-400">warnings</span>: string[] — limitations and data gaps</div>
+        <div className="text-xs font-mono text-slate-600 space-y-0.5">
+          <div><span className="text-blue-700">status</span>: SUCCESS | PARTIAL | FAILED</div>
+          <div><span className="text-blue-700">findings</span>: AgentFinding[] — validated severity + evidence refs</div>
+          <div><span className="text-blue-700">confidence</span>: 0–100 (agent analysis confidence, not routing)</div>
+          <div><span className="text-blue-700">recommendations</span>: string[]</div>
+          <div><span className="text-blue-700">warnings</span>: string[] — limitations and data gaps</div>
         </div>
       </Section>
     </div>
@@ -480,12 +483,12 @@ function SimulatorTab({
   result: unknown;
   error: string | null;
 }) {
-  const selectClass = "w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500";
+  const selectClass = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 shadow-sm focus:outline-none focus:border-blue-600";
 
   return (
     <div className="p-6 flex flex-col gap-6 max-w-2xl">
       <div>
-        <h3 className="text-sm font-600 text-slate-300 mb-1">Agent Simulator</h3>
+        <h3 className="text-sm font-600 text-slate-700 mb-1">Agent Simulator</h3>
         <p className="text-xs text-slate-500">
           Simulate agent routing and execution planning without calling any model or modifying infrastructure.
         </p>
@@ -493,7 +496,7 @@ function SimulatorTab({
 
       <div className="space-y-4">
         <div>
-          <label className="block text-xs font-500 text-slate-400 mb-1">Agent Type</label>
+          <label className="block text-xs font-500 text-slate-600 mb-1">Agent Type</label>
           <select value={simState.agentType} onChange={onAgentTypeChange} className={selectClass}>
             {(["DISCOVERY","SEO_ANALYSIS","AEO_ANALYSIS","GEO_ANALYSIS","SECURITY_ANALYSIS",
                "PERFORMANCE_ANALYSIS","ACCESSIBILITY_ANALYSIS","QA_ANALYSIS","SSL_ANALYSIS",
@@ -504,7 +507,7 @@ function SimulatorTab({
         </div>
 
         <div>
-          <label className="block text-xs font-500 text-slate-400 mb-1">Risk Level</label>
+          <label className="block text-xs font-500 text-slate-600 mb-1">Risk Level</label>
           <select value={simState.riskLevel} onChange={onRiskChange} className={selectClass}>
             {RISK_LEVELS.map((r) => (
               <option key={r} value={r}>{r}</option>
@@ -513,20 +516,20 @@ function SimulatorTab({
         </div>
 
         <div>
-          <label className="block text-xs font-500 text-slate-400 mb-1">Satisfied Dependencies (comma-separated)</label>
+          <label className="block text-xs font-500 text-slate-600 mb-1">Satisfied Dependencies (comma-separated)</label>
           <input
             type="text"
             value={simState.satisfiedDeps}
             onChange={(e) => onSatisfiedDepsChange(e.target.value)}
             placeholder="e.g. DISCOVERY, SEO_ANALYSIS"
-            className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+            className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 shadow-sm placeholder-slate-400 focus:outline-none focus:border-blue-600"
           />
         </div>
 
         <button
           onClick={onRun}
           disabled={running}
-          className="flex items-center gap-2 px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white text-sm font-500 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white shadow-sm text-sm font-500 transition-colors"
         >
           {running ? (
             <RefreshCw size={14} className="animate-spin" />
@@ -538,16 +541,16 @@ function SimulatorTab({
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 px-3 py-2 rounded border border-red-800 bg-red-950/30">
-          <AlertCircle size={14} className="text-red-400 mt-0.5 flex-shrink-0" />
-          <span className="text-xs text-red-300">{error}</span>
+        <div className="flex items-start gap-2 px-3 py-2 rounded border border-red-200 bg-red-50">
+          <AlertCircle size={14} className="text-red-700 mt-0.5 flex-shrink-0" />
+          <span className="text-xs text-red-800">{error}</span>
         </div>
       )}
 
       {result !== null && (
         <div className="space-y-2">
-          <h4 className="text-xs font-600 text-slate-400 uppercase tracking-wide">Simulation Result</h4>
-          <pre className="bg-slate-900 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap">
+          <h4 className="text-xs font-600 text-slate-600 uppercase tracking-wide">Simulation Result</h4>
+          <pre className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap">
             {String(JSON.stringify(result, null, 2))}
           </pre>
         </div>

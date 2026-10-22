@@ -18,7 +18,7 @@ function Cap({ ok, label }: { ok: boolean; label: string }) {
       {ok
         ? <CheckCircle2 size={13} className="text-green-500" />
         : <XCircle size={13} className="text-slate-200" />}
-      <span className="text-slate-400" style={{ fontSize: "9px" }}>{label}</span>
+      <span className="text-[10px] text-slate-500">{label}</span>
     </div>
   );
 }
@@ -243,10 +243,10 @@ export function ModelRegistry() {
 
   if (IS_DEMO || integrationRequired) {
     return (
-      <div className="p-6 max-w-screen-xl mx-auto animate-slide-in">
+      <div className="animate-slide-in">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-700 text-slate-900">Model Registry</h1>
+            <p className="text-eyebrow text-blue-700">AI Agents</p><h1 className="mt-1 text-page-title text-slate-900">Model Registry</h1>
             <p className="text-sm text-slate-500 mt-0.5">ZigmaNeural model intelligence layer</p>
           </div>
         </div>
@@ -285,10 +285,10 @@ export function ModelRegistry() {
   const freeCount = models.filter((m) => m.free_status === "FREE").length;
 
   return (
-    <div className="p-6 max-w-screen-xl mx-auto animate-slide-in">
+    <div className="animate-slide-in">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-700 text-slate-900">Model Registry</h1>
+          <p className="text-eyebrow text-blue-700">AI Agents</p><h1 className="mt-1 text-page-title text-slate-900">Model Registry</h1>
           <p className="text-sm text-slate-500 mt-0.5">
             {loading ? "Loading…" : `${models.length} models · ${eligibleCount} eligible · ${freeCount} free`}
           </p>
@@ -300,8 +300,8 @@ export function ModelRegistry() {
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className="px-3 py-1.5 rounded text-xs font-600 transition-colors capitalize"
-                style={{ background: filter === f ? "var(--primary)" : "#f1f5f9", color: filter === f ? "white" : "#64748b" }}
+                aria-pressed={filter === f}
+                className={`h-8 rounded-lg px-3 text-xs font-600 capitalize transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${filter === f ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
               >
                 {f}
               </button>

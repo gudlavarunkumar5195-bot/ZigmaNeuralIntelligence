@@ -1,11 +1,8 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import type { WsFreshness, WsRangeParams, WsRangePreset, WsSectionStatus } from "../../../services/api";
+export { btn, btnPrimary, card, input } from "../../../components/ui/styles";
 
-export const btn = "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-700 text-slate-800 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50";
-export const btnPrimary = "rounded-md bg-slate-950 px-3 py-1.5 text-xs font-700 text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50";
-export const input = "mt-1 block max-w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
-export const card = "rounded-xl border border-slate-200 bg-white p-4";
 
 export const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : "—");
 export const fmtDay = (iso: string | null | undefined) => (iso ? new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso).toLocaleDateString(undefined, { timeZone: iso.length === 10 ? "UTC" : undefined }) : "—");

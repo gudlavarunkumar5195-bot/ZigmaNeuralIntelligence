@@ -180,7 +180,7 @@ export function RunView({ runId, provider, reused, gap }: { runId: string; provi
           </select>
         </label>
         {!listId ? <label className="text-xs text-slate-700">New list name<input value={newList} maxLength={100} onChange={(e) => setNewList(e.target.value)} className="mt-1 block rounded border border-slate-300 px-2 py-1 text-xs" /></label> : null}
-        <button type="button" disabled={selected.size === 0} onClick={() => void saveSelection()} className="rounded bg-slate-900 px-3 py-1 text-xs font-700 text-white disabled:opacity-50">Add to list</button>
+        <button type="button" disabled={selected.size === 0} onClick={() => void saveSelection()} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 text-white shadow-sm hover:bg-blue-700 font-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 h-8 px-3 text-xs">Add to list</button>
       </div>
       <p role="status" aria-live="polite" className="mt-2 min-h-4 text-xs text-slate-700">{notice}</p>
 

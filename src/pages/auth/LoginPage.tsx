@@ -1,7 +1,9 @@
 import { useState, useRef } from "react";
 import { Link, useNavigate } from "react-router";
-import { Network, AlertCircle, Loader, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Network, AlertCircle, Loader, Eye, EyeOff } from "lucide-react";
 import { apiLogin, apiRegister, setToken } from "../../services/api";
+import { buttonClass } from "../../components/ui/styles";
+import { AuthLayout, authInput, authLabel } from "./AuthLayout";
 
 type Mode = "login" | "register";
 
@@ -65,164 +67,109 @@ export function LoginPage() {
     }
   };
 
+  const invalid = error ? true : undefined;
+
   return (
-    <div className="login-shell min-h-full flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-6xl grid gap-8 lg:grid-cols-[1.2fr_0.8fr] items-center">
-        <div className="hidden lg:flex flex-col gap-8 p-8">
-          <div className="brand-chip w-fit">
-            <Sparkles size={12} />
-            New gen intelligence
-          </div>
-
-          <div className="space-y-5">
-            <h1 className="text-5xl font-800 leading-tight tracking-[-0.06em] text-slate-900">
-              Turn website signals into <span className="text-blue-700">business decisions.</span>
-            </h1>
-            <p className="max-w-xl text-lg text-slate-600">
-              Track SEO, AI visibility, performance, security, and product quality in one intelligent workspace built for modern teams.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-4 max-w-xl">
-            {[
-              ["SEO", "Search and AI visibility"],
-              ["Security", "Headers and transport checks"],
-              ["Monitoring", "Scheduled scans and alerts"],
-            ].map(([value, label]) => (
-              <div key={value} className="metric-card p-4">
-                <div className="text-lg font-800 text-slate-900">{value}</div>
-                <div className="mt-1 text-xs font-600 text-slate-500">{label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="w-full max-w-md mx-auto">
-          <div className="login-card rounded-[30px] p-6 sm:p-7">
-            <div className="flex flex-col items-center mb-7">
-              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 brand-highlight">
-                <Network size={23} className="text-white" />
-              </div>
-              <h2 className="text-2xl font-800 tracking-[-0.05em] text-slate-900">ZigmaNeural</h2>
-              <p className="mt-1 text-sm text-slate-500">Website intelligence platform</p>
-            </div>
-
-            <div className="flex rounded-xl border border-slate-200 bg-slate-100 p-1 mb-5">
-              {(["login", "register"] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => { setMode(m); setError(""); }}
-                  className="flex-1 py-2.5 text-sm font-700 rounded-lg transition-all"
-                  style={{
-                    background: mode === m ? "linear-gradient(135deg, #1d4ed8, #2563eb, #60a5fa)" : "transparent",
-                    color: mode === m ? "#fff" : "#64748b",
-                    boxShadow: mode === m ? "0 12px 22px rgba(59, 130, 246, 0.22)" : "none",
-                  }}
-                >
-                  {m === "login" ? "Sign in" : "Create account"}
-                </button>
-              ))}
-            </div>
-
-            <form onSubmit={handleSubmit} onInvalid={() => setError("Email and password are required.")} className="space-y-3.5">
-              {mode === "register" && (
-                <div>
-                  <label htmlFor="full-name" className="block text-xs font-700 uppercase tracking-[0.12em] text-slate-500 mb-1.5">Full name</label>
-                  <input
-                    id="full-name"
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Your full name"
-                    className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    style={{ borderColor: error ? "#ef4444" : "rgba(148,163,184,0.35)", background: "rgba(255,255,255,0.8)" }}
-                  />
-                </div>
-              )}
-
-              <div>
-                <label htmlFor="email" className="block text-xs font-700 uppercase tracking-[0.12em] text-slate-500 mb-1.5">Email</label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => { setEmail(e.target.value); setError(""); }}
-                  placeholder="you@company.com"
-                  required
-                  autoFocus
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  style={{ borderColor: error ? "#ef4444" : "rgba(148,163,184,0.35)", background: "rgba(255,255,255,0.8)" }}
-                />
-              </div>
-
-              <div>
-                <label htmlFor="password" className="block text-xs font-700 uppercase tracking-[0.12em] text-slate-500 mb-1.5">Password</label>
-                <div className="relative">
-                  <input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => { setPassword(e.target.value); setError(""); }}
-                    placeholder={mode === "register" ? "At least 8 characters" : "••••••••"}
-                    required
-                    className="w-full px-3.5 py-2.5 pr-10 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    style={{ borderColor: error ? "#ef4444" : "rgba(148,163,184,0.35)", background: "rgba(255,255,255,0.8)" }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
-              </div>
-
-              {mode === "register" && (
-                <div>
-                  <label htmlFor="organization-name" className="block text-xs font-700 uppercase tracking-[0.12em] text-slate-500 mb-1.5">Organization name</label>
-                  <input
-                    id="organization-name"
-                    type="text"
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                    placeholder="Organization name"
-                    required
-                    className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                    style={{ borderColor: "rgba(148,163,184,0.35)", background: "rgba(255,255,255,0.8)" }}
-                  />
-                </div>
-              )}
-
-              {error && (
-                <div role="alert" className="flex items-start gap-2 text-xs text-red-600 rounded-xl border border-red-100 bg-red-50 px-3 py-2">
-                  <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
-                  {error}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="primary-button w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-700 text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed mt-1"
-              >
-                {loading && <Loader size={14} className="animate-spin" />}
-                {mode === "login" ? "Sign in" : "Create account"}
-              </button>
-              {mode === "login" ? (
-                <p className="text-center text-xs">
-                  <Link to="/reset-password" className="font-600 text-blue-700 hover:underline">Forgot password?</Link>
-                </p>
-              ) : null}
-            </form>
-          </div>
-
-          <p className="text-xs text-slate-400 text-center mt-4">
-            Secure Website Intelligence Platform · v{__APP_VERSION__}
-          </p>
-        </div>
+    <AuthLayout>
+      <div className="mb-7 flex flex-col items-center text-center lg:items-start lg:text-left">
+        <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm lg:hidden">
+          <Network size={20} aria-hidden="true" />
+        </span>
+        <h1 className="text-page-title text-slate-900">ZigmaNeural</h1>
+        <p className="mt-1 text-sm text-slate-500">{mode === "login" ? "Sign in to your website intelligence workspace." : "Create an account and an organization for your team."}</p>
       </div>
-    </div>
+
+      <div role="group" aria-label="Account" className="mb-5 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
+        {(["login", "register"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={mode === m}
+            onClick={() => { setMode(m); setError(""); }}
+            className={`h-9 rounded-md text-[13px] font-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+          >
+            {m === "login" ? "Sign in" : "Create account"}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={handleSubmit} onInvalid={() => setError("Email and password are required.")} className="space-y-4">
+        {mode === "register" && (
+          <div>
+            <label htmlFor="full-name" className={authLabel}>Full name</label>
+            <input id="full-name" type="text" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your full name" className={authInput} />
+          </div>
+        )}
+
+        <div>
+          <label htmlFor="email" className={authLabel}>Email</label>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setError(""); }}
+            placeholder="you@company.com"
+            required
+            autoFocus
+            aria-invalid={invalid}
+            aria-describedby={error ? "auth-error" : undefined}
+            className={authInput}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="password" className={authLabel}>Password</label>
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(""); }}
+              placeholder={mode === "register" ? "At least 8 characters" : undefined}
+              required
+              aria-invalid={invalid}
+              aria-describedby={error ? "auth-error" : undefined}
+              className={`${authInput} pr-10`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+            </button>
+          </div>
+        </div>
+
+        {mode === "login" ? <p className="-mt-2 text-right text-xs"><Link to="/reset-password" className="font-600 text-blue-700 hover:underline">Forgot password?</Link></p> : null}
+
+        {mode === "register" && (
+          <div>
+            <label htmlFor="organization-name" className={authLabel}>Organization name</label>
+            <input id="organization-name" type="text" autoComplete="organization" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="Organization name" required className={authInput} />
+          </div>
+        )}
+
+        {error && (
+          <div id="auth-error" role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" aria-hidden="true" />
+            {error}
+          </div>
+        )}
+
+        <button type="submit" disabled={loading} className={`${buttonClass("primary", "lg")} w-full`}>
+          {loading && <Loader size={14} className="animate-spin" aria-hidden="true" />}
+          {mode === "login" ? "Sign in" : "Create account"}
+        </button>
+      </form>
+
+      <p className="mt-8 text-center text-xs text-slate-500 lg:text-left">
+        Secure Website Intelligence Platform · v{__APP_VERSION__}
+      </p>
+    </AuthLayout>
   );
 }

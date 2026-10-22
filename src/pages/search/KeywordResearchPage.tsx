@@ -4,6 +4,7 @@ import { apiListResearchRuns, apiResearchCapabilities, apiRunResearch, Integrati
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
 import { errorText, ProviderNotice, useWebsites } from "./research/shared";
 import { RunView } from "./research/RunView";
+import { PageHeader } from "../../components/ui/Card";
 
 const MODES: Array<{ kind: Exclude<ResearchKind, "gap">; label: string; capability: string; input: "none" | "seed" | "keyword" | "keywords"; help: string }> = [
   { kind: "organic", label: "Your keywords", capability: "organic_keywords", input: "none", help: "Keywords your website already gets search impressions for." },
@@ -78,9 +79,8 @@ export function KeywordResearchPage() {
   if (websites.length === 0) return <EmptyState title="No websites yet" description="Add and verify a website to research its keywords." />;
 
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
-      <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Keyword research</p>
-      <h2 className="mt-2 text-2xl font-800 text-slate-950">Keywords</h2>
+    <div>
+      <PageHeader eyebrow="SEO Research" title="Keywords" subtitle="Keyword research from the enabled data source, with provenance. Metrics a source does not provide are shown as unavailable, never as zero." />
       {caps.providers.length === 0 ? (
         <p role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">No keyword data source is enabled on this server.</p>
       ) : provider ? (
@@ -116,7 +116,7 @@ export function KeywordResearchPage() {
             <label className="text-xs text-slate-400">Language<select className="mt-1 block rounded border border-slate-200 px-2 py-1 text-xs"><option>All (not selectable)</option></select></label>
             <label className="text-xs text-slate-400">Device<select className="mt-1 block rounded border border-slate-200 px-2 py-1 text-xs"><option>All (not selectable)</option></select></label>
           </fieldset>
-          <button type="submit" disabled={running || !supported || !websiteId} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-700 text-white disabled:opacity-50">{running ? "Running…" : "Run"}</button>
+          <button type="submit" disabled={running || !supported || !websiteId} className="rounded-lg bg-blue-600 shadow-sm hover:bg-blue-700 px-3 py-2 text-sm font-700 text-white disabled:opacity-50">{running ? "Running…" : "Run"}</button>
         </div>
         {provider?.targeting.note ? <p className="mt-2 text-[11px] text-slate-500">Targeting: {provider.targeting.note}</p> : null}
         {!supported ? <p role="status" className="mt-2 text-xs text-amber-800">{mode.label} is not supported by the enabled data source.</p> : null}

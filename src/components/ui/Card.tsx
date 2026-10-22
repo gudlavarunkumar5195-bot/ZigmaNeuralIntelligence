@@ -1,4 +1,7 @@
 import { type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
+import { StatusBadge } from "./StatusBadge";
+import { KpiCard } from "./Kpi";
 
 interface CardProps {
   children: ReactNode;
@@ -8,11 +11,9 @@ interface CardProps {
 }
 
 export function Card({ children, className = "", padding = "md", hover = false }: CardProps) {
-  const padMap = { none: "", sm: "p-4", md: "p-5", lg: "p-6" };
+  const padMap = { none: "", sm: "p-3", md: "p-4", lg: "p-6" };
   return (
-    <div
-      className={`bg-card text-card-foreground rounded-lg border border-border shadow-[0_1px_2px_rgba(15,23,42,0.025)] ${padMap[padding]} ${hover ? "hover:border-blue-300 hover:shadow-sm transition-all cursor-pointer" : ""} ${className}`}
-    >
+    <div className={`rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm ${padMap[padding]} ${hover ? "transition-colors hover:border-blue-300" : ""} ${className}`}>
       {children}
     </div>
   );
@@ -23,42 +24,59 @@ interface SectionHeaderProps {
   subtitle?: string;
   action?: ReactNode;
   className?: string;
+  /** Heading level for the document outline (default h2). */
+  as?: "h2" | "h3";
 }
 
-export function SectionHeader({ title, subtitle, action, className = "" }: SectionHeaderProps) {
+export function SectionHeader({ title, subtitle, action, className = "", as: H = "h2" }: SectionHeaderProps) {
   return (
-    <div className={`flex items-start justify-between gap-4 mb-5 ${className}`}>
-      <div>
-        <h2 className="text-base font-700 text-slate-900">{title}</h2>
-        {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
+    <div className={`mb-3 flex flex-wrap items-start justify-between gap-3 ${className}`}>
+      <div className="min-w-0">
+        <H className="text-section-title">{title}</H>
+        {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
       </div>
-      {action && <div className="flex-shrink-0">{action}</div>}
+      {action && <div className="flex flex-shrink-0 flex-wrap items-center gap-2">{action}</div>}
     </div>
   );
 }
 
 interface PageHeaderProps {
-  title: string;
-  subtitle?: string;
+  title: ReactNode;
+  /** Short description under the title. */
+  subtitle?: ReactNode;
+  /** Small uppercase label above the title (module or group). */
+  eyebrow?: string;
+  /** Page-level actions, right-aligned on wide screens. */
   action?: ReactNode;
   badge?: ReactNode;
+  /** Extra row under the description (context selectors, metadata). */
+  children?: ReactNode;
 }
 
-export function PageHeader({ title, subtitle, action, badge }: PageHeaderProps) {
+/** The page's main heading (h1): every page uses this so titles, spacing and actions line up. */
+export function PageHeader({ title, subtitle, eyebrow, action, badge, children }: PageHeaderProps) {
   return (
-    <div className="flex items-center justify-between gap-4 mb-6">
-      <div className="flex items-center gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-700 tracking-[-0.02em] text-slate-900">{title}</h1>
+    <header className="mb-5">
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0">
+          {eyebrow ? <p className="text-eyebrow">{eyebrow}</p> : null}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h1 className="text-page-title">{title}</h1>
             {badge}
           </div>
-          {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
+          {subtitle ? <p className="mt-1 max-w-3xl text-[13px] leading-relaxed text-slate-500">{subtitle}</p> : null}
         </div>
+        {action ? <div className="flex flex-wrap items-end gap-2">{action}</div> : null}
       </div>
-      {action && <div className="flex-shrink-0">{action}</div>}
-    </div>
+      {children ? <div className="mt-3">{children}</div> : null}
+    </header>
   );
+}
+
+/** Container for page content: consistent width and gutters. */
+export function PageContainer({ children, width = "wide" }: { children: ReactNode; width?: "narrow" | "default" | "wide" }) {
+  const max = width === "narrow" ? "max-w-3xl" : width === "default" ? "max-w-6xl" : "max-w-[1360px]";
+  return <div className={`mx-auto w-full ${max}`}>{children}</div>;
 }
 
 interface MetricCardProps {
@@ -66,41 +84,12 @@ interface MetricCardProps {
   value: string | number;
   subtext?: string;
   trend?: { value: number; direction: "up" | "down" | "neutral" };
-  color?: string;
   icon?: ReactNode;
 }
 
-export function MetricCard({ label, value, subtext, trend, color, icon }: MetricCardProps) {
-  const trendColor = !trend ? "" : trend.direction === "up" ? "text-green-600" : trend.direction === "down" ? "text-red-500" : "text-slate-500";
-  const trendArrow = !trend ? "" : trend.direction === "up" ? "↑" : trend.direction === "down" ? "↓" : "—";
-
-  return (
-    <Card>
-      <div className="flex items-start justify-between">
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-500 text-slate-500 uppercase tracking-wide mb-2">{label}</div>
-          <div className="text-2xl font-700 text-slate-900 leading-none mb-1" style={color ? { color } : {}}>
-            {value}
-          </div>
-          {(subtext || trend) && (
-            <div className="flex items-center gap-2">
-              {trend && (
-                <span className={`text-xs font-600 ${trendColor}`}>
-                  {trendArrow} {Math.abs(trend.value)}
-                </span>
-              )}
-              {subtext && <span className="text-xs text-slate-400">{subtext}</span>}
-            </div>
-          )}
-        </div>
-        {icon && (
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: color ? `${color}15` : "#eff6ff" }}>
-            <span style={{ color: color || "var(--primary)" }}>{icon}</span>
-          </div>
-        )}
-      </div>
-    </Card>
-  );
+/** Compatibility wrapper around KpiCard. */
+export function MetricCard({ label, value, subtext, trend }: MetricCardProps) {
+  return <KpiCard label={label} value={value} period={subtext} delta={trend ? { value: trend.direction === "down" ? -Math.abs(trend.value) : trend.direction === "up" ? Math.abs(trend.value) : 0, format: "abs", better: "none" } : undefined} />;
 }
 
 interface FindingRowProps {
@@ -118,54 +107,33 @@ interface FindingRowProps {
 }
 
 export function FindingRow({ severity, title, description, verified, score, evidence, affectedUrls, onExpand, expanded, children }: FindingRowProps) {
-  const sevColor: Record<string, string> = { critical: "#ef4444", high: "#f97316", medium: "#f59e0b", low: "#6366f1" };
-  const sevBg: Record<string, string> = { critical: "#fef2f2", high: "#fff7ed", medium: "#fffbeb", low: "#eef2ff" };
-  const color = sevColor[severity] || "#64748b";
-  const bg = sevBg[severity] || "#f1f5f9";
-
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
-      <div
-        className="flex items-start gap-3 p-4 hover:bg-slate-50 transition-colors cursor-pointer"
-        onClick={onExpand}
-      >
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-600 flex-shrink-0 mt-0.5" style={{ color, background: bg }}>
-          {severity.charAt(0).toUpperCase() + severity.slice(1)}
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <button type="button" aria-expanded={!!expanded} onClick={onExpand} className="flex w-full items-start gap-3 p-3.5 text-left transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
+        <StatusBadge status={severity} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-600 text-slate-900">{title}</span>
+          <span className="line-clamp-2 block text-xs text-slate-500">{description}</span>
         </span>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-600 text-slate-900 mb-0.5">{title}</div>
-          <div className="text-xs text-slate-500 line-clamp-2">{description}</div>
-        </div>
-        <div className="flex items-center gap-3 flex-shrink-0">
-          {verified && (
-            <span className="text-xs text-green-600 font-500 flex items-center gap-1">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              Verified
-            </span>
-          )}
-          {score && (
-            <span className="font-mono text-xs font-600 text-slate-500">Q:{score}</span>
-          )}
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className={`text-slate-300 transition-transform ${expanded ? "rotate-180" : ""}`}>
-            <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-      </div>
+        <span className="flex flex-shrink-0 items-center gap-3">
+          {verified ? <span className="text-xs font-600 text-emerald-700">Verified</span> : null}
+          {score ? <span className="font-mono text-xs text-slate-500">Q:{score}</span> : null}
+          <ChevronDown size={14} aria-hidden="true" className={`text-slate-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        </span>
+      </button>
       {expanded && (
         <div className="border-t border-slate-100 bg-slate-50 p-4">
           {evidence && (
             <div className="mb-3">
-              <div className="text-xs font-600 text-slate-500 uppercase tracking-wide mb-1">Evidence</div>
-              <div className="text-xs text-slate-700 bg-white border border-slate-200 rounded p-2.5 font-mono">{evidence}</div>
+              <div className="mb-1 text-[11px] font-600 uppercase tracking-wide text-slate-500">Evidence</div>
+              <div className="rounded border border-slate-200 bg-white p-2.5 font-mono text-xs text-slate-700">{evidence}</div>
             </div>
           )}
           {affectedUrls && affectedUrls.length > 0 && (
             <div className="mb-3">
-              <div className="text-xs font-600 text-slate-500 uppercase tracking-wide mb-1">Affected URLs ({affectedUrls.length})</div>
+              <div className="mb-1 text-[11px] font-600 uppercase tracking-wide text-slate-500">Affected URLs ({affectedUrls.length})</div>
               <div className="flex flex-wrap gap-1.5">
-                {affectedUrls.map((url) => (
-                  <span key={url} className="text-xs bg-white border border-slate-200 rounded px-2 py-0.5 font-mono text-slate-600">{url}</span>
-                ))}
+                {affectedUrls.map((url) => <span key={url} className="rounded border border-slate-200 bg-white px-2 py-0.5 font-mono text-xs text-slate-600">{url}</span>)}
               </div>
             </div>
           )}

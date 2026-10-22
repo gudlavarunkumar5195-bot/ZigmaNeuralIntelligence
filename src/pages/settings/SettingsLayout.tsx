@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router";
+import { PageHeader } from "../../components/ui/Card";
 
 const settingsTabs = [
   { label: "Workspace", path: "/settings/workspace" },
@@ -19,36 +20,32 @@ export function SettingsLayout({
   children: ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-6xl animate-slide-in">
-      <header className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-blue-700">{eyebrow}</p>
-        <h2 className="mt-2 text-2xl font-800 tracking-[-0.03em] text-slate-950">{title}</h2>
-      </header>
+    <div className="animate-slide-in">
+      <PageHeader eyebrow={eyebrow} title={title} />
 
-      <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <aside className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm">
-          <p className="px-2 pb-2 text-[10px] font-700 uppercase tracking-[0.14em] text-slate-500">Settings</p>
-          <nav className="space-y-1">
+      <div className="grid gap-6 lg:grid-cols-[200px_minmax(0,1fr)]">
+        <nav aria-label="Settings sections" className="-mx-1 overflow-x-auto scroll-area lg:mx-0 lg:overflow-visible">
+          <div className="flex min-w-max gap-1 border-b border-slate-200 px-1 lg:min-w-0 lg:flex-col lg:border-b-0 lg:px-0">
             {settingsTabs.map((tab) => (
               <NavLink
                 key={tab.path}
                 to={tab.path}
                 end
                 className={({ isActive }) =>
-                  `block rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                  `whitespace-nowrap text-[13px] font-600 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                     isActive
-                      ? "bg-blue-600 text-white shadow-sm"
-                      : "text-slate-600 hover:bg-white hover:text-slate-900"
+                      ? "-mb-px border-b-2 border-blue-600 px-3 py-2 text-blue-700 lg:mb-0 lg:rounded-lg lg:border-b-0 lg:bg-blue-50"
+                      : "-mb-px border-b-2 border-transparent px-3 py-2 text-slate-600 hover:text-slate-900 lg:mb-0 lg:rounded-lg lg:border-b-0 lg:hover:bg-slate-100"
                   }`
                 }
               >
                 {tab.label}
               </NavLink>
             ))}
-          </nav>
-        </aside>
+          </div>
+        </nav>
 
-        <div className="space-y-6">{children}</div>
+        <div className="min-w-0 space-y-6">{children}</div>
       </div>
     </div>
   );
@@ -60,11 +57,13 @@ export function SettingsUnavailable({ title, description }: { title: string; des
     <section
       role="status"
       data-testid="settings-unavailable"
-      className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-600"
+      className="rounded-xl border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-600"
     >
-      <h3 className="text-base font-800 text-slate-900">{title}</h3>
-      <p className="mt-1 font-600 text-amber-700">Not available yet</p>
-      <p className="mt-2">{description}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-card-title text-slate-900">{title}</h3>
+        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-600 text-slate-700 ring-1 ring-inset ring-slate-200">Not available yet</span>
+      </div>
+      <p className="mt-2 leading-6">{description}</p>
     </section>
   );
 }

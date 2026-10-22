@@ -15,6 +15,7 @@ import {
 import { useSelectedWebsiteId } from "../../lib/selectedWebsite";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
 import { BreakdownTable } from "./performance/BreakdownTable";
+import { PageHeader } from "../../components/ui/Card";
 
 const PRESETS = [7, 28, 90] as const;
 const ACTIVE = new Set(["queued", "running"]);
@@ -150,12 +151,12 @@ export function SearchPerformancePage() {
   if (site === null) return <EmptyState title="No website selected" description="Add and verify a website first." />;
   if (status === null) {
     return (
-      <div className="mx-auto max-w-5xl p-6 md:p-10">
+      <div>
         <Header domain={site.domain} />
         <EmptyState
           title="Search Console is not connected for this website"
           description="Connect a Google account and link a Search Console property to see real clicks, impressions, CTR and positions."
-          action={<Link to="/settings/integrations" className="rounded-md bg-slate-950 px-3 py-2 text-sm font-700 text-white">Go to Integrations</Link>}
+          action={<Link to="/settings/integrations" className="rounded-lg bg-blue-600 shadow-sm hover:bg-blue-700 px-3 py-2 text-sm font-700 text-white">Go to Integrations</Link>}
         />
       </div>
     );
@@ -165,7 +166,7 @@ export function SearchPerformancePage() {
   const propertyOk = status.property.status === "active";
   const cur = data?.current ?? null;
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
+    <div>
       <Header domain={site.domain} />
       <p className="mt-1 text-xs text-slate-600">
         Source: Google Search Console · property <span className="font-mono">{status.property.site_url}</span> ({status.property.property_type === "domain" ? "Domain" : "URL prefix"}) · web search · account {status.integration?.account_email ?? "unknown"}
@@ -194,7 +195,7 @@ export function SearchPerformancePage() {
           {status.property.next_sync_at ? ` · next scheduled: ${new Date(status.property.next_sync_at).toLocaleString()}` : ""}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button type="button" onClick={() => void syncNow()} disabled={syncing || !!activeJob || !integrationOk || !propertyOk} className="rounded-md bg-slate-950 px-3 py-1.5 text-xs font-700 text-white disabled:opacity-50">
+          <button type="button" onClick={() => void syncNow()} disabled={syncing || !!activeJob || !integrationOk || !propertyOk} className="rounded-lg bg-blue-600 shadow-sm hover:bg-blue-700 px-3 py-1.5 text-xs font-700 text-white disabled:opacity-50">
             {activeJob ? "Sync in progress" : syncing ? "Starting…" : "Sync now"}
           </button>
           {activeJob ? (
@@ -336,10 +337,7 @@ export function SearchPerformancePage() {
 
 function Header({ domain }: { domain: string }) {
   return (
-    <>
-      <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Search performance</p>
-      <h2 className="mt-2 text-2xl font-800 text-slate-950">{domain}</h2>
-    </>
+    <PageHeader eyebrow="SEO Research" title="Search performance" subtitle={<>Google Search Console data for <span className="font-600 text-slate-700">{domain}</span>. Search Console covers Google Search only, not all website traffic.</>} />
   );
 }
 

@@ -1,4 +1,5 @@
 import type { AdminCheckStatus } from "../../services/api";
+import { PageHeader as SharedPageHeader } from "../../components/ui/Card";
 
 // Shared presentation for the Admin Control Center. Statuses are shown as the
 // backend reports them; anything unknown is labelled, never shown as healthy.
@@ -40,18 +41,9 @@ export function StatusPill({ status, label }: { status: string | null | undefine
 
 export const fmtTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : "—");
 
+/** Admin pages share the product-wide page header; children are the page actions. */
 export function PageHeader({ eyebrow, title, children }: { eyebrow: string; title: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">{eyebrow}</p>
-        <h2 className="mt-2 text-2xl font-800 text-slate-950">{title}</h2>
-      </div>
-      <div className="flex flex-wrap gap-2">{children}</div>
-    </div>
-  );
+  return <SharedPageHeader eyebrow={eyebrow} title={title} action={children ? <div className="flex flex-wrap gap-2">{children}</div> : undefined} />;
 }
 
-export const btn = "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-700 text-slate-800 hover:bg-slate-50 disabled:opacity-50";
-export const btnPrimary = "rounded-md bg-slate-950 px-3 py-1.5 text-xs font-700 text-white hover:bg-slate-800 disabled:opacity-50";
-export const btnDanger = "rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-700 text-red-800 hover:bg-red-50 disabled:opacity-50";
+export { btn, btnDanger, btnPrimary } from "../../components/ui/styles";

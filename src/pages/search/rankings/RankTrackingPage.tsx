@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { NavLink, useParams } from "react-router";
+import { useParams } from "react-router";
+import { PageHeader } from "../../../components/ui/Card";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../../components/ui/DataState";
+import { RouteTabs } from "../../../components/ui/Primitives";
 import { apiRankCreateProject, apiRankProjects, apiRankSources, IntegrationRequired, type RankProject, type RankSources } from "../../../services/api";
 import { useWebsites } from "../research/shared";
 import { AlertsTab, CompetitorsTab, FeaturesTab, HistoryTab, ImportTab, KeywordsTab, OverviewTab, SourcesTab } from "./tabs";
@@ -54,25 +56,20 @@ export function RankTrackingPage() {
   const providerAvailable = sources.sources.some((s) => s.id !== "csv_import" && s.id !== "google_search_console" && s.status === "available");
 
   return (
-    <div className="mx-auto max-w-6xl p-6 md:p-10">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[.18em] text-blue-700">Search data</p>
-          <h2 className="mt-2 text-2xl font-800 text-slate-950">Rank tracking</h2>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
+    <div>
+      <PageHeader eyebrow="SEO Research" title="Rank tracking" subtitle="Observed keyword positions, SERP features and competitors per project. Rankings come only from imported reports or a configured SERP provider."
+        action={<>
           {projects.length ? (
-            <label className="text-xs text-slate-700">Project
+            <label className="text-xs font-600 text-slate-700">Project
               <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={input}>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name} — {p.website_domain}{p.status === "paused" ? " (paused)" : ""}</option>)}
               </select>
             </label>
           ) : null}
           <button type="button" className={btn} onClick={() => setCreating((c) => !c)} aria-expanded={creating}>New project</button>
-        </div>
-      </div>
+        </>} />
       {!providerAvailable ? (
-        <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-950">
           No SERP data provider is configured, so rankings are not collected automatically. Import ranking reports from a tool you are authorized to use (Import tab); scheduled tracking needs an approved provider (Data sources tab).
         </p>
       ) : null}
@@ -81,16 +78,9 @@ export function RankTrackingPage() {
       ) : null}
       {projects.length === 0 ? null : !project ? <EmptyState title="Choose a project" /> : (
         <>
-          <p className="mt-3 text-xs text-slate-600">{configLabel(project)} · {project.frequency === "manual" ? "updated by imports" : `${project.frequency} tracking`} · time zone {project.timezone}</p>
-          <nav aria-label="Rank tracking sections" className="mt-3 flex flex-wrap gap-1 border-b border-slate-200">
-            {RANK_TABS.map((t) => (
-              <NavLink key={t.id} to={t.id === "overview" ? "/search/rankings" : `/search/rankings/${t.id}`} end aria-current={tab === t.id ? "page" : undefined}
-                className={`-mb-px border-b-2 px-3 py-2 text-xs font-700 ${tab === t.id ? "border-blue-600 text-blue-800" : "border-transparent text-slate-600 hover:text-slate-900"}`}>
-                {t.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="mt-4" key={project.id}>
+          <p className="mb-3 text-xs text-slate-600">{configLabel(project)} · {project.frequency === "manual" ? "updated by imports" : `${project.frequency} tracking`} · time zone {project.timezone}</p>
+          <RouteTabs label="Rank tracking sections" current={tab} tabs={RANK_TABS.map((t) => ({ id: t.id, label: t.label, to: t.id === "overview" ? "/search/rankings" : `/search/rankings/${t.id}` }))} />
+          <div className="mt-5" key={project.id}>
             {tab === "overview" && <OverviewTab project={project} providerAvailable={providerAvailable} onChanged={load} />}
             {tab === "keywords" && <KeywordsTab project={project} sources={sources} />}
             {tab === "history" && <HistoryTab project={project} />}
@@ -126,7 +116,7 @@ function NewProject({ providerAvailable, onCreated, onCancel }: { providerAvaila
   if (!websites) return <LoadingState label="Loading websites…" />;
   if (!websites.length) return <EmptyState title="No websites yet" description="Add and verify a website before tracking its rankings." />;
   return (
-    <form onSubmit={submit} aria-label="New rank-tracking project" className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+    <form onSubmit={submit} aria-label="New rank-tracking project" className="mb-5 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-sm font-700 text-slate-900">New project</h3>
       <p className="mt-1 text-xs text-slate-600">One project per website and search configuration. Rankings for another country, language or device belong in another project.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
