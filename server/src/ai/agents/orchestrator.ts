@@ -166,6 +166,7 @@ export async function executeAgent(input: AgentInput): Promise<AgentResult> {
     requireJson: true,
     temperature: 0.1,
     agentType: input.agentType,
+    feature: "agent",
     taskDescription: `${def.name} — task ${input.taskId}`,
     scanId: input.scanId,
     orgId: input.tenantId,

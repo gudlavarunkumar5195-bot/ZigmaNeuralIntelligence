@@ -76,3 +76,17 @@ export async function withDeadline<T>(work: Promise<T>, deadlineAt: number, labe
     work.catch((): void => undefined); // a losing/late rejection must not become unhandled
   }
 }
+
+/** Maps with at most `limit` tasks in flight; results keep input order. */
+export async function mapLimited<T, R>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(Math.floor(limit) || 1, items.length)) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}

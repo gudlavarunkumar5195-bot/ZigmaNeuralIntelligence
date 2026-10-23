@@ -1,0 +1,87 @@
+{
+  "measuredAt": "2026-10-23T02:23:51.209Z",
+  "node": "v24.21.0",
+  "size": {
+    "gscDays": 365,
+    "gscQueries": 1500,
+    "gscPages": 300,
+    "scans": 3000,
+    "findingsPerScan": 30,
+    "snapshots": 20000,
+    "auditRows": 300000
+  },
+  "seedMs": 36186,
+  "sequential": [
+    {
+      "path": "/api/v1/dashboard?websiteId=97b9f9f3-e200-47de-b6fa-dfa8b79b288b",
+      "status": 200,
+      "bytes": 63942,
+      "n": 15,
+      "p50": 7,
+      "p95": 118,
+      "max": 118
+    },
+    {
+      "path": "/api/v1/websites/97b9f9f3-e200-47de-b6fa-dfa8b79b288b/seo-workspace/overview?preset=28d&compare=previous",
+      "status": 200,
+      "bytes": 15234,
+      "n": 15,
+      "p50": 241,
+      "p95": 599,
+      "max": 599
+    },
+    {
+      "path": "/api/v1/websites/97b9f9f3-e200-47de-b6fa-dfa8b79b288b/seo-workspace/overview?preset=90d&compare=previous",
+      "status": 200,
+      "bytes": 19832,
+      "n": 15,
+      "p50": 313,
+      "p95": 328,
+      "max": 328
+    },
+    {
+      "path": "/api/v1/websites/97b9f9f3-e200-47de-b6fa-dfa8b79b288b/seo-workspace/overview?preset=custom&from=2025-09-18&to=2026-10-22&compare=previous",
+      "status": 200,
+      "bytes": 42928,
+      "n": 5,
+      "p50": 282,
+      "p95": 283,
+      "max": 283
+    },
+    {
+      "path": "/api/v1/analytics/overview?days=365",
+      "status": 200,
+      "bytes": 6080,
+      "n": 15,
+      "p50": 141,
+      "p95": 162,
+      "max": 162
+    },
+    {
+      "path": "/api/v1/websites?pageSize=100",
+      "status": 200,
+      "bytes": 452,
+      "n": 15,
+      "p50": 1,
+      "p95": 2,
+      "max": 2
+    }
+  ],
+  "underLoad": {
+    "concurrentOverviews": 6,
+    "overviewStatuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "cheapRequestDuringLoad": {
+      "n": 5,
+      "p50": 8,
+      "p95": 309,
+      "max": 309
+    }
+  }
+}

@@ -11,3 +11,8 @@ minimumReleaseAgeExclude:
   - '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.292'
   - '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.292'
   - '@anthropic-ai/claude-agent-sdk@0.3.292'
+
+# Security floors for transitive dependencies (Phase 10 audit; see docs/production-readiness/SECURITY-FINDINGS.md).
+overrides:
+  ip-address: '>=10.7.4'
+  source-map-js: '>=1.2.2'

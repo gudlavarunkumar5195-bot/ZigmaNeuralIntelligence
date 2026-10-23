@@ -118,6 +118,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Agent Registry", path: "/agents/agent-registry" },
       { label: "Model Router", path: "/agents/model-router" },
       { label: "Model Registry", path: "/agents/model-registry" },
+      { label: "Model Intelligence", path: "/agents/model-intelligence", prefix: true, keywords: "ai router quota usage quality security approvals free models feasibility" },
       { label: "Model Benchmarks", path: "/agents/model-benchmarks", unavailable: true },
       { label: "Instructions", path: "/agents/instructions" },
       { label: "Evidence", path: "/agents/evidence" },

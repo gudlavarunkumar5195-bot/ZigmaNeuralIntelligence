@@ -1,5 +1,7 @@
 import type { ModelProvider, ModelRequest, ModelResponse, ProviderCitation } from "../provider.js";
 import { ProviderError } from "../provider.js";
+import { categorizeOpenRouterError, parseRetryAfterMs } from "../failures.js";
+import { ZERO_MAX_PRICE } from "../pricing.js";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -42,11 +44,20 @@ export class OpenRouterProvider implements ModelProvider {
     if (request.webSearch) {
       body.plugins = [{ id: "web", max_results: request.webSearch.maxResults }];
     }
+    if (request.requireZeroPrice) {
+      // Provider-side guard in addition to our own eligibility check: OpenRouter
+      // refuses to route to any endpoint priced above zero, and a request that
+      // depends on an unsupported parameter fails instead of silently changing endpoint.
+      body.provider = { max_price: { ...ZERO_MAX_PRICE }, require_parameters: true };
+      // Provider-side web search is billed, so it never accompanies a free request.
+      delete body.plugins;
+    }
 
     let res: Response;
     try {
       res = await fetch(OPENROUTER_API_URL, {
         method: "POST",
+        redirect: "error", // a fixed provider endpoint never needs a redirect; never follow one with the API key
         signal: request.signal,
         headers: {
           "Content-Type": "application/json",
@@ -74,41 +85,32 @@ export class OpenRouterProvider implements ModelProvider {
 
     const durationMs = Date.now() - start;
 
-    // HTTP-level errors
-    if (!res.ok && res.status !== 400) {
-      // Release the connection: the body of an error response is never read.
-      await res.body?.cancel().catch((): void => undefined);
-    }
-    if (res.status === 429) {
-      const retryAfter = res.headers.get("retry-after");
-      throw new ProviderError(
-        "RATE_LIMITED",
-        `Rate limited${retryAfter ? ` — retry after ${retryAfter}s` : ""}`,
-        true,
-        429
-      );
-    }
-    if (res.status === 503 || res.status === 502) {
-      throw new ProviderError("PROVIDER_ERROR", `Provider unavailable (HTTP ${res.status})`, true, res.status);
-    }
-    if (res.status === 400) {
-      let detail = "";
-      try {
-        const b = await res.json() as { error?: { message?: string } };
-        detail = b.error?.message ?? "";
-      } catch { /* ignore parse failure */ }
-      throw new ProviderError("INVALID_REQUEST", `Invalid request: ${detail}`, false, 400);
-    }
-    if (res.status === 401 || res.status === 403) {
-      throw new ProviderError("INVALID_REQUEST", `Authentication failed (HTTP ${res.status})`, false, res.status);
-    }
+    // HTTP-level errors. The body is read (bounded) for the typed error, then released.
     if (!res.ok) {
-      throw new ProviderError(
-        "PROVIDER_ERROR",
-        `HTTP ${res.status}`,
-        res.status >= 500,
-        res.status
-      );
+      const retryAfterMs = parseRetryAfterMs(res.headers.get("retry-after"), res.headers.get("x-ratelimit-reset"));
+      let detail = "";
+      let errorType: string | null = null;
+      try {
+        const text = (await res.text()).slice(0, 4_000);
+        const parsed = JSON.parse(text) as { error?: { message?: unknown; metadata?: { error_type?: unknown } } };
+        detail = typeof parsed.error?.message === "string" ? parsed.error.message.slice(0, 300) : "";
+        errorType = typeof parsed.error?.metadata?.error_type === "string" ? parsed.error.metadata.error_type.slice(0, 60) : null;
+      } catch { /* non-JSON or unreadable error body */ }
+      // Release the connection whether or not the body was read.
+      await res.body?.cancel().catch((): void => undefined);
+      const category = categorizeOpenRouterError(res.status, errorType, detail);
+      const code = res.status === 429 ? "RATE_LIMITED"
+        : res.status === 400 || res.status === 401 || res.status === 403 ? "INVALID_REQUEST"
+        : category === "CONTEXT_OVERFLOW" ? "CONTEXT_TOO_LONG"
+        : category === "TIMEOUT" ? "TIMEOUT"
+        : "PROVIDER_ERROR";
+      const retryable = category === "RATE_LIMITED" || category === "PROVIDER_UNAVAILABLE" || category === "TIMEOUT";
+      const label = res.status === 401 || res.status === 403 ? `Authentication failed (HTTP ${res.status})`
+        : res.status === 429 ? `Rate limited${retryAfterMs !== null ? ` — retry after ${Math.ceil(retryAfterMs / 1000)}s` : ""}`
+        : res.status === 400 ? `Invalid request: ${detail}`
+        : res.status === 502 || res.status === 503 ? `Provider unavailable (HTTP ${res.status})`
+        : `HTTP ${res.status}`;
+      throw new ProviderError(code, label, retryable, res.status, category, retryAfterMs);
     }
 
     let raw: OpenRouterResponse;
@@ -126,22 +128,29 @@ export class OpenRouterProvider implements ModelProvider {
     // Model-level error embedded in a 200 response (OpenRouter pattern)
     if (raw.error) {
       const code = raw.error.code ?? 0;
+      const message = typeof raw.error.message === "string" ? raw.error.message.slice(0, 300) : "Provider error";
+      const errorType = typeof raw.error.metadata?.error_type === "string" ? raw.error.metadata.error_type : null;
+      const category = categorizeOpenRouterError(typeof code === "number" ? code : 0, errorType, message);
       if (code === 429) {
-        throw new ProviderError("RATE_LIMITED", raw.error.message, true, 429);
+        throw new ProviderError("RATE_LIMITED", message, true, 429, category);
       }
       // 503 from OpenRouter means model not available — check before generic 5xx
       if (code === 503) {
-        throw new ProviderError("MODEL_UNAVAILABLE", raw.error.message, false, 503);
+        throw new ProviderError("MODEL_UNAVAILABLE", message, false, 503, "PROVIDER_UNAVAILABLE");
       }
       if (typeof code === "number" && code >= 500) {
-        throw new ProviderError("PROVIDER_ERROR", raw.error.message, true, code);
+        throw new ProviderError("PROVIDER_ERROR", message, true, code, category);
       }
-      throw new ProviderError("PROVIDER_ERROR", raw.error.message, false, typeof code === "number" ? code : undefined);
+      throw new ProviderError("PROVIDER_ERROR", message, false, typeof code === "number" ? code : undefined, category);
     }
 
     const choice = raw.choices?.[0];
     if (!choice) {
-      throw new ProviderError("MALFORMED_RESPONSE", "Provider returned no choices", false);
+      throw new ProviderError("MALFORMED_RESPONSE", "Provider returned no choices", false, undefined, "INVALID_PROVIDER_RESPONSE");
+    }
+    if (choice.finish_reason === "error") {
+      // Mid-generation provider failure (for example a rate limit after generation began).
+      throw new ProviderError("PROVIDER_ERROR", "Provider reported an error during generation", true, undefined, "PROVIDER_UNAVAILABLE");
     }
 
     const content = choice.message?.content ?? "";
@@ -155,13 +164,7 @@ export class OpenRouterProvider implements ModelProvider {
       provider: this.name,
       content,
       finishReason: normalizeFinishReason(choice.finish_reason),
-      usage: raw.usage
-        ? {
-            promptTokens: raw.usage.prompt_tokens,
-            completionTokens: raw.usage.completion_tokens,
-            totalTokens: raw.usage.total_tokens,
-          }
-        : null,
+      usage: parseUsage(raw.usage),
       durationMs,
       providerRequestId: typeof raw.id === "string" ? raw.id.slice(0, 200) : null,
       citations: parseCitations(raw, choice),
@@ -170,6 +173,25 @@ export class OpenRouterProvider implements ModelProvider {
 }
 
 const MAX_CITATIONS = 50;
+
+const nonNegativeInt = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+
+/** Provider-reported usage; null when the core counts are missing (the caller then records an estimate). */
+export function parseUsage(u: OpenRouterResponse["usage"]): ModelResponse["usage"] {
+  if (!u) return null;
+  const prompt = nonNegativeInt(u.prompt_tokens);
+  const completion = nonNegativeInt(u.completion_tokens);
+  if (prompt === null || completion === null) return null;
+  const cost = typeof u.cost === "number" && Number.isFinite(u.cost) && u.cost >= 0 ? u.cost : null;
+  return {
+    promptTokens: prompt,
+    completionTokens: completion,
+    totalTokens: nonNegativeInt(u.total_tokens) ?? prompt + completion,
+    cachedTokens: nonNegativeInt(u.prompt_tokens_details?.cached_tokens),
+    reasoningTokens: nonNegativeInt(u.completion_tokens_details?.reasoning_tokens),
+    costUsd: cost,
+  };
+}
 
 /**
  * Structured citations only: OpenRouter "url_citation" message annotations,
@@ -212,6 +234,7 @@ interface OpenRouterRequestBody {
   temperature: number;
   response_format?: { type: string };
   plugins?: Array<{ id: string; max_results: number }>;
+  provider?: { max_price: { prompt: number; completion: number; request: number; image: number }; require_parameters: boolean };
 }
 
 export interface OpenRouterResponse {
@@ -227,12 +250,16 @@ export interface OpenRouterResponse {
   }>;
   citations?: unknown[];
   usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+    cost?: unknown;
+    prompt_tokens_details?: { cached_tokens?: unknown };
+    completion_tokens_details?: { reasoning_tokens?: unknown };
   };
   error?: {
     message: string;
     code?: number | string;
+    metadata?: { error_type?: unknown };
   };
 }

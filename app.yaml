@@ -1,4 +1,20 @@
 name: zigma-neural-intelligence
+
+# App-level alerts (emailed to the team's DigitalOcean account owners/members;
+# add Slack in the dashboard under App -> Settings -> Alert Policies).
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+# Log forwarding (optional): App Platform can ship runtime logs to Papertrail,
+# Datadog, Logtail/Better Stack or OpenSearch via `log_destinations`. Only add
+# one once you have an endpoint/token, e.g.:
+#   log_destinations:
+#     - name: logtail
+#       logtail:
+#         token: <set in the dashboard; never commit tokens>
+# See docs/production-readiness/OBSERVABILITY-SENTRY.md.
+
 services:
   - name: web
     github:
@@ -13,7 +29,23 @@ services:
     # job below, so scaling or restarting web instances never re-runs DDL.
     run_command: pnpm --dir server start
     instance_count: 1
+    # basic-xxs is a legacy 512 MiB slug. Recommended: apps-s-1vcpu-1gb (1 GiB,
+    # ~$12/mo vs ~$5/mo) once Sentry + the AI router are live; see
+    # docs/production-readiness/OBSERVABILITY-SENTRY.md before changing.
     instance_size_slug: basic-xxs
+    alerts:
+      - rule: CPU_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: TEN_MINUTES
+      - rule: MEM_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: TEN_MINUTES
+      - rule: RESTART_COUNT
+        operator: GREATER_THAN
+        value: 3
+        window: THIRTY_MINUTES
     health_check:
       http_path: /ready
       initial_delay_seconds: 30
@@ -29,8 +61,26 @@ services:
       - key: VITE_API_BASE_URL
         scope: BUILD_TIME
         value: "/api/v1"
+      # Browser Sentry (project "zigma-web"). A browser DSN is PUBLIC by design
+      # (it ships in the JS bundle), so GENERAL is fine; it can only submit
+      # events. Leave empty to disable. Never put the server DSN or any auth
+      # token in a VITE_* variable.
+      - key: VITE_SENTRY_DSN
+        scope: BUILD_TIME
+        type: GENERAL
+        value: ""
+      - key: VITE_SENTRY_ENVIRONMENT
+        scope: BUILD_TIME
+        value: "production"
+      - key: VITE_SENTRY_TRACES_SAMPLE_RATE
+        scope: BUILD_TIME
+        value: "0.05"
       # ── Runtime: set these in the DigitalOcean dashboard ──────────────────
       - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      # Direct (non-pooled) Neon endpoint; used only for migrations/DDL.
+      - key: DIRECT_DATABASE_URL
         scope: RUN_TIME
         type: SECRET
       - key: JWT_SECRET
@@ -55,6 +105,17 @@ services:
       - key: OPENROUTER_API_KEY
         scope: RUN_TIME
         type: SECRET
+      # Free models only. The router never selects a paid or unknown-price
+      # model while this is false; budgets, quotas and trial limits are set
+      # in the app (Admin → Model Intelligence → Settings), not here.
+      - key: AI_ALLOW_PAID_MODELS
+        scope: RUN_TIME
+        value: "false"
+      # The deterministic router chooses models; an extra LLM routing call
+      # would spend the free daily allowance.
+      - key: AI_ROUTER_LLM_ENABLED
+        scope: RUN_TIME
+        value: "false"
       # ── Optional Google Search Console (see docs/SEARCH_CONSOLE.md) ────────
       # All four or none; production refuses a partial setup.
       - key: GOOGLE_OAUTH_CLIENT_ID
@@ -72,6 +133,42 @@ services:
       - key: APP_PUBLIC_URL
         scope: RUN_TIME
         value: "${APP_URL}"
+      # ── Optional ClickHouse Cloud analytics (events stay in the PostgreSQL
+      # outbox until HOST + PASSWORD + DATABASE are all set). HOST is a bare
+      # hostname such as abc123.us-east-1.aws.clickhouse.cloud (no scheme).
+      - key: CLICKHOUSE_HOST
+        scope: RUN_TIME
+        type: SECRET
+      - key: CLICKHOUSE_PORT
+        scope: RUN_TIME
+        value: "8443"
+      - key: CLICKHOUSE_DATABASE
+        scope: RUN_TIME
+        type: SECRET
+      - key: CLICKHOUSE_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: CLICKHOUSE_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+      # ── Error monitoring: Sentry (project "zigma-api") ────────────────────
+      # No-op while SENTRY_DSN is unset.
+      - key: SENTRY_DSN
+        scope: RUN_TIME
+        type: SECRET
+      - key: SENTRY_ENVIRONMENT
+        scope: RUN_TIME
+        value: "production"
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        scope: RUN_TIME
+        value: "0.1"
+      - key: SENTRY_ENABLE_LOGS
+        scope: RUN_TIME
+        value: "true"
+      # Release = zigma-api@<git sha> (DigitalOcean component bindable variable).
+      - key: COMMIT_SHA
+        scope: RUN_TIME
+        value: "${_self.COMMIT_HASH}"
       # ── Non-secret runtime config ─────────────────────────────────────────
       - key: NODE_ENV
         scope: RUN_TIME

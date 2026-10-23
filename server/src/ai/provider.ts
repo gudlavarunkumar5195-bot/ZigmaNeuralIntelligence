@@ -1,3 +1,5 @@
+import type { FailureCategory } from "./failures.js";
+
 // ─── Model Provider Interface ─────────────────────────────────────────────────
 //
 // All LLM execution goes through this interface.
@@ -20,6 +22,11 @@ export interface ModelRequest {
   responseFormat?: "text" | "json_object";
   /** Provider-side web search (OpenRouter "web" plugin). Billed separately; only set when explicitly enabled. */
   webSearch?: { maxResults: number };
+  /**
+   * Refuse any provider endpoint that would charge for the request (OpenRouter
+   * provider.max_price of zero). Set for every free or trial model.
+   */
+  requireZeroPrice?: boolean;
   signal?: AbortSignal;
 }
 
@@ -36,6 +43,12 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Prompt tokens served from the provider cache, when reported. */
+  cachedTokens?: number | null;
+  /** Completion tokens spent on reasoning, when reported. */
+  reasoningTokens?: number | null;
+  /** Charged amount in USD as reported by the provider (0 for free models), when reported. */
+  costUsd?: number | null;
 }
 
 export interface ModelResponse {
@@ -69,7 +82,11 @@ export class ProviderError extends Error {
     public readonly code: ProviderErrorCode,
     message: string,
     public readonly retryable: boolean,
-    public readonly httpStatus?: number
+    public readonly httpStatus?: number,
+    /** Phase 11 failure category; derived from the code when absent. */
+    public readonly category?: FailureCategory,
+    /** Provider-suggested wait before retrying (Retry-After / X-RateLimit-Reset), bounded. */
+    public readonly retryAfterMs?: number | null,
   ) {
     super(message);
     this.name = "ProviderError";

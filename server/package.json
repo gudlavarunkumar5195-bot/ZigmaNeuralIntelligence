@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc && node scripts/copy-migrations.mjs",
-    "start": "node --dns-result-order=ipv4first dist/index.js",
+    "start": "node --dns-result-order=ipv4first --import ./dist/instrument.js dist/index.js",
     "migrate": "node --dns-result-order=ipv4first dist/db/migrate.js",
     "migrate:prod": "node --dns-result-order=ipv4first dist/db/migrate.js",
     "migrate:dev": "node --dns-result-order=ipv4first --import tsx/esm src/db/migrate.ts",
@@ -23,6 +23,7 @@
     "@fastify/jwt": "^10.2.5",
     "@fastify/rate-limit": "^11.2.1",
     "@fastify/static": "^10.1.6",
+    "@sentry/node": "^10.76.2",
     "bcryptjs": "^2.4.3",
     "cheerio": "^1.2.0",
     "dotenv": "^16.6.1",

@@ -12,10 +12,17 @@ vi.mock("../config.js", () => ({
   },
 }));
 const queryMock = vi.hoisted(() => vi.fn(async () => ({ rows: [{ id: "test-db-id", count: "0", free_status: "FREE" }] })));
-vi.mock("../db/client.js", () => ({
-  query: queryMock,
-  withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }),
+// Requests without an explicit model are routed (Phase 11); the router itself is covered by router tests.
+vi.mock("../ai/router/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ai/router/index.js")>()),
+  resolveRouting: async () => ({ id: "decision-1", status: "RESOLVED", selectedModel: { openrouterId: "default-test-model" }, fallbackModels: [], excludedCandidates: [], decisionReason: "test routing" }),
 }));
+vi.mock("../db/client.js", async () => {
+  // Phase 11 governance tables get neutral answers; the model gate follows this file's "FROM models" answer.
+  const { governanceDb } = await import("./helpers/ai-governance-db.js");
+  const q = governanceDb((sql: string, params?: unknown[]) => (queryMock as unknown as (s: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>)(sql, params));
+  return { query: q, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: q }) };
+});
 vi.mock("../services/audit.service.js", () => ({
   audit: vi.fn(async () => {}),
 }));
@@ -104,7 +111,8 @@ describe("OxAlphaExecutor — retries", () => {
     let calls = 0;
     const provider = mockProvider(async () => {
       calls++;
-      if (calls < 2) throw new ProviderError("RATE_LIMITED", "limited", true);
+      // A short provider Retry-After is honoured on the same model (Phase 11).
+      if (calls < 2) throw new ProviderError("RATE_LIMITED", "limited", true, 429, "RATE_LIMITED", 5);
       return makeResponse("ok after retry");
     });
     const executor = new OxAlphaExecutor(provider);

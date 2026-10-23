@@ -445,17 +445,38 @@ const RANGE_NOTE = {
   keywords: "Snapshot of recent research runs; not filtered by the range.",
 };
 
+/**
+ * Runs tasks with at most `limit` in flight. The overview's sections each run
+ * several queries in parallel; starting all of them at once let a single
+ * request occupy most of the connection pool and starve other requests.
+ */
+async function runLimited<T extends unknown[]>(limit: number, tasks: { [K in keyof T]: () => Promise<T[K]> }): Promise<T> {
+  const results = new Array(tasks.length) as unknown[];
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await tasks[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results as T;
+}
+
+/** Sections loaded at the same time by one overview request. */
+export const OVERVIEW_SECTION_CONCURRENCY = 2;
+
 export async function overview(site: Site, range: DateRange) {
-  const [search, technical, rankings, backlinks, content, aiVisibility, keywords, jobs, insightRun] = await Promise.all([
-    collect("search", "/search/performance", "full", RANGE_NOTE.search, SECTION_TIMEOUT_MS, () => searchSection(site, range)),
-    collect("technical", "/intelligence/technical-health", "events_only", RANGE_NOTE.technical, SECTION_TIMEOUT_MS, () => technicalSection(site, range)),
-    collect("rankings", "/search/rankings", "full", RANGE_NOTE.rankings, SECTION_TIMEOUT_MS, () => rankingsSection(site, range)),
-    collect("backlinks", "/search/backlinks", "events_only", RANGE_NOTE.backlinks, SECTION_TIMEOUT_MS, () => backlinksSection(site, range)),
-    collect("content", "/intelligence/content", "events_only", RANGE_NOTE.content, SECTION_TIMEOUT_MS, () => contentSection(site, range)),
-    collect("ai_visibility", "/intelligence/ai-visibility", "full", RANGE_NOTE.ai, SECTION_TIMEOUT_MS, () => aiVisibilitySection(site, range)),
-    collect("keywords", "/search/keywords", "snapshot", RANGE_NOTE.keywords, SECTION_TIMEOUT_MS, () => keywordsSection(site)),
-    recentJobs(site).catch(() => null),
-    query<{ evaluated_at: Date; detected: number; window_from: string; window_to: string }>("SELECT evaluated_at, detected, to_char(window_from,'YYYY-MM-DD') AS window_from, to_char(window_to,'YYYY-MM-DD') AS window_to FROM seo_insight_runs WHERE org_id = $1 AND website_id = $2", [site.orgId, site.id]),
+  const [search, technical, rankings, backlinks, content, aiVisibility, keywords, jobs, insightRun] = await runLimited(OVERVIEW_SECTION_CONCURRENCY, [
+    () => collect("search", "/search/performance", "full", RANGE_NOTE.search, SECTION_TIMEOUT_MS, () => searchSection(site, range)),
+    () => collect("technical", "/intelligence/technical-health", "events_only", RANGE_NOTE.technical, SECTION_TIMEOUT_MS, () => technicalSection(site, range)),
+    () => collect("rankings", "/search/rankings", "full", RANGE_NOTE.rankings, SECTION_TIMEOUT_MS, () => rankingsSection(site, range)),
+    () => collect("backlinks", "/search/backlinks", "events_only", RANGE_NOTE.backlinks, SECTION_TIMEOUT_MS, () => backlinksSection(site, range)),
+    () => collect("content", "/intelligence/content", "events_only", RANGE_NOTE.content, SECTION_TIMEOUT_MS, () => contentSection(site, range)),
+    () => collect("ai_visibility", "/intelligence/ai-visibility", "full", RANGE_NOTE.ai, SECTION_TIMEOUT_MS, () => aiVisibilitySection(site, range)),
+    () => collect("keywords", "/search/keywords", "snapshot", RANGE_NOTE.keywords, SECTION_TIMEOUT_MS, () => keywordsSection(site)),
+    () => recentJobs(site).catch(() => null),
+    () => query<{ evaluated_at: Date; detected: number; window_from: string; window_to: string }>("SELECT evaluated_at, detected, to_char(window_from,'YYYY-MM-DD') AS window_from, to_char(window_to,'YYYY-MM-DD') AS window_to FROM seo_insight_runs WHERE org_id = $1 AND website_id = $2", [site.orgId, site.id]),
   ]);
   const [insights, insightCount, actions] = await Promise.all([
     query("SELECT id, rule_id, title, priority, confidence, status, modules, last_detected_at FROM seo_insights WHERE org_id = $1 AND website_id = $2 AND status IN ('open','in_progress') ORDER BY priority DESC, last_detected_at DESC LIMIT 5", [site.orgId, site.id]),
@@ -1012,7 +1033,7 @@ export async function aiSummary(site: Site, range: DateRange, actorId: string) {
       { role: "user", content: `<data>${JSON.stringify(data)}</data>` },
     ],
     requireJson: true, maxTokens: 1_200, temperature: 0.2, maxRetries: 2,
-    agentType: "seo_workspace_summary", taskDescription: "SEO workspace summary", orgId: site.orgId, scanId: scan[0].id, userId: actorId,
+    agentType: "seo_workspace_summary", feature: "seo_workspace_summary", taskDescription: "SEO workspace summary", orgId: site.orgId, scanId: scan[0].id, userId: actorId,
   });
   if (!r.success || !r.response) throw new WorkspaceError(502, "AI_FAILED", "The AI summary did not complete. The deterministic summary is unaffected.");
   const v = validateWorkspaceSummary(r.parsedJson, new Set(Object.keys(sources)));

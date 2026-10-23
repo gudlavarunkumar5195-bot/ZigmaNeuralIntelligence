@@ -148,7 +148,7 @@
   --color-slate-100: #eef0f5;
   --color-slate-200: #e3e6ef;
   --color-slate-300: #cdd2df;
-  --color-slate-400: #7e859b;
+  --color-slate-400: #687085; /* 4.6:1 on the page background, 5:1 on white (WCAG AA text) */
   --color-slate-500: #636a80;
   --color-slate-600: #4b5266;
   --color-slate-700: #363c4f;

@@ -158,7 +158,7 @@ function IntegrationPlaceholder() {
               "OX Alpha CANNOT override any of the above",
             ].map((rule) => (
               <li key={rule} className="flex items-center gap-2">
-                <XCircle size={11} className="text-red-400 flex-shrink-0" />
+                <XCircle size={11} className="text-red-700 flex-shrink-0" />
                 {rule}
               </li>
             ))}

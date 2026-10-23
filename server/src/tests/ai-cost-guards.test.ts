@@ -5,10 +5,17 @@ const { cfg, queryMock } = vi.hoisted(() => ({
   queryMock: vi.fn(),
 }));
 vi.mock("../config.js", () => ({ config: cfg }));
-vi.mock("../db/client.js", () => ({
-  query: queryMock,
-  withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }),
+// Requests without an explicit model are routed (Phase 11); the router itself is covered by router tests.
+vi.mock("../ai/router/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ai/router/index.js")>()),
+  resolveRouting: async () => ({ id: "decision-1", status: "RESOLVED", selectedModel: { openrouterId: "primary" }, fallbackModels: [], excludedCandidates: [], decisionReason: "test routing" }),
 }));
+vi.mock("../db/client.js", async () => {
+  // Phase 11 governance tables get neutral answers; the model gate follows this file's "FROM models" answer.
+  const { governanceDb } = await import("./helpers/ai-governance-db.js");
+  const q = governanceDb((sql: string, params?: unknown[]) => (queryMock as unknown as (s: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>)(sql, params));
+  return { query: q, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: q }) };
+});
 vi.mock("../services/audit.service.js", () => ({ audit: vi.fn(async () => {}) }));
 
 import { OxAlphaExecutor } from "../ai/ox-alpha.js";
@@ -22,6 +29,15 @@ function provider() {
   return { p, calls };
 }
 const FREE = new Set(["free-a", "free-b"]);
+const defaultPolicyRow = () => {
+  const d = defaultPolicy();
+  return {
+    id: "p", org_id: "o", version: 1, free_only: d.freeOnly, min_reliability: 0, min_quality: 0, max_attempts: d.maxAttempts,
+    require_cross_model_verification: false, allowed_providers: null, excluded_models: null,
+    weight_benchmark: 0.3, weight_reliability: 0.2, weight_capability: 0.15, weight_historical: 0.15, weight_structured_out: 0.05,
+    weight_latency: 0.05, weight_context: 0.05, weight_preference: 0.05, description: null, is_active: true, created_at: "", updated_at: "",
+  };
+};
 
 describe("AI cost guards (P0-6)", () => {
   beforeEach(() => {
@@ -57,8 +73,16 @@ describe("AI cost guards (P0-6)", () => {
     expect(r.error).toMatch(/MODEL_NOT_ALLOWED/);
   });
 
-  it("allows paid models only when AI_ALLOW_PAID_MODELS is explicitly true", async () => {
+  it("allows paid models only when AI_ALLOW_PAID_MODELS is explicitly true and the org policy is not free-only", async () => {
     cfg.AI_ALLOW_PAID_MODELS = true;
+    // The default routing policy is free-only, and it also binds explicitly named models (Phase 11).
+    const blocked = provider();
+    await new OxAlphaExecutor(blocked.p).execute({ model: "paid-x", messages: [{ role: "user", content: "x" }], orgId: "o", scanId: "s" });
+    expect(blocked.calls).toEqual([]);
+    const legacy = queryMock.getMockImplementation()!;
+    queryMock.mockImplementation(async (sql: string, params: unknown[] = []) => sql.includes("FROM routing_policies")
+      ? { rows: [{ ...defaultPolicyRow(), free_only: false }] }
+      : legacy(sql, params));
     const { p, calls } = provider();
     await new OxAlphaExecutor(p).execute({ model: "paid-x", messages: [{ role: "user", content: "x" }], orgId: "o", scanId: "s" });
     expect(calls).toEqual(["paid-x"]);

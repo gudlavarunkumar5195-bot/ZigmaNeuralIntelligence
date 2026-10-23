@@ -30,6 +30,17 @@ export interface ModelRow {
   input_modalities: string[];
   output_modalities: string[];
   enabled: boolean;
+  // Phase 11 catalog fields (absent on rows written before migration 041 was applied).
+  pricing_class?: "FREE" | "TRIAL" | "PAID" | "UNKNOWN";
+  pricing_checked_at?: string | Date | null;
+  expires_at?: string | Date | null;
+  max_completion_tokens?: number | null;
+  reasoning_mandatory?: boolean;
+  supports_json_schema?: boolean;
+  is_router?: boolean;
+  benchmark_intelligence?: string | number | null;
+  benchmark_coding?: string | number | null;
+  benchmark_agentic?: string | number | null;
   first_seen_at: string;
   last_seen_at: string;
   last_catalog_refresh: string | null;
@@ -106,6 +117,9 @@ export function calculateEligibility(model: ModelRow, policy: EligibilityPolicy 
   if (model.free_status === "CHANGED") return "PENDING_REVIEW";
 
   if (policy.freeOnly && model.free_status !== "FREE") return "NOT_ELIGIBLE";
+  // Phase 11: the full pricing classification is authoritative when present;
+  // a zero prompt/completion price alone does not make a model free.
+  if (policy.freeOnly && model.pricing_class !== undefined && model.pricing_class !== "FREE" && model.pricing_class !== "TRIAL") return "NOT_ELIGIBLE";
 
   return "ELIGIBLE";
 }
@@ -203,6 +217,10 @@ export async function enableModel(
     `UPDATE models
      SET enabled=TRUE,
          status = CASE WHEN status IN ('DISCOVERED','REQUIRES_REVIEW') THEN 'AVAILABLE' ELSE status END,
+         -- Enabling is the review of a flagged price change: record the current classification.
+         free_status = CASE WHEN free_status = 'CHANGED' THEN
+                         CASE WHEN pricing_class IN ('FREE','TRIAL') THEN 'FREE' WHEN pricing_class = 'PAID' THEN 'PAID' ELSE 'UNKNOWN' END
+                       ELSE free_status END,
          updated_at=NOW()
      WHERE id=$1
      RETURNING status`,

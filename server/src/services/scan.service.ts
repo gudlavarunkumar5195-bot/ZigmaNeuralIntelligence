@@ -1086,7 +1086,7 @@ async function persistFinding(
       metadata: { legacyType: ev.type, tool: ev.tool },
     }, db)
     await db.query(
-      `UPDATE evidence SET type=$2, url=$3, observed_value=$4, expected_value=$5, rule=$6, tool=$7, metadata = metadata || $8::jsonb WHERE id=$1`,
+      `UPDATE evidence SET type=$2, url=$3, observed_value=$4, expected_value=$5, rule=$6, tool=$7, metadata = metadata || $8::jsonb WHERE id=$1 AND org_id=$9`,
       [
         record.evidenceId,
         ev.type,
@@ -1096,6 +1096,7 @@ async function persistFinding(
         ev.rule ?? null,
         ev.tool ?? null,
         JSON.stringify({ websiteId: websiteId }),
+        orgId,
       ],
     )
     await db.query(

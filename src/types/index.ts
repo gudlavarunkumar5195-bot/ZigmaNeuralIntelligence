@@ -252,6 +252,8 @@ export interface ApiError {
   status?: number;
   /** Server request id (x-request-id), for support. */
   requestId?: string;
+  /** Field-level validation messages some endpoints return (e.g. "weights: weights must sum to 1"). */
+  issues?: string[];
 }
 
 export interface PageMeta {

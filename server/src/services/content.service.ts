@@ -803,7 +803,7 @@ export async function suggestWithAi(site: Site, briefId: string, actorId: string
   const result = await executor.execute({
     messages: [{ role: "system", content: AI_SYSTEM }, { role: "user", content: `DATA ${JSON.stringify(data)}` }],
     requireJson: true, maxTokens: 1_500, temperature: 0.3, orgId: site.orgId, scanId, userId: actorId,
-    agentType: "CONTENT_BRIEF", taskDescription: "Suggest content brief improvements",
+    agentType: "CONTENT_BRIEF", feature: "content_brief", taskDescription: "Suggest content brief improvements",
   });
   if (!result.success || !result.parsedJson || typeof result.parsedJson !== "object") throw new ContentError(502, "AI_FAILED", "The AI did not return usable suggestions. The brief is unchanged.");
   const s = result.parsedJson as Record<string, unknown>;

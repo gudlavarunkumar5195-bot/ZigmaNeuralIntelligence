@@ -30,7 +30,7 @@ export async function authenticate(
       orgIds: payload.orgIds ?? [],
     };
   } catch {
-    reply.status(401).send({
+    return reply.status(401).send({
       error: { code: "UNAUTHORIZED", message: "Valid access token required" },
     });
   }
