@@ -23,7 +23,7 @@ type Tab = "registry" | "simulator";
 const RISK_COLORS: Record<string, string> = {
   LOW: "text-emerald-700 bg-emerald-50 border-emerald-200",
   MEDIUM: "text-amber-700 bg-amber-50 border-amber-200",
-  HIGH: "text-orange-400 bg-orange-900/30 border-orange-800/50",
+  HIGH: "text-orange-700 bg-orange-50 border-orange-200",
   CRITICAL: "text-red-700 bg-red-50 border-red-200",
 };
 
@@ -31,7 +31,7 @@ const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "text-emerald-700",
   DISABLED: "text-slate-500",
   DEPRECATED: "text-amber-700",
-  REQUIRES_REVIEW: "text-orange-400",
+  REQUIRES_REVIEW: "text-orange-700",
 };
 
 const AGENT_ICONS: Record<string, typeof Bot> = {
@@ -52,7 +52,7 @@ const PERM_COLORS: Record<string, string> = {
   READ: "text-blue-700",
   ANALYZE: "text-violet-700",
   GENERATE: "text-amber-700",
-  PROPOSE: "text-orange-400",
+  PROPOSE: "text-orange-700",
   EXECUTE: "text-red-700",
 };
 
@@ -435,7 +435,7 @@ function AgentDetail({
           <div className="space-y-1.5">
             {agent.dependencies.map((dep) => (
               <div key={dep.agentType} className="flex items-center gap-2 text-xs">
-                <span className={dep.dependencyType === "REQUIRED" ? "text-orange-400" : "text-slate-500"}>
+                <span className={dep.dependencyType === "REQUIRED" ? "text-orange-700" : "text-slate-500"}>
                   {dep.dependencyType === "REQUIRED" ? "REQUIRED" : "OPTIONAL"}
                 </span>
                 <span className="text-slate-600 font-mono">{dep.agentType}</span>

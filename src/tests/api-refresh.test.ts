@@ -269,3 +269,28 @@ describe("withSignal", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("refresh across tabs", () => {
+  it("retries once when another tab has just rotated the shared refresh cookie", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_API_BASE_URL", "http://api.test");
+    Object.defineProperty(globalThis, "sessionStorage", { value: storage(), configurable: true, writable: true });
+    (globalThis as { window?: unknown }).window = { location: { hash: "#/websites" } };
+    sessionStorage.setItem("zn_token", "old");
+    let refreshCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/auth/refresh")) {
+        refreshCalls++;
+        return refreshCalls === 1 ? json(401, { error: { code: "REFRESH_TOKEN_ROTATED", message: "retry" } }) : json(200, { data: { token: "new" } });
+      }
+      return new Headers(init?.headers).get("Authorization") === "Bearer new" ? json(200, { data: [] }) : json(401, {});
+    }));
+    const api = await import("../services/api");
+    const res = await api.apiListWebsites();
+    expect(res.error).toBeNull();
+    expect(refreshCalls).toBe(2);
+    expect(sessionStorage.getItem("zn_token")).toBe("new");
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+});

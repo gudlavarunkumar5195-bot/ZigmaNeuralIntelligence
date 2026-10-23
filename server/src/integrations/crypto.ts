@@ -69,9 +69,12 @@ export function decryptSecret(ring: KeyRing | null, ciphertext: string, aad: str
   if (!keyId || !iv || !tag || !data || extra !== undefined) throw new Error("Malformed encrypted credential");
   const key = ring.keys.get(keyId);
   if (!key) throw new EncryptionUnavailableError(`Credential was encrypted with key ${keyId}, which is no longer configured`);
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+  const authTag = Buffer.from(tag, "base64url");
+  // Full 128-bit tags only: GCM would otherwise accept truncated (easier to forge) tags.
+  if (authTag.length !== 16) throw new Error("Malformed encrypted credential");
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"), { authTagLength: 16 });
   decipher.setAAD(Buffer.from(aad, "utf8"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(Buffer.from(data, "base64url")), decipher.final()]).toString("utf8");
 }
 

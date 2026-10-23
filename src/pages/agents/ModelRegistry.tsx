@@ -44,7 +44,7 @@ function FreeChip({ status }: { status: string }) {
   if (status === "FREE") return <span className="text-xs font-600 rounded px-1.5 py-0.5 bg-green-100 text-green-700">Free</span>;
   if (status === "CHANGED") return <span className="text-xs font-600 rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">Changed</span>;
   if (status === "PAID") return <span className="text-xs font-600 rounded px-1.5 py-0.5 bg-slate-100 text-slate-500">Paid</span>;
-  return <span className="text-xs font-600 rounded px-1.5 py-0.5 bg-slate-100 text-slate-400">Unknown</span>;
+  return <span className="text-xs font-600 rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">Unknown</span>;
 }
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
@@ -357,7 +357,7 @@ export function ModelRegistry() {
 
       {/* Registry / Catalog separation notice */}
       <div className="mb-4 flex items-center gap-2 text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-        <Database size={12} className="text-blue-400" />
+        <Database size={12} className="text-blue-700" />
         <span>
           <strong className="text-blue-700">ZigmaNeural Registry</strong> — curated approved models ·
           <strong className="text-slate-600"> OpenRouter Catalog</strong> — raw external availability.

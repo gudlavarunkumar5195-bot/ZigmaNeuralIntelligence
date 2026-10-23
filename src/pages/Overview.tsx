@@ -85,13 +85,13 @@ export function Overview() {
     {scanError && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{scanError}</p>}
 
     <section aria-label="Key metrics" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <KpiCard label="Health score" value={score === null ? "—" : <>{score}<span className="ml-1 text-sm font-500 text-slate-400">/ 100</span></>}
+      <KpiCard label="Health score" value={score === null ? "—" : <>{score}<span className="ml-1 text-sm font-500 text-slate-500">/ 100</span></>}
         delta={healthDelta === null ? undefined : { value: healthDelta, format: "abs", better: "up", digits: 0 }} sparkline={trendMatchesScore ? data.history.map((point) => point.overall_score) : undefined}
         period={healthDelta === null ? undefined : "points vs previous snapshot"} source="Latest completed scan"
         footer={score === null ? "Score unavailable — run a completed scan to generate it." : undefined} />
       <KpiCard label="Findings" value={site.finding_count} source="Latest scan" />
       <KpiCard label="Critical findings" value={site.critical_count} source="Latest scan" />
-      <KpiCard label="Dimensions measured" value={<>{scored}<span className="ml-1 text-sm font-500 text-slate-400">/ {dimensions.length}</span></>} source="Latest scan" footer="Unmeasured dimensions are shown as such below." />
+      <KpiCard label="Dimensions measured" value={<>{scored}<span className="ml-1 text-sm font-500 text-slate-500">/ {dimensions.length}</span></>} source="Latest scan" footer="Unmeasured dimensions are shown as such below." />
     </section>
 
     <section className={`${card} mt-5`} aria-labelledby="dimensions-heading">

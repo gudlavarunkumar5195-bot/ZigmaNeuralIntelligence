@@ -115,7 +115,7 @@ export async function routingRoutes(fastify: FastifyInstance): Promise<void> {
   // ── GET /decisions ──────────────────────────────────────────────────────────
   fastify.get("/decisions", { preHandler: adminPreHandler }, async (request, reply) => {
     const { limit } = request.query as { limit?: string };
-    const parsedLimit = Math.min(parseInt(limit ?? "50", 10) || 50, 200);
+    const parsedLimit = Math.min(Math.max(parseInt(limit ?? "50", 10) || 50, 1), 200);
 
     try {
       const decisions = await listRoutingDecisions(parsedLimit, request.orgId);

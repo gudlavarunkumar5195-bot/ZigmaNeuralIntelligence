@@ -160,6 +160,7 @@ export async function fetchOpenRouterCatalog(): Promise<NormalizedModel[]> {
     let res: Response;
     try {
       res = await fetch(OPENROUTER_MODELS_URL, {
+        redirect: "error",
         signal: controller.signal,
         headers: {
           // Key is sent to get full pricing details — never logged

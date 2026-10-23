@@ -288,3 +288,31 @@ Branch `feat/p9-6-integration`, from `main` after PR #13. Not deployed; no produ
     - the audit log.
     The seed makes the owner the platform administrator of the throwaway server only, and every sign-in waits for the API's own rate-limit budget (200 requests a minute, unchanged).
   - Access token storage stays as designed (see `docs/INTEGRATION_MATRIX.md`): keeping the token in memory only would trip refresh-token reuse detection when tabs reload together.
+
+# Phase 10: Production readiness
+
+Branch `feat/p10-production-readiness`, from `main` after PR #14. Not deployed; no production migration run; no paid or live provider call. The reports are in `docs/production-readiness/`: the audit with a CONDITIONAL GO verdict, security findings, a measured performance baseline, a route acceptance matrix, and a release runbook with an environment inventory.
+
+- **P1 fixes:**
+  - a stalled or truncated gzip response hung `safeFetch` forever (`pipe` → `pipeline`);
+  - no database statement or idle-in-transaction timeouts (now configurable, default 30 s / 60 s; set on the role behind a pooler);
+  - one SEO workspace overview saturated the pool (sections now limited to 2 in flight).
+- **Measured:**
+  - dashboard response 3.36 MB → 64 KB (history limited to 365 points);
+  - a cheap request's median under 6 concurrent overviews 66 ms → 8 ms.
+- **Migration 040 (additive):** hot-path indexes, and an append-only `audit_log` trigger with an explicit maintenance opt-in.
+- **Sessions:**
+  - a 10 s refresh-rotation grace, so concurrent tabs no longer revoke every session; the client retries once;
+  - `/me` refuses deactivated users;
+  - JWT pinned to HS256;
+  - Secure cookie on any HTTPS deployment;
+  - input bounds;
+  - GCM 128-bit tags;
+  - no redirects on OpenRouter calls.
+- **Dependencies:** `ip-address` and `source-map-js` security floors; Vite 8.3.5 and Vitest 4.1.12. The root `pnpm audit` is clean.
+- **Accessibility:** axe-core WCAG 2.2 A/AA scans on all 45 routes (`@axe-core/playwright`, dev). Fixed the `slate-400` contrast token, the brand-link label, the toast region and the leftover dark-theme badges.
+- **Tests:**
+  - 274 frontend;
+  - 1136 server (new: production-hardening and session-hardening integration, crypto tag, pooler detection);
+  - 24 real-API E2E (new accessibility spec);
+  - 5 smoke.

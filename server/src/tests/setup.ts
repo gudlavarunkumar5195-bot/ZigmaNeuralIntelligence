@@ -26,3 +26,8 @@ process.env.COOKIE_SECRET ??= randomBytes(32).toString("hex");
 // Integration tests only ever run against TEST_DATABASE_URL (never a
 // production DATABASE_URL).
 if (isolatedDatabaseUrl) process.env.DATABASE_URL = isolatedDatabaseUrl;
+
+// audit_log is append-only (migration 040). Test suites delete or age their own
+// audit rows during cleanup, so test connections opt into maintenance mode;
+// audit-log-immutability.integration.test.ts checks the default (refusing) mode.
+process.env.PGOPTIONS = [process.env.PGOPTIONS, "-c zigma.audit_maintenance=on"].filter(Boolean).join(" ");

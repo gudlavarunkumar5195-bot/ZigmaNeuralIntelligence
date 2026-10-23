@@ -16,7 +16,8 @@ import { config } from "../config.js";
 const REFRESH_COOKIE = "zn_refresh";
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: config.NODE_ENV === "production",
+  // Secure in production and on any HTTPS deployment (e.g. a staging environment not run with NODE_ENV=production).
+  secure: config.NODE_ENV === "production" || (config.APP_PUBLIC_URL ?? "").startsWith("https:"),
   sameSite: "strict" as const,
   path: "/api/v1/auth",
   maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
@@ -27,8 +28,8 @@ const passwordSchema = z.string().min(8).refine(passwordWithinBcryptLimit, `Pass
 const registerSchema = z.object({
   email: z.string().email(),
   password: passwordSchema,
-  fullName: z.string().min(1).optional(),
-  orgName: z.string().min(1),
+  fullName: z.string().min(1).max(200).optional(),
+  orgName: z.string().min(1).max(200),
 });
 
 const loginSchema = z.object({
@@ -182,6 +183,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
   // GET /api/v1/auth/me
   fastify.get("/me", { preHandler: [authenticate] }, async (request, reply) => {
+    // A deactivated user's access token stays valid for up to 15 minutes; /me must not answer for it.
+    const { rows: active } = await query<{ active: boolean }>("SELECT active FROM users WHERE id = $1", [request.authUser.id]);
+    if (!active[0]?.active) return reply.status(401).send({ error: { code: "UNAUTHORIZED", message: "Valid access token required" } });
     // The caller's own memberships, so the UI can tell a viewer up front that
     // changes are not allowed. Every write route still enforces the role itself.
     const { rows: memberships } = await query<{ orgId: string; role: string }>(

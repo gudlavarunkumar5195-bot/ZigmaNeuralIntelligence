@@ -119,6 +119,14 @@ const envSchema = z.object({
   // Worker polling interval
   WORKER_POLL_INTERVAL_MS: z.coerce.number().default(2_000),
 
+  // ── Database pool (see docs/production-readiness/RELEASE-RUNBOOK.md) ───────
+  DB_POOL_MAX: z.coerce.number().int().min(2).max(100).default(10),
+  // Server-side limits so one slow query or a forgotten transaction cannot hold
+  // a pooled connection indefinitely (0 disables). Sent as connection startup
+  // parameters; behind a transaction pooler set them on the role instead.
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(30_000),
+  DB_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().min(0).max(600_000).default(60_000),
+
   // AI / OX Alpha
   // OPENROUTER_API_KEY is intentionally optional at config-load time so the
   // server starts without it (feature degrades gracefully).  The executor will

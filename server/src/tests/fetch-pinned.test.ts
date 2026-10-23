@@ -45,6 +45,13 @@ describe("safeFetch against a real local server", () => {
     vi.resetModules();
     srv = http.createServer((q, r) => {
       if (q.url === "/gz") { r.writeHead(200, { "content-encoding": "gzip", "content-type": "text/html" }); r.end(gzipSync("x".repeat(20_000))); return; }
+      // A compressed body that starts, then stalls (or drops): the decoder must not hang the fetch.
+      if (q.url === "/gz-stall" || q.url === "/gz-drop") {
+        r.writeHead(200, { "content-encoding": "gzip", "content-type": "text/html" });
+        r.write(gzipSync("y".repeat(50_000)).subarray(0, 64));
+        if (q.url === "/gz-drop") setTimeout(() => r.destroy(), 20);
+        return; // /gz-stall: never finishes
+      }
       if (q.url === "/trunc") { r.writeHead(200, { "content-length": "1000" }); r.write("partial"); setTimeout(() => r.destroy(), 20); return; }
       r.end("hi");
     });
@@ -66,6 +73,23 @@ describe("safeFetch against a real local server", () => {
     expect(res.body.length).toBe(20_000);
     expect(res.headers["content-encoding"]).toBe("gzip");
   });
+
+  it("a stalled compressed body times out instead of hanging", async () => {
+    const safeFetch = await load();
+    const started = Date.now();
+    const res = await safeFetch(`http://site.invalid:${port}/gz-stall`, { responseTimeoutMs: 300 });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+    expect(res.error).toMatch(/not received within 300ms/);
+  }, 10_000);
+
+  it("a compressed body cut off mid-stream is a failed read, not a hang", async () => {
+    const safeFetch = await load();
+    const res = await safeFetch(`http://site.invalid:${port}/gz-drop`, { responseTimeoutMs: 2_000 });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+  }, 10_000);
 
   it("reports a truncated body as a failed read, not a successful page", async () => {
     const safeFetch = await load();

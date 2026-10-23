@@ -77,6 +77,9 @@ export async function buildApp() {
 
   await fastify.register(jwt, {
     secret: config.JWT_SECRET,
+    // Pinned: tokens are only ever HMAC-SHA256; anything else is rejected.
+    sign: { algorithm: "HS256" },
+    verify: { algorithms: ["HS256"] },
   });
 
   // Global rate limiting — individual routes can override

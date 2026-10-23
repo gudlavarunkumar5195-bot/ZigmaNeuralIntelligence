@@ -109,12 +109,13 @@ function SidebarNav({ isPlatformAdmin, onNavigate }: { isPlatformAdmin: boolean;
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <Link to="/" className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" aria-label="ZigmaNeural Intelligence home">
+    // The accessible name starts with the visible text (WCAG 2.5.3); the icon-only form needs a label.
+    <Link to="/" className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" aria-label={compact ? "ZigmaNeural Intelligence home" : undefined}>
       <span className="brand-highlight flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"><Network size={16} className="text-white" aria-hidden="true" /></span>
       {compact ? null : (
         <span className="min-w-0">
           <span className="block truncate text-sm font-800 leading-tight text-white">ZigmaNeural</span>
-          <span className="block truncate text-[10px] font-600 uppercase tracking-[0.14em] text-[var(--zn-sidebar-text)]">Intelligence</span>
+          <span className="block truncate text-[10px] font-600 uppercase tracking-[0.14em] text-[var(--zn-sidebar-text)]">Intelligence<span className="sr-only"> home</span></span>
         </span>
       )}
     </Link>

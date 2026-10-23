@@ -92,7 +92,7 @@ export async function agentRoutes(fastify: FastifyInstance): Promise<void> {
     const { agentType } = request.params as { agentType: string };
     const { orgId } = request as { orgId?: string };
     const limitParam = (request.query as { limit?: string }).limit;
-    const limit = Math.min(parseInt(limitParam ?? "50", 10) || 50, 200);
+    const limit = Math.min(Math.max(parseInt(limitParam ?? "50", 10) || 50, 1), 200);
 
     const { rows } = await query(
       `SELECT id, agent_type, model_id, status, attempt_number,

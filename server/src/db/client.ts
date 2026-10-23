@@ -11,12 +11,38 @@ export const dbSslConfig =
     ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED, ...(config.DB_SSL_CA ? { ca: config.DB_SSL_CA } : {}) }
     : undefined;
 
+/**
+ * Transaction poolers (e.g. Neon's "-pooler" endpoints, PgBouncer) may not
+ * honour per-connection startup parameters, so the timeouts below are not sent
+ * there; set them on the database role instead (see the release runbook).
+ */
+export function usesTransactionPooler(databaseUrl: string): boolean {
+  try {
+    const u = new URL(databaseUrl);
+    return /-pooler\./.test(u.hostname) || u.searchParams.get("pgbouncer") === "true";
+  } catch {
+    return false;
+  }
+}
+
+const pooled = usesTransactionPooler(config.DATABASE_URL);
+export const sessionTimeouts = pooled
+  ? {}
+  : {
+      ...(config.DB_STATEMENT_TIMEOUT_MS > 0 ? { statement_timeout: config.DB_STATEMENT_TIMEOUT_MS } : {}),
+      ...(config.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS > 0 ? { idle_in_transaction_session_timeout: config.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS } : {}),
+    };
+if (pooled && config.DB_STATEMENT_TIMEOUT_MS > 0) {
+  console.warn(JSON.stringify({ event: "db_timeouts_not_applied", reason: "transaction_pooler", action: "ALTER ROLE <app role> SET statement_timeout / idle_in_transaction_session_timeout" }));
+}
+
 export const pool = new Pool({
   connectionString: config.DATABASE_URL,
-  max: 10,
+  max: config.DB_POOL_MAX,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
   ssl: dbSslConfig,
+  ...sessionTimeouts,
 });
 
 pool.on("error", (err) => {

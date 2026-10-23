@@ -1,6 +1,10 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { NAV_GROUPS, routeTitle } from "../../src/components/layout/navigation";
 import { fixture, openSignedIn, type Fixture } from "./helpers";
+
+// Scan settled pages: mid-animation opacity would be misread as low contrast (the app honours reduced motion).
+test.use({ reducedMotion: "reduce" });
 
 let f: Fixture;
 test.beforeAll(() => { f = fixture(); });
@@ -8,8 +12,9 @@ test.beforeAll(() => { f = fixture(); });
 // Every page in the navigation model (admin pages need a platform admin and are covered by their own tests).
 const ROUTES = NAV_GROUPS.filter((g) => !g.adminOnly).flatMap((g) => g.items.map((i) => i.path));
 
-test("every navigable page renders against the real API (no crash, one heading, no page overflow)", async ({ page }) => {
-  test.setTimeout(300_000);
+test("every navigable page renders against the real API (no crash, one heading, no page overflow, no serious WCAG violations)", async ({ page }) => {
+  test.setTimeout(420_000);
+  const a11y: string[] = [];
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
   // The API allows 200 requests a minute per client (a production control we
@@ -43,6 +48,15 @@ test("every navigable page renders against the real API (no crash, one heading, 
     await expect(page.getByText("Something went wrong"), route).toHaveCount(0);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow, `${route} overflows horizontally`).toBeLessThanOrEqual(1);
+    // Scan the settled page, not its loading skeleton (which is intentionally faint).
+    await expect(page.locator("#zn-main")).not.toContainText(/Loading/, { timeout: 15_000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    // Automated WCAG 2.2 A/AA check (axe-core); manual review is still needed for full conformance.
+    const scan = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+    for (const v of scan.violations.filter((x) => x.impact === "serious" || x.impact === "critical")) {
+      a11y.push(`${route}: ${v.id} (${v.impact}) — ${v.nodes.slice(0, 2).map((n) => n.html.slice(0, 140)).join(" | ")}`);
+    }
   }
+  expect(a11y).toEqual([]);
   expect(pageErrors).toEqual([]);
 });

@@ -3,7 +3,7 @@ import { config } from "../config.js";
 import http from "node:http";
 import https from "node:https";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
-import type { Readable } from "node:stream";
+import { pipeline, type Readable } from "node:stream";
 import type { IncomingMessage } from "node:http";
 
 export interface SafeFetchResult {
@@ -239,10 +239,16 @@ export function pinnedLookup(address: string) {
 
 function decodedStream(res: IncomingMessage): Readable {
   const encoding = String(res.headers["content-encoding"] ?? "").trim().toLowerCase();
-  if (encoding === "gzip" || encoding === "x-gzip") return res.pipe(createGunzip());
-  if (encoding === "deflate") return res.pipe(createInflate());
-  if (encoding === "br") return res.pipe(createBrotliDecompress());
-  return res;
+  const decoder =
+    encoding === "gzip" || encoding === "x-gzip" ? createGunzip()
+    : encoding === "deflate" ? createInflate()
+    : encoding === "br" ? createBrotliDecompress()
+    : null;
+  if (!decoder) return res;
+  // pipeline (not pipe): when the response errors, is aborted by the body
+  // timeout or closes early, the decoder is destroyed with that error, so the
+  // read loop ends. With pipe() the decoder never ended and the fetch hung.
+  return pipeline(res, decoder, () => undefined);
 }
 
 function requestPinned(url: string, address: string | undefined, method: string, controller: AbortController): Promise<IncomingMessage> {

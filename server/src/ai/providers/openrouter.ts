@@ -47,6 +47,7 @@ export class OpenRouterProvider implements ModelProvider {
     try {
       res = await fetch(OPENROUTER_API_URL, {
         method: "POST",
+        redirect: "error", // a fixed provider endpoint never needs a redirect; never follow one with the API key
         signal: request.signal,
         headers: {
           "Content-Type": "application/json",

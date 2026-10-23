@@ -155,6 +155,17 @@ const invalidRefresh = () =>
   Object.assign(new Error("Refresh token is invalid or revoked"), { statusCode: 401, code: "INVALID_REFRESH_TOKEN" });
 
 /**
+ * Two tabs share the refresh cookie: when both refresh at once, the slower one
+ * presents the token the faster one has just rotated. Within this window that
+ * is answered with a plain 401 (the cookie already holds the new token, so the
+ * client retries) instead of being treated as theft, which revoked every
+ * session of the user and signed them out everywhere.
+ */
+export const REFRESH_ROTATION_GRACE_SECONDS = 10;
+const rotatedRefresh = () =>
+  Object.assign(new Error("Refresh token was just rotated; retry with the current cookie"), { statusCode: 401, code: "REFRESH_TOKEN_ROTATED" });
+
+/**
  * Rotates a refresh token: revokes the presented token and issues its
  * replacement in ONE transaction. Replaying an already-revoked token is treated
  * as theft: every refresh token of that user is revoked (reuse detection).
@@ -174,10 +185,12 @@ export async function consumeRefreshToken(rawToken: string): Promise<RefreshResu
     );
 
     if (rows.length === 0) {
-      const { rows: seen } = await client.query<{ user_id: string; revoked_at: string | null }>(
-        "SELECT user_id, revoked_at FROM refresh_tokens WHERE token_hash = $1",
+      const { rows: seen } = await client.query<{ user_id: string; revoked_at: string | null; just_rotated: boolean }>(
+        `SELECT user_id, revoked_at, revoked_at > NOW() - make_interval(secs => ${REFRESH_ROTATION_GRACE_SECONDS}) AS just_rotated
+           FROM refresh_tokens WHERE token_hash = $1`,
         [hash],
       );
+      if (seen[0]?.revoked_at && seen[0].just_rotated) return { kind: "rotated" as const };
       if (seen[0]?.revoked_at) {
         await client.query(
           "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
@@ -212,6 +225,7 @@ export async function consumeRefreshToken(rawToken: string): Promise<RefreshResu
   });
 
   if (outcome.kind === "invalid") throw invalidRefresh();
+  if (outcome.kind === "rotated") throw rotatedRefresh();
   if (outcome.kind === "disabled") {
     throw Object.assign(new Error("Account is disabled"), { statusCode: 403, code: "ACCOUNT_DISABLED" });
   }

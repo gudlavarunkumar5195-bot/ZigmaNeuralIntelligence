@@ -361,6 +361,18 @@ function tryRefreshToken(): Promise<RefreshOutcome> {
  * valid, so the caller reports a connection error instead of signing out.
  */
 async function doRefreshToken(): Promise<RefreshOutcome> {
+  const first = await refreshOnce()
+  // Another tab rotated the shared refresh cookie a moment ago: the browser now
+  // holds the new one, so one short retry renews this tab's session too.
+  if (first === "rotated") {
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const second = await refreshOnce()
+    return second === "rotated" ? "rejected" : second
+  }
+  return first
+}
+
+async function refreshOnce(): Promise<RefreshOutcome | "rotated"> {
   if (!config.apiBaseUrl) return "rejected"
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS)
@@ -371,6 +383,10 @@ async function doRefreshToken(): Promise<RefreshOutcome> {
       signal: controller.signal,
     })
     if (res.status >= 500) return "unreachable"
+    if (res.status === 401) {
+      const body = (await res.json().catch(() => null)) as { error?: { code?: string } } | null
+      if (body?.error?.code === "REFRESH_TOKEN_ROTATED") return "rotated"
+    }
     if (!res.ok) return "rejected"
     const body: { data?: { token?: string } } = await res.json()
     if (body.data?.token) {
