@@ -89,15 +89,20 @@ describe("bounded AI attempts (F-010)", () => {
     expect(result.error).toMatch(/AI_DEADLINE_EXCEEDED/);
   });
   it("caps a hung call at the remaining deadline and never exceeds the agent deadline", async () => {
+    // Timers left by earlier tests would otherwise advance the fake clock during this one.
+    vi.clearAllTimers();
     const p = provider(() => new Promise<ModelResponse>(() => undefined));
-    (p.execute as ReturnType<typeof vi.fn>).mockImplementation((r: { signal: AbortSignal; model: string }) => { p.calls.push(r.model); return new Promise((_, reject) => r.signal.addEventListener("abort", () => reject(Object.assign(new Error("x"), { name: "AbortError" })))); });
+    const abortedAt: number[] = [];
+    (p.execute as ReturnType<typeof vi.fn>).mockImplementation((r: { signal: AbortSignal; model: string }) => { p.calls.push(r.model); return new Promise((_, reject) => r.signal.addEventListener("abort", () => { abortedAt.push(Date.now()); reject(Object.assign(new Error("x"), { name: "AbortError" })); })); });
     const start = Date.now();
     const promise = new OxAlphaExecutor(p).execute({ ...req, timeoutMs: 60_000, deadlineAt: start + 1_000 });
     await vi.runAllTimersAsync();
     const result = await promise;
     expect(result.success).toBe(false);
-    expect(Date.now() - start).toBeLessThanOrEqual(AI_AGENT_DEADLINE_MS);
-    expect(Date.now() - start).toBeLessThan(5_000);
+    // The hung call is aborted at the remaining deadline (1 s), not at its 60 s per-call timeout.
+    expect(abortedAt.length).toBeGreaterThan(0);
+    expect(Math.max(...abortedAt) - start).toBeLessThanOrEqual(1_000);
+    expect(Math.max(...abortedAt) - start).toBeLessThanOrEqual(AI_AGENT_DEADLINE_MS);
   });
   it("withDeadline rejects hung work and passes through fast work", async () => {
     const hung = withDeadline(new Promise<string>(() => undefined), Date.now() + 500, "stage");
