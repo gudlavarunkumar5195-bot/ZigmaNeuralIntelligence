@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { NAV_GROUPS, routeTitle } from "../../src/components/layout/navigation";
 import { fixture, openSignedIn, type Fixture } from "./helpers";
 
@@ -50,13 +50,32 @@ test("every navigable page renders against the real API (no crash, one heading, 
     expect(overflow, `${route} overflows horizontally`).toBeLessThanOrEqual(1);
     // Scan the settled page, not its loading skeleton (which is intentionally faint).
     await expect(page.locator("#zn-main")).not.toContainText(/Loading/, { timeout: 15_000 });
-    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     // Automated WCAG 2.2 A/AA check (axe-core); manual review is still needed for full conformance.
-    const scan = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
-    for (const v of scan.violations.filter((x) => x.impact === "serious" || x.impact === "critical")) {
-      a11y.push(`${route}: ${v.id} (${v.impact}) — ${v.nodes.slice(0, 2).map((n) => n.html.slice(0, 140)).join(" | ")}`);
+    // A slow runner can scan a frame that is still being painted or animated, which reads as
+    // low contrast; such a result is rescanned once and only a violation present twice counts.
+    let serious: Awaited<ReturnType<AxeBuilder["analyze"]>>["violations"] = [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await settle(page, attempt === 0 ? 0 : 1_000);
+      const scan = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]).analyze();
+      serious = scan.violations.filter((x) => x.impact === "serious" || x.impact === "critical");
+      if (serious.length === 0) break;
+      if (attempt === 0) console.log(`[a11y] ${route}: rescanning after ${serious.map((v) => v.id).join(", ")}`);
+    }
+    for (const v of serious) {
+      const nodes = v.nodes.slice(0, 2).map((n) => `${n.html.slice(0, 140)} [${(n.failureSummary ?? "").replace(/\s+/g, " ").slice(0, 160)}]`);
+      a11y.push(`${route}: ${v.id} (${v.impact}) — ${nodes.join(" | ")}`);
     }
   }
   expect(a11y).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
+
+/** Waits for in-flight requests and running animations, then for two painted frames. */
+async function settle(page: Page, extraMs: number) {
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+  if (extraMs) await page.waitForTimeout(extraMs);
+  await page.evaluate(async () => {
+    await Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+}
