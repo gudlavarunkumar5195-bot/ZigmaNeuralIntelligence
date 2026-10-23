@@ -248,6 +248,10 @@ export interface ApiError {
   message: string;
   field?: string;
   details?: Record<string, unknown>;
+  /** HTTP status (absent for network failures, timeouts and cancellations). */
+  status?: number;
+  /** Server request id (x-request-id), for support. */
+  requestId?: string;
 }
 
 export interface PageMeta {

@@ -21,3 +21,8 @@ logs/
 
 # Local test environment
 server/.env.test
+
+# Integration E2E artifacts
+test-results/
+playwright-report/
+e2e/.fixture.json

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useBusy } from "../../../lib/useBusy";
 import { Link } from "react-router";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/DataState";
 import {
@@ -29,8 +30,7 @@ import {
   type ContentOpportunity,
   type ContentOverview,
   type ContentPageRow,
-  type ContentTopic,
-} from "../../../services/api";
+  type ContentTopic, apiContentCreateTopic } from "../../../services/api";
 import { downloadBlob } from "../../search/research/shared";
 import { btn, btnPrimary, CRAWL_STATE_LABEL, errorMessage, input, SEVERITY_STYLE } from "./ui";
 
@@ -196,6 +196,7 @@ function PageDetail({ websiteId, pageId, onClose }: { websiteId: string; pageId:
 // ─── Audit ───────────────────────────────────────────────────────────────────
 
 export function AuditTab({ websiteId }: { websiteId: string }) {
+  const { busy, guard } = useBusy();
   const [rows, setRows] = useState<ContentFinding[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [filters, setFilters] = useState({ status: "open", severity: "", category: "" });
@@ -211,14 +212,15 @@ export function AuditTab({ websiteId }: { websiteId: string }) {
     setCursor(r.meta?.nextCursor ?? null);
   }, [websiteId, filters]);
   useEffect(() => { setRows(null); void load(); }, [load]);
-  const update = async (f: ContentFinding, status: "open" | "in_progress" | "ignored", reason?: string) => {
+  const update = guard(async (f: ContentFinding, status: "open" | "in_progress" | "ignored", reason?: string) => {
     const r = await apiContentUpdateFinding(websiteId, f.id, { status, reason });
     setMessage(r.error ? { ok: false, text: errorMessage(r.error) } : { ok: true, text: `Finding marked ${status.replace("_", " ")}.` });
     setIgnoring(null);
     void load();
-  };
+  });
   const showHistory = async (id: string) => {
     const r = await apiContentFindingHistory(websiteId, id);
+    if (r.error) return setMessage({ ok: false, text: `Could not load the history: ${errorMessage(r.error)}` });
     setHistory({ id, events: r.data ?? [] });
   };
   if (error) return <ErrorState title="Unable to load findings" message={error} onRetry={() => void load()} />;
@@ -248,8 +250,8 @@ export function AuditTab({ websiteId }: { websiteId: string }) {
               <p className="mt-1"><strong>Next step:</strong> {f.recommendation}</p>
               <p className="mt-1 text-[11px] text-slate-500">Evidence: {JSON.stringify(f.evidence)} · rule {f.rule_id} v{f.rule_version} · first {fmt(f.first_detected_at)} · last {fmt(f.last_detected_at)}{f.resolved_at ? ` · resolved ${fmt(f.resolved_at)}` : ""}{f.ignore_reason ? ` · ignored: ${f.ignore_reason}` : ""}</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {f.status !== "resolved" && f.status !== "in_progress" ? <button type="button" className={btn} onClick={() => void update(f, "in_progress")}>Start</button> : null}
-                {f.status === "in_progress" || f.status === "ignored" ? <button type="button" className={btn} onClick={() => void update(f, "open")}>Reopen</button> : null}
+                {f.status !== "resolved" && f.status !== "in_progress" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(f, "in_progress")}>Start</button> : null}
+                {f.status === "in_progress" || f.status === "ignored" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(f, "open")}>Reopen</button> : null}
                 {f.status !== "resolved" && f.status !== "ignored" ? <button type="button" className={btn} onClick={() => setIgnoring({ id: f.id, reason: "" })}>Ignore…</button> : null}
                 <button type="button" className={btn} onClick={() => void showHistory(f.id)}>History</button>
               </div>
@@ -284,9 +286,15 @@ export function TopicsTab({ websiteId }: { websiteId: string }) {
   useEffect(() => void load(), [load]);
   if (error) return <ErrorState title="Unable to load topics" message={error} onRetry={load} />;
   if (!topics) return <LoadingState label="Loading topics…" />;
-  if (!topics.length) return <EmptyState title="No topics yet" description="Topics are built from crawled pages and Search Console queries when an analysis runs." />;
+  if (!topics.length) return (
+    <div>
+      <EmptyState title="No topics yet" description="Topics are built from crawled pages and Search Console queries when an analysis runs. You can also add one yourself." />
+      <NewTopicForm websiteId={websiteId} onCreated={(id) => { void load(); setSelected(id); }} />
+    </div>
+  );
   return (
     <div>
+      <NewTopicForm websiteId={websiteId} onCreated={(id) => { void load(); setSelected(id); }} />
       <p className="text-xs text-slate-600">Deterministic clusters of pages (titles and headings) and Search Console queries by shared terms. A page “covers” a topic when its title or headings contain the topic's main terms. Rename topics and move pages or queries; your changes are kept by later analyses. Nothing is merged or rewritten automatically.</p>
       <table className="mt-3 w-full text-left text-xs"><caption className="sr-only">Topics</caption>
         <thead className="text-slate-500"><tr><th scope="col" className="py-1 pr-2">Topic</th><th scope="col" className="py-1 pr-2">Pages (covering)</th><th scope="col" className="py-1 pr-2">Queries</th><th scope="col" className="py-1 pr-2">Query impressions (90 d)</th><th scope="col" className="py-1">Competitor gaps</th></tr></thead>
@@ -303,7 +311,29 @@ export function TopicsTab({ websiteId }: { websiteId: string }) {
   );
 }
 
+/** A manually named topic; pages and queries are assigned to it from the topic detail. */
+function NewTopicForm({ websiteId, onCreated }: { websiteId: string; onCreated: (id: string) => void }) {
+  const [name, setName] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const { busy, guard } = useBusy();
+  const create = guard(async () => {
+    setMessage(null);
+    const r = await apiContentCreateTopic(websiteId, name.trim());
+    if (r.error || !r.data) return setMessage(r.error ? errorMessage(r.error) : "The topic could not be created.");
+    setName("");
+    onCreated(r.data.id);
+  });
+  return (
+    <form aria-label="New topic" className="mb-3 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (name.trim()) void create(); }}>
+      <label className="text-xs text-slate-700">New topic<input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} className={input} /></label>
+      <button type="submit" className={btn} disabled={busy || !name.trim()}>Add topic</button>
+      {message ? <span role="alert" className="text-xs text-red-700">{message}</span> : null}
+    </form>
+  );
+}
+
 function TopicDetail({ websiteId, topicId, topics, onChanged }: { websiteId: string; topicId: string; topics: ContentTopic[]; onChanged: () => void }) {
+  const { busy, guard } = useBusy();
   const [data, setData] = useState<Awaited<ReturnType<typeof apiContentTopic>>["data"]>(null);
   const [name, setName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -325,16 +355,16 @@ function TopicDetail({ websiteId, topicId, topics, onChanged }: { websiteId: str
     void load();
     onChanged();
   };
-  const exclude = async (memberType: "page" | "query", memberKey: string) => {
+  const exclude = guard(async (memberType: "page" | "query", memberKey: string) => {
     const r = await apiContentTopicMember(websiteId, topicId, { memberType, memberKey, action: "exclude" });
     setMessage(r.error ? errorMessage(r.error) : "Removed from this topic.");
     void load();
     onChanged();
-  };
-  const brief = async () => {
+  });
+  const brief = guard(async () => {
     const r = await apiContentCreateBrief(websiteId, { topicId });
     setMessage(r.error ? errorMessage(r.error) : "Brief created; open the Briefs tab.");
-  };
+  });
   if (!data) return <LoadingState label="Loading topic…" />;
   const others = topics.filter((t) => t.id !== topicId);
   const MoveSelect = ({ type, k }: { type: "page" | "query"; k: string }) => (
@@ -347,7 +377,7 @@ function TopicDetail({ websiteId, topicId, topics, onChanged }: { websiteId: str
       <form onSubmit={rename} className="flex flex-wrap items-end gap-2">
         <label className="text-xs text-slate-700">Topic name<input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} className={input} /></label>
         <button type="submit" className={btn} disabled={!name.trim() || name === data.topic.name}>Rename</button>
-        <button type="button" className={btnPrimary} onClick={() => void brief()}>Create brief</button>
+        <button disabled={busy} type="button" className={btnPrimary} onClick={() => void brief()}>Create brief</button>
       </form>
       {message ? <p role="status" className="mt-2 text-slate-700">{message}</p> : null}
       <p className="mt-2 text-slate-500">Terms: {data.topic.terms.join(", ")}</p>
@@ -355,11 +385,11 @@ function TopicDetail({ websiteId, topicId, topics, onChanged }: { websiteId: str
       <div className="mt-3 grid gap-4 md:grid-cols-2">
         <div>
           <p className="font-700">Pages</p>
-          <ul className="mt-1 space-y-1">{(data.coverage?.pages ?? []).map((p) => <li key={p.pageId} className="break-all">{p.url}{p.covers ? " · covers" : ""}<MoveSelect type="page" k={p.pageId} /><button type="button" className="ml-2 underline" onClick={() => void exclude("page", p.pageId)}>Remove</button></li>)}</ul>
+          <ul className="mt-1 space-y-1">{(data.coverage?.pages ?? []).map((p) => <li key={p.pageId} className="break-all">{p.url}{p.covers ? " · covers" : ""}<MoveSelect type="page" k={p.pageId} /><button disabled={busy} type="button" className="ml-2 underline" onClick={() => void exclude("page", p.pageId)}>Remove</button></li>)}</ul>
         </div>
         <div>
           <p className="font-700">Search Console queries (90 days)</p>
-          <ul className="mt-1 space-y-1">{(data.coverage?.queries ?? []).map((q) => <li key={q.query}>{q.query} · {q.impressions} impressions<MoveSelect type="query" k={q.query} /><button type="button" className="ml-2 underline" onClick={() => void exclude("query", q.query)}>Remove</button></li>)}</ul>
+          <ul className="mt-1 space-y-1">{(data.coverage?.queries ?? []).map((q) => <li key={q.query}>{q.query} · {q.impressions} impressions<MoveSelect type="query" k={q.query} /><button disabled={busy} type="button" className="ml-2 underline" onClick={() => void exclude("query", q.query)}>Remove</button></li>)}</ul>
           {data.coverage?.competitorGaps.length ? <><p className="mt-3 font-700">Competitor rankings where you were not found</p><ul className="mt-1">{data.coverage.competitorGaps.map((g, i) => <li key={i}>{g.keyword}: {g.competitor} at {g.position} ({g.date})</li>)}</ul></> : null}
         </div>
       </div>
@@ -370,6 +400,7 @@ function TopicDetail({ websiteId, topicId, topics, onChanged }: { websiteId: str
 // ─── Opportunities ───────────────────────────────────────────────────────────
 
 export function OpportunitiesTab({ websiteId }: { websiteId: string }) {
+  const { busy, guard } = useBusy();
   const [rows, setRows] = useState<ContentOpportunity[] | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -382,15 +413,15 @@ export function OpportunitiesTab({ websiteId }: { websiteId: string }) {
     setRows(r.data);
   }, [websiteId, status]);
   useEffect(() => { setRows(null); void load(); }, [load]);
-  const update = async (o: ContentOpportunity, body: { status?: "open" | "in_progress" | "done" | "dismissed"; feedback?: "useful" | "not_useful" }) => {
+  const update = guard(async (o: ContentOpportunity, body: { status?: "open" | "in_progress" | "done" | "dismissed"; feedback?: "useful" | "not_useful" }) => {
     const r = await apiContentUpdateOpportunity(websiteId, o.id, body);
     setMessage(r.error ? { ok: false, text: errorMessage(r.error) } : { ok: true, text: body.feedback ? "Thanks for the feedback." : `Marked ${body.status?.replace("_", " ")}.${body.status === "done" ? " Search Console figures from before the change were recorded for comparison." : ""}` });
     void load();
-  };
-  const brief = async (o: ContentOpportunity) => {
+  });
+  const brief = guard(async (o: ContentOpportunity) => {
     const r = await apiContentCreateBrief(websiteId, { opportunityId: o.id });
     setMessage(r.error ? { ok: false, text: errorMessage(r.error) } : { ok: true, text: "Brief created; open the Briefs tab." });
-  };
+  });
   if (error) return <ErrorState title="Unable to load opportunities" message={error} onRetry={load} />;
   return (
     <div>
@@ -424,12 +455,12 @@ export function OpportunitiesTab({ websiteId }: { websiteId: string }) {
                 </div>
               ) : null}
               <div className="mt-2 flex flex-wrap gap-2">
-                {o.status === "open" ? <button type="button" className={btn} onClick={() => void update(o, { status: "in_progress" })}>Start</button> : null}
-                {o.status === "open" || o.status === "in_progress" ? <button type="button" className={btn} onClick={() => void update(o, { status: "done" })}>Mark done</button> : null}
-                {o.status === "open" || o.status === "in_progress" ? <button type="button" className={btn} onClick={() => void update(o, { status: "dismissed" })}>Dismiss</button> : null}
-                <button type="button" className={btn} onClick={() => void brief(o)}>Create brief</button>
-                <button type="button" className={btn} onClick={() => void update(o, { feedback: "useful" })}>Useful</button>
-                <button type="button" className={btn} onClick={() => void update(o, { feedback: "not_useful" })}>Not useful</button>
+                {o.status === "open" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(o, { status: "in_progress" })}>Start</button> : null}
+                {o.status === "open" || o.status === "in_progress" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(o, { status: "done" })}>Mark done</button> : null}
+                {o.status === "open" || o.status === "in_progress" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(o, { status: "dismissed" })}>Dismiss</button> : null}
+                <button disabled={busy} type="button" className={btn} onClick={() => void brief(o)}>Create brief</button>
+                <button disabled={busy} type="button" className={btn} onClick={() => void update(o, { feedback: "useful" })}>Useful</button>
+                <button disabled={busy} type="button" className={btn} onClick={() => void update(o, { feedback: "not_useful" })}>Not useful</button>
               </div>
               {o.status === "done" ? <OpportunityOutcome websiteId={websiteId} id={o.id} /> : null}
             </li>

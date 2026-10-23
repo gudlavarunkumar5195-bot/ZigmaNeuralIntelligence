@@ -41,7 +41,7 @@ export default defineConfig(({ mode }) => {
       // Proxy /api/v1 to the backend server in development.
       // In production, VITE_API_BASE_URL points directly to the backend.
       proxy: process.env.VITE_API_PROXY === '1'
-        ? { '/api': { target: 'http://localhost:3001', changeOrigin: true } }
+        ? { '/api': { target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:3001', changeOrigin: true } }
         : undefined,
     },
     preview: {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Bell, ChevronDown, ChevronRight, Globe, LogOut, Menu, Network, PanelLeftClose, PanelLeftOpen, Plus, Search, User, X } from "lucide-react";
-import { apiGetMe, apiListAlerts, apiListWebsites, apiLogout, clearToken, isAuthenticated } from "../../services/api";
+import { apiGetMe, apiListAlerts, apiListWebsites, apiLogout, clearSession, getActiveOrgId, isAuthenticated } from "../../services/api";
 import { getSelectedWebsiteId, setSelectedWebsiteId } from "../../lib/selectedWebsite";
 import { ToastProvider } from "../ui/Toast";
 import { Tooltip } from "../ui/Tooltip";
@@ -34,6 +34,8 @@ function useAccount() {
   const [email, setEmail] = useState<string | null>(null);
   // Only hides navigation; every admin endpoint enforces platform-admin access itself.
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  // Role in the active organization: display only (viewers are told up front that changes are disabled).
+  const [role, setRole] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void apiGetMe()
@@ -41,11 +43,13 @@ function useAccount() {
         if (!active) return;
         if (result.data?.email) setEmail(result.data.email);
         setIsPlatformAdmin(result.data?.isPlatformAdmin === true);
+        const activeOrg = getActiveOrgId();
+        setRole(result.data?.memberships?.find((m) => m.orgId === activeOrg)?.role ?? null);
       })
       .catch(() => {});
     return () => { active = false; };
   }, []);
-  return { email, isPlatformAdmin };
+  return { email, isPlatformAdmin, role };
 }
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
@@ -117,14 +121,14 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function Account({ email }: { email: string | null }) {
+function Account({ email, role }: { email: string | null; role?: string | null }) {
   return (
     <div className="border-t border-[var(--zn-sidebar-border)] p-3">
       <div className="flex items-center gap-2.5 rounded-lg bg-white/5 p-2">
         <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-[var(--zn-sidebar-raised)] text-[var(--zn-sidebar-text)]"><User size={13} aria-hidden="true" /></span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-600 text-white" data-testid="account-email">{email ?? "Signed in"}</span>
-          <span className="block text-[10px] tracking-[0.08em] text-[var(--zn-sidebar-text)]">VERSION {__APP_VERSION__}</span>
+          <span className="block text-[10px] tracking-[0.08em] text-[var(--zn-sidebar-text)]">{role ? `${role.toUpperCase()} · ` : ""}VERSION {__APP_VERSION__}</span>
         </span>
       </div>
     </div>
@@ -153,7 +157,7 @@ function Rail({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
   );
 }
 
-function Sidebar({ collapsed, onToggle, email, isPlatformAdmin }: { collapsed: boolean; onToggle: () => void; email: string | null; isPlatformAdmin: boolean }) {
+function Sidebar({ collapsed, onToggle, email, role, isPlatformAdmin }: { collapsed: boolean; onToggle: () => void; email: string | null; role: string | null; isPlatformAdmin: boolean }) {
   return (
     <aside aria-label="Sidebar" className="hidden print:!hidden h-full flex-shrink-0 flex-col border-r border-[var(--zn-sidebar-border)] bg-[var(--zn-sidebar)] transition-[width] duration-200 lg:flex"
       style={{ width: collapsed ? "var(--zn-sidebar-collapsed)" : "var(--zn-sidebar-width)" }}>
@@ -161,7 +165,7 @@ function Sidebar({ collapsed, onToggle, email, isPlatformAdmin }: { collapsed: b
         <Brand compact={collapsed} />
       </div>
       {collapsed ? <Rail isPlatformAdmin={isPlatformAdmin} /> : <SidebarNav isPlatformAdmin={isPlatformAdmin} />}
-      {collapsed ? null : <Account email={email} />}
+      {collapsed ? null : <Account email={email} role={role} />}
       <button type="button" onClick={onToggle} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-pressed={collapsed}
         className="flex h-10 flex-shrink-0 items-center justify-center gap-2 border-t border-[var(--zn-sidebar-border)] text-xs text-[var(--zn-sidebar-text)] transition-colors hover:bg-white/5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400">
         {collapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <><PanelLeftClose size={16} aria-hidden="true" /><span>Collapse</span></>}
@@ -171,7 +175,7 @@ function Sidebar({ collapsed, onToggle, email, isPlatformAdmin }: { collapsed: b
 }
 
 /** Off-canvas navigation for screens narrower than 1024px. */
-function MobileDrawer({ onClose, email, isPlatformAdmin }: { onClose: () => void; email: string | null; isPlatformAdmin: boolean }) {
+function MobileDrawer({ onClose, email, role, isPlatformAdmin }: { onClose: () => void; email: string | null; role: string | null; isPlatformAdmin: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
@@ -200,7 +204,7 @@ function MobileDrawer({ onClose, email, isPlatformAdmin }: { onClose: () => void
           <button type="button" onClick={onClose} aria-label="Close navigation" className="rounded-md p-1.5 text-[var(--zn-sidebar-text)] hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"><X size={18} aria-hidden="true" /></button>
         </div>
         <SidebarNav isPlatformAdmin={isPlatformAdmin} onNavigate={onClose} />
-        <Account email={email} />
+        <Account email={email} role={role} />
       </div>
     </div>
   );
@@ -265,6 +269,7 @@ function TopBar({ onOpenMenu, onOpenCommand, onLogout, loggingOut }: { onOpenMen
   const urlWebsiteId = searchParams.get("websiteId") ?? "";
   const [websites, setWebsites] = useState<Array<{ id: string; domain: string }>>([]);
   const [truncated, setTruncated] = useState(false);
+  const [websitesError, setWebsitesError] = useState(false);
   const [selectedId, setSelectedId] = useState(urlWebsiteId || getSelectedWebsiteId() || "");
   const [openAlerts, setOpenAlerts] = useState<{ count: number; more: boolean } | null>(null);
   const onAlertsPage = location.pathname === "/monitoring/alerts";
@@ -275,15 +280,21 @@ function TopBar({ onOpenMenu, onOpenCommand, onLogout, loggingOut }: { onOpenMen
     }
     void apiListWebsites({ pageSize: WEBSITE_PAGE_SIZE }).then((result) => {
       const list = result.data;
+      setWebsitesError(!list);
       if (!list) return;
+      const isTruncated = list.length >= (result.meta?.pageSize ?? WEBSITE_PAGE_SIZE);
       setWebsites(list);
-      setTruncated(list.length >= (result.meta?.pageSize ?? WEBSITE_PAGE_SIZE));
+      setTruncated(isTruncated);
+      // A shared selection that is not in the (complete) list is stale, e.g. a
+      // deleted site: replace it, so no page keeps asking for it.
+      const shared = getSelectedWebsiteId();
+      if (shared && !isTruncated && !list.some((website) => website.id === shared)) setSelectedWebsiteId(list[0]?.id ?? null);
       setSelectedId((current) => {
         if (current && list.some((website) => website.id === current)) return current;
         // Stale or absent selection: fall back to the newest site (same default the API uses).
         return list[0]?.id ?? "";
       });
-    }).catch(() => {});
+    }).catch(() => setWebsitesError(true));
   }, [navigate]);
   // A ?websiteId= deep link wins and becomes the shared selection.
   useEffect(() => {
@@ -327,7 +338,7 @@ function TopBar({ onOpenMenu, onOpenCommand, onLogout, loggingOut }: { onOpenMen
         <span className="sr-only">Selected website</span>
         <Globe size={14} className="hidden flex-shrink-0 text-blue-600 sm:block" aria-hidden="true" />
         <select value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setSelectedWebsiteId(event.target.value); navigate(event.target.value ? `/?websiteId=${event.target.value}` : "/"); }} className="w-full max-w-[7.5rem] bg-transparent text-[13px] font-600 text-slate-800 outline-none sm:max-w-44">
-          <option value="">No website selected</option>{websites.map((website) => <option key={website.id} value={website.id}>{website.domain}</option>)}
+          <option value="">{websitesError ? "Websites unavailable" : "No website selected"}</option>{websites.map((website) => <option key={website.id} value={website.id}>{website.domain}</option>)}
         </select>
         {truncated && <span className="text-[10px] text-slate-500" data-testid="website-truncation">Showing first {WEBSITE_PAGE_SIZE}</span>}
       </label>
@@ -357,7 +368,7 @@ function TopBar({ onOpenMenu, onOpenCommand, onLogout, loggingOut }: { onOpenMen
 export function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { email, isPlatformAdmin } = useAccount();
+  const { email, isPlatformAdmin, role } = useAccount();
   const [collapsed, setCollapsed] = useState<boolean>(() => readPref(COLLAPSE_KEY, false));
   const [drawer, setDrawer] = useState(false);
   const [command, setCommand] = useState(false);
@@ -390,7 +401,7 @@ export function Shell() {
     try {
       await apiLogout();
     } finally {
-      clearToken();
+      clearSession();
       setLoggingOut(false);
       navigate("/login", { replace: true });
     }
@@ -401,12 +412,17 @@ export function Shell() {
       {/* The app uses a hash router, so the skip link moves focus instead of changing the URL hash. */}
       <a href="#zn-main" onClick={(e) => { e.preventDefault(); mainRef.current?.focus(); }} className="sr-only z-[70] rounded-md bg-white px-3 py-2 text-sm font-600 text-blue-700 shadow focus:not-sr-only focus:fixed focus:left-3 focus:top-3">Skip to content</a>
       <div className="flex h-full overflow-hidden bg-[var(--zn-bg)] print:block print:h-auto print:overflow-visible print:bg-white">
-        <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} email={email} isPlatformAdmin={isPlatformAdmin} />
-        {drawer ? <MobileDrawer onClose={closeDrawer} email={email} isPlatformAdmin={isPlatformAdmin} /> : null}
+        <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} email={email} role={role} isPlatformAdmin={isPlatformAdmin} />
+        {drawer ? <MobileDrawer onClose={closeDrawer} email={email} role={role} isPlatformAdmin={isPlatformAdmin} /> : null}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden print:block print:overflow-visible">
           <TopBar onOpenMenu={() => setDrawer(true)} onOpenCommand={() => setCommand(true)} onLogout={handleLogout} loggingOut={loggingOut} />
           <main id="zn-main" ref={mainRef} tabIndex={-1} className="scroll-area flex-1 overflow-y-auto print:overflow-visible print:p-0 px-4 py-5 focus:outline-none sm:px-6 lg:px-8 lg:py-6">
             <div className="mx-auto w-full max-w-[var(--zn-content-max)]">
+              {role === "viewer" ? (
+                <p role="note" className="mb-4 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                  You have view-only access in this organization. Owners, admins and members can make changes; actions you try will be refused.
+                </p>
+              ) : null}
               <Outlet />
             </div>
           </main>

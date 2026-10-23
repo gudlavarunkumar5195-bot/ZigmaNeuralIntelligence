@@ -182,11 +182,19 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
   // GET /api/v1/auth/me
   fastify.get("/me", { preHandler: [authenticate] }, async (request, reply) => {
+    // The caller's own memberships, so the UI can tell a viewer up front that
+    // changes are not allowed. Every write route still enforces the role itself.
+    const { rows: memberships } = await query<{ orgId: string; role: string }>(
+      `SELECT m.org_id AS "orgId", m.role FROM memberships m JOIN users u ON u.id = m.user_id
+        WHERE m.user_id = $1 AND u.active = TRUE ORDER BY m.created_at`,
+      [request.authUser.id],
+    );
     return reply.send({
       data: {
         id: request.authUser.id,
         email: request.authUser.email,
         orgIds: request.authUser.orgIds,
+        memberships,
         // Lets the UI show the Administration section; the backend enforces it on every admin route.
         isPlatformAdmin: config.PLATFORM_ADMIN_USER_IDS.includes(request.authUser.id.toLowerCase()),
       },

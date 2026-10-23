@@ -16,6 +16,7 @@ import {
   IntegrationRequired,
   MonitoringAlert,
 } from "../../services/api"
+import type { ApiResponse } from "../../types"
 
 export function AlertsPage() {
   const [items, setItems] = useState<MonitoringAlert[] | null>(null)
@@ -24,6 +25,7 @@ export function AlertsPage() {
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const fetchPage = async (target: number) => {
     const result = await apiListAlerts({ page: target })
     if (result.error)
@@ -53,18 +55,29 @@ export function AlertsPage() {
       setLoadingMore(false)
     }
   }
-  const act = async (id: string, request: () => Promise<unknown>) => {
+  // Re-read every page already shown, so an action does not collapse "Load more".
+  const reloadShown = async () => {
+    const shown = page
+    const rows: MonitoringAlert[] = []
+    for (let p = 1; p <= shown; p++) rows.push(...(await fetchPage(p)))
+    setItems(rows)
+  }
+  const act = async (id: string, request: () => Promise<ApiResponse<{ updated: boolean }>>) => {
+    if (busyId) return
+    setBusyId(id)
+    setActionError(null)
     try {
-      const result = (await request()) as {
-        error?: { code: string; message: string }
-      }
+      const result = await request()
       if (result.error)
-        throw new ApiCallError(0, result.error.code, result.error.message)
-      setActionError(null)
-      await load()
+        throw new ApiCallError(result.error.status ?? 0, result.error.code, result.error.message)
+      if (result.data?.updated === false)
+        setActionError("This alert had already been changed (possibly by someone else). The list now shows its current state.")
+      await reloadShown()
     } catch (cause) {
       // Keep the list visible; a rejected action (e.g. viewer role) is not a load failure.
       setActionError((cause as Error).message)
+    } finally {
+      setBusyId(null)
     }
   }
   useEffect(() => {
@@ -108,6 +121,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiAcknowledgeAlert(item.id))
                     }
+                    disabled={busyId !== null}
                     className={btn}
                   >
                     Acknowledge
@@ -116,6 +130,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiResolveAlert(item.id))
                     }
+                    disabled={busyId !== null}
                     className={btn}
                   >
                     Resolve
@@ -124,6 +139,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiDismissAlert(item.id))
                     }
+                    disabled={busyId !== null}
                     className={btn}
                   >
                     Dismiss
@@ -136,6 +152,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiResolveAlert(item.id))
                     }
+                    disabled={busyId !== null}
                     className={btn}
                   >
                     Resolve
@@ -144,6 +161,7 @@ export function AlertsPage() {
                     onClick={() =>
                       void act(item.id, () => apiDismissAlert(item.id))
                     }
+                    disabled={busyId !== null}
                     className={btn}
                   >
                     Dismiss

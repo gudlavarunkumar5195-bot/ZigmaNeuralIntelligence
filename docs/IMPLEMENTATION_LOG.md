@@ -226,3 +226,65 @@ Branch `feat/p9-5-frontend-redesign`, from `main` after PR #12. Frontend only: n
   - Toast timers were not cleared on unmount.
   - The login tab order went from Email to the reset link before Password.
 - Tests: `src/tests/shell-navigation.test.tsx` (breadcrumb, N/A labels, group collapse and persistence, rail, drawer, launcher) and `src/tests/ui-components.test.tsx` (dialogs, toasts, tooltip, KPI pieces, Field, tabs, chart frame, page header).
+
+# Phase 9.6: Frontend–backend integration
+
+Branch `feat/p9-6-integration`, from `main` after PR #13. Not deployed; no production migration run; no new migration; no external provider called. Integration matrix: `docs/INTEGRATION_MATRIX.md`.
+
+- API client (`src/services/api.ts`): every request, including the seven CSV/JSON downloads, goes through one `authorizedFetch`. It has:
+  - a 30 s timeout (120 s for downloads) and caller cancellation;
+  - typed `TIMEOUT`, `ABORTED` and `NETWORK_ERROR` failures; a timed-out mutation warns it may have been saved;
+  - `status` and `requestId` on every error, and readable 429/5xx messages without a JSON body;
+  - merging of caller headers in any form (a `Headers` instance was dropped before).
+- Downloads previously used raw `fetch`, so exports failed once the 15-minute access token expired. They now renew the token like every other request.
+- Session:
+  - Refresh is still single-flight. A network failure, timeout or 5xx during refresh is now reported as a connection error instead of signing the user out, and the refresh call has a 15 s timeout.
+  - A session that cannot be renewed clears the tab's token, organization and selected website and remembers the page. When several requests fail at once, the first one's page is kept; this was a bug found by the E2E suite.
+  - Signed-out deep links return to the page after sign-in. Logout clears all tab state.
+- Data states:
+  - `useApiQuery` (`src/lib/useApiQuery.ts`): stale responses are dropped, data from previous inputs is cleared, and failures are reported as errors.
+  - `InlineError` for section-level failures.
+  - Swallowed errors that rendered as empty lists fixed in rank tracking (overview, keywords, history, competitors, alerts, imports, jobs), backlink imports, keyword gap history, saved keyword lists, AI visibility filters, content and workspace history, settings websites, the top-bar website list, technical health rules and the model routing policy.
+- Mutations:
+  - `useBusy` (`src/lib/useBusy.ts`), a ref-based single-flight guard, plus disabled controls. Applied to alerts, rank keywords, competitors and alert rules, content findings, topics and opportunities, AI visibility queries, opportunities and runs, workspace insights, the agent toggle and settings disconnect.
+  - Alert actions report `updated: false` (already changed elsewhere) instead of success.
+  - Monitoring and alerts keep the pages loaded with "Load more" after an action, and a disabled monitor can be re-enabled.
+- Polling: scan progress classifies transient errors by HTTP status (before, real 5xx errors were never retried because the code was compared as text). Technical-health crawl polling now:
+  - stops with a message on a 4xx;
+  - backs off on transient errors up to 30 s;
+  - gives up after 8 failures in a row.
+  Before, an error response stopped it silently, and thrown errors retried forever.
+- Stale selection: when the selected website no longer exists, the dashboard and reports say which site they show instead of switching silently, and the shared selection is replaced.
+- Backend (additive):
+  - `GET /auth/me` returns the caller's `memberships` (org and role); the shell tells viewers they have view-only access.
+  - Alert transition routes validate the id (400, where a malformed id caused a 500).
+  - No change to authorization; every write route already required owner/admin/member.
+- Tests:
+  - Unit: API client failures, refresh resilience, concurrent session end, stale responses, the single-flight guard, alert actions, stale-website notice, scan polling with the real 5xx shape, role notice.
+  - Server: `/auth/me` memberships, alert id validation, viewer refusal.
+  - New `pnpm test:e2e:integration` (`playwright.integration.config.ts`, CI job `e2e-integration`): the real API and a migrated, seeded local PostgreSQL behind Vite. It covers sign-in, refresh, renewal, failed renewal, logout, viewer refusal, tenant isolation, a persisted mutation with double-click protection, URL validation, technical-health issues, CSV export formula safety, and a smoke test of every navigable page.
+- Completed in the same phase:
+  - Screens for backend operations that had none:
+    - monitoring alert rules (owners and admins);
+    - unlinking a Search Console property (confirmed; says the stored data is deleted);
+    - pause, resume and archive for rank-tracking projects (archive confirmed);
+    - model enable and disable (platform admins, with an audited reason);
+    - the full administrative audit log;
+    - saved keyword lists (view, remove a keyword, delete);
+    - re-running AI-visibility matching;
+    - creating a content topic.
+  - New client functions: `apiListMonitoringRules`, `apiGetKeywordList`, `apiRemoveKeywordListItem`, `apiDeleteKeywordList`, `apiContentCreateTopic`, `apiAivReprocess`.
+  - Network-level cancellation: `withSignal` attaches an AbortSignal to the requests a page starts, and `useApiQuery` aborts it when inputs change or the page closes.
+  - The Keywords page history swallowed errors; it now shows them, and drops results for a website that is no longer selected. Brand-form errors are announced as alerts instead of status messages.
+  - The real-API E2E suite now has 22 tests. The new ones cover:
+    - rank project creation, keywords and pausing;
+    - technical-health ignore and reopen;
+    - content topics;
+    - saved lists;
+    - AI-visibility brand creation (domain validation enforced) and re-matching;
+    - alert rules (admin allowed, member refused);
+    - Search Console unlink;
+    - model disable and enable;
+    - the audit log.
+    The seed makes the owner the platform administrator of the throwaway server only, and every sign-in waits for the API's own rate-limit budget (200 requests a minute, unchanged).
+  - Access token storage stays as designed (see `docs/INTEGRATION_MATRIX.md`): keeping the token in memory only would trip refresh-token reuse detection when tabs reload together.

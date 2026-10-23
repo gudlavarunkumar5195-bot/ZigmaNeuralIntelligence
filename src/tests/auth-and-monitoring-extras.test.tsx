@@ -14,6 +14,7 @@ vi.mock("../services/api", async () => {
     apiListMonitoringChanges: vi.fn(),
     apiListAlerts: vi.fn(),
     apiListWebsites: vi.fn(),
+    apiResolveAlert: vi.fn(),
   };
 });
 
@@ -64,6 +65,14 @@ describe("router", () => {
     expect(res.headers.get("Location")).toBe("/login");
   });
 
+  it("remembers a signed-out deep link and returns there once after sign-in", () => {
+    const loader = loaderOf("/") as unknown as (a: { request: Request }) => Response;
+    const res = loader({ request: new Request("http://localhost/monitoring/alerts?x=1") });
+    expect(res.headers.get("Location")).toBe("/login");
+    expect(api.takeReturnPath()).toBe("/monitoring/alerts?x=1");
+    expect(api.takeReturnPath()).toBeNull();
+  });
+
   it("has a root errorElement", () => {
     expect(router.routes.every((r) => !!r.errorElement)).toBe(true);
   });
@@ -112,5 +121,32 @@ describe("AlertsPage pagination", () => {
     render(<AlertsPage />);
     await screen.findByText("No alerts");
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+});
+
+describe("AlertsPage actions", () => {
+  const open = (id: string) => ({ id, severity: "high", title: `alert-${id}`, status: "OPEN", detected_at: "2030-01-01", monitoring_id: "m" });
+
+  it("says so when the alert had already changed instead of reporting success", async () => {
+    vi.mocked(api.apiListAlerts).mockResolvedValue({ data: [open("1")], error: null, meta: { page: 1, pageSize: 100 } });
+    vi.mocked(api.apiResolveAlert).mockResolvedValue({ data: { updated: false }, error: null });
+    render(<AlertsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "Resolve" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/already been changed/);
+  });
+
+  it("disables the actions while one is running (no double submit)", async () => {
+    vi.mocked(api.apiListAlerts).mockResolvedValue({ data: [open("1")], error: null, meta: { page: 1, pageSize: 100 } });
+    let finish: (v: { data: { updated: boolean }; error: null }) => void = () => {};
+    vi.mocked(api.apiResolveAlert).mockReturnValue(new Promise((r) => { finish = r; }));
+    render(<AlertsPage />);
+    const resolve = await screen.findByRole("button", { name: "Resolve" });
+    await userEvent.click(resolve);
+    expect((resolve as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(resolve);
+    expect(api.apiResolveAlert).toHaveBeenCalledTimes(1);
+    finish({ data: { updated: true }, error: null });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Resolve" }) as HTMLButtonElement).disabled).toBe(false));
   });
 });

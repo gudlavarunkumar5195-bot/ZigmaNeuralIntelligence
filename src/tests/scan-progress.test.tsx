@@ -38,13 +38,23 @@ describe("ScanProgress", () => {
   });
 
   it("backs off on transient 5xx errors instead of polling every 2s", async () => {
-    vi.mocked(api.apiGetScan).mockResolvedValue({ data: null, error: { code: "503", message: "down" } });
+    // The server's real 5xx shape: a named code plus the HTTP status.
+    vi.mocked(api.apiGetScan).mockResolvedValue({ data: null, error: { code: "INTERNAL_ERROR", message: "down", status: 500 } });
     renderPage();
     await flush();
     await flush(2_000); // not yet: first backoff is 4s
     expect(api.apiGetScan).toHaveBeenCalledTimes(1);
     await flush(2_100);
     expect(api.apiGetScan).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops polling on a 4xx (it will not fix itself)", async () => {
+    vi.mocked(api.apiGetScan).mockResolvedValue({ data: null, error: { code: "NOT_FOUND", message: "Scan not found", status: 404 } });
+    renderPage();
+    await flush();
+    await flush(20_000);
+    expect(api.apiGetScan).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Scan not found/)).toBeTruthy();
   });
 
   it("polls while running, shows Cancel and surfaces cancel errors", async () => {

@@ -54,6 +54,22 @@ export function ErrorState({ title = "Something went wrong", message, onRetry }:
   );
 }
 
+/**
+ * Compact failure line for a section inside a page (a list, a filter, a tab):
+ * says what could not be loaded and why, instead of rendering it as empty.
+ * Retry is offered only when retrying can help (network, timeout, 429, 5xx).
+ */
+export function InlineError({ what, error, onRetry }: { what: string; error: { message: string; status?: number; code?: string }; onRetry?: () => void }) {
+  const retryable = error.status === undefined || error.status === 0 || error.status === 429 || error.status >= 500;
+  return (
+    <p role="alert" className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+      <AlertCircle size={14} aria-hidden="true" className="flex-shrink-0" />
+      <span>Could not load {what}: {error.message}</span>
+      {onRetry && retryable ? <button type="button" onClick={onRetry} className="font-600 underline">Retry</button> : null}
+    </p>
+  );
+}
+
 // ─── Integration Required ─────────────────────────────────────────────────────
 
 export function IntegrationRequiredState({ feature, description }: { feature: string; description?: string }) {

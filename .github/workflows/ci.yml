@@ -137,3 +137,37 @@ jobs:
       - run: pnpm test:e2e
         env:
           CI: "true"
+
+  e2e-integration:
+    name: Browser tests against the real API
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: verify
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: zni_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d zni_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir server install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      # Migrates and seeds the throwaway database, starts the API and Vite; no external calls.
+      - run: pnpm test:e2e:integration
+        env:
+          CI: "true"
+          E2E_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/zni_e2e

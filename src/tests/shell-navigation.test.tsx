@@ -139,3 +139,21 @@ describe("Shell keyboard support", () => {
     expect(document.activeElement).toBe(focusable[focusable.length - 1]);
   });
 });
+
+describe("Shell role awareness", () => {
+  it("tells a viewer up front that changes are disabled, and shows the role", async () => {
+    sessionStorage.setItem("zn_active_org_id", "org-1");
+    vi.mocked(api.apiGetMe).mockResolvedValue({ data: { id: "u", email: "me@example.org", orgIds: ["org-1"], memberships: [{ orgId: "org-1", role: "viewer" }] }, error: null });
+    renderShell();
+    expect((await screen.findByRole("note")).textContent).toMatch(/view-only access/);
+    expect(screen.getAllByText(/VIEWER · VERSION/).length).toBeGreaterThan(0);
+  });
+
+  it("shows no view-only note to members", async () => {
+    sessionStorage.setItem("zn_active_org_id", "org-1");
+    vi.mocked(api.apiGetMe).mockResolvedValue({ data: { id: "u", email: "me@example.org", orgIds: ["org-1"], memberships: [{ orgId: "org-1", role: "member" }] }, error: null });
+    renderShell();
+    await screen.findAllByText(/MEMBER · VERSION/);
+    expect(screen.queryByText(/view-only access/)).toBeNull();
+  });
+});

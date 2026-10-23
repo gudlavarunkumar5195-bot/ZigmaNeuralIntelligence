@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
-import { apiAdminDiagnostics, apiAdminExportDiagnostics, apiAdminRetryJob, IntegrationRequired, type AdminDiagnostics } from "../../services/api";
+import { ErrorState, InlineError, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
+import { useApiQuery } from "../../lib/useApiQuery";
+import { apiAdminAudit, apiAdminDiagnostics, apiAdminExportDiagnostics, apiAdminRetryJob, IntegrationRequired, type AdminDiagnostics } from "../../services/api";
 import { btn, btnPrimary, fmtTime, PageHeader, StatusPill } from "./adminShared";
 
 /**
@@ -14,6 +15,7 @@ export function ControlCenterPage() {
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -178,6 +180,10 @@ export function ControlCenterPage() {
             ))}
           </ul>
         )}
+        <details className="mt-3 text-xs" onToggle={(e) => setAuditOpen((e.target as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer font-600 text-blue-700">Full audit log (latest 200 administrative actions)</summary>
+          {auditOpen ? <AuditLog /> : null}
+        </details>
       </section>
 
       <p className="mt-6 text-xs text-slate-600">
@@ -193,6 +199,32 @@ function Tile({ title, status, label, detail }: { title: string; status: string;
       <p className="text-xs font-700 text-slate-600">{title}</p>
       <div className="mt-2"><StatusPill status={status} label={label} /></div>
       <p className="mt-2 text-[11px] text-slate-600">{detail}</p>
+    </div>
+  );
+}
+
+/** Platform-wide administrative actions, newest first (read from the audit log; nothing here is editable). */
+function AuditLog() {
+  const audit = useApiQuery(() => apiAdminAudit(200), []);
+  if (audit.error) return <InlineError what="the audit log" error={audit.error} onRetry={audit.reload} />;
+  if (!audit.data) return <LoadingState label="Loading audit log…" rows={2} />;
+  if (audit.data.length === 0) return <p className="mt-2 text-slate-600">No administrative actions recorded.</p>;
+  return (
+    <div className="mt-2 overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full text-left">
+        <caption className="sr-only">Administrative audit log</caption>
+        <thead className="bg-slate-50 text-slate-500"><tr><th scope="col" className="px-2 py-1.5">Time</th><th scope="col" className="px-2 py-1.5">Actor</th><th scope="col" className="px-2 py-1.5">Action</th><th scope="col" className="px-2 py-1.5">Resource</th><th scope="col" className="px-2 py-1.5">Result</th><th scope="col" className="px-2 py-1.5">Request</th></tr></thead>
+        <tbody>{audit.data.map((e, i) => (
+          <tr key={`${e.timestamp}-${i}`} className="border-t border-slate-100">
+            <td className="whitespace-nowrap px-2 py-1.5">{fmtTime(e.timestamp)}</td>
+            <td className="px-2 py-1.5">{e.actor_email ?? "—"}</td>
+            <td className="px-2 py-1.5">{e.action.replace(/^admin_/, "").replace(/_/g, " ")}</td>
+            <td className="px-2 py-1.5">{e.resource_type ? `${e.resource_type}${e.resource_id ? ` ${e.resource_id.slice(0, 8)}` : ""}` : "—"}</td>
+            <td className="px-2 py-1.5"><StatusPill status={e.result === "success" ? "ok" : "failed"} label={e.result} /></td>
+            <td className="px-2 py-1.5 font-mono text-[10px]">{e.request_id?.slice(0, 8) ?? "—"}</td>
+          </tr>
+        ))}</tbody>
+      </table>
     </div>
   );
 }

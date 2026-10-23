@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/DataState";
+import { EmptyState, ErrorState, InlineError, LoadingState } from "../../../components/ui/DataState";
+import { useApiQuery } from "../../../lib/useApiQuery";
+import type { ApiResponse } from "../../../types";
 import {
   apiRankAcknowledge,
   apiRankAddCompetitor,
@@ -96,23 +98,34 @@ export function OverviewTab({ project, providerAvailable, onChanged }: { project
   const [rows, setRows] = useState<RankRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [group, setGroup] = useState("");
-  const [groups, setGroups] = useState<string[]>([]);
+  const groupsQ = useApiQuery(() => apiRankKeywordsGroups(project.id), [project.id]);
+  const groups = groupsQ.data ?? [];
   const [message, setMessage] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     setError(null);
     setData(null);
     const [d, r] = await Promise.all([apiRankDashboard(project.id, { group: group || undefined }), apiRankRankings(project.id, { group: group || undefined, sort: "position", limit: 200 })]);
+    if (mine !== seq.current) return; // a newer group/project request owns the screen
     if (d.error || !d.data) return setError(d.error?.message ?? "Failed to load.");
+    if (r.error || !r.data) return setError(r.error?.message ?? "Failed to load rankings.");
     setData(d.data);
-    setRows(r.data ?? []);
+    setRows(r.data);
   }, [project.id, group]);
   useEffect(() => void load(), [load]);
-  useEffect(() => { apiRankKeywordsGroups(project.id).then(setGroups); }, [project.id]);
 
   const refresh = async () => {
-    const r = await apiRankRefresh(project.id);
-    setMessage(r.error ? r.error.message : r.data?.deduplicated ? "A collection for this project is already running." : `Collecting ${r.data?.job.keywords_total} keyword(s).`);
-    if (!r.error) onChanged();
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const r = await apiRankRefresh(project.id);
+      setMessage(r.error ? r.error.message : r.data?.deduplicated ? "A collection for this project is already running." : `Collecting ${r.data?.job.keywords_total} keyword(s).`);
+      if (!r.error) onChanged();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   if (error) return <ErrorState title="Unable to load rankings" message={error} onRetry={load} />;
@@ -133,7 +146,8 @@ export function OverviewTab({ project, providerAvailable, onChanged }: { project
             <select value={group} onChange={(e) => setGroup(e.target.value)} className={input}><option value="">All</option>{groups.map((g) => <option key={g} value={g}>{g}</option>)}</select>
           </label>
         ) : null}
-        <button type="button" className={btn} disabled={!providerAvailable || project.status !== "active"} title={providerAvailable ? undefined : "Needs a configured SERP provider"} onClick={() => void refresh()}>Refresh now</button>
+        <button type="button" className={btn} disabled={refreshing || !providerAvailable || project.status !== "active"} title={providerAvailable ? undefined : "Needs a configured SERP provider"} onClick={() => void refresh()}>{refreshing ? "Starting…" : "Refresh now"}</button>
+        {groupsQ.error ? <InlineError what="keyword groups" error={groupsQ.error} onRetry={groupsQ.reload} /> : null}
         {message ? <span role="status" className="text-xs text-slate-700">{message}</span> : null}
       </div>
       <section aria-label="Ranking changes" className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -192,13 +206,10 @@ export function OverviewTab({ project, providerAvailable, onChanged }: { project
   );
 }
 
-async function apiRankKeywordsGroups(projectId: string): Promise<string[]> {
-  try {
-    const r = await apiRankKeywords(projectId, { limit: 1 });
-    return r.meta?.groups ?? [];
-  } catch {
-    return [];
-  }
+/** The project's keyword groups (returned as listing metadata). */
+async function apiRankKeywordsGroups(projectId: string): Promise<ApiResponse<string[]>> {
+  const r = await apiRankKeywords(projectId, { limit: 1 });
+  return r.error ? { data: null, error: r.error } : { data: r.meta?.groups ?? [], error: null };
 }
 
 function RankingTable({ rows }: { rows: RankRow[] }) {
@@ -239,10 +250,15 @@ export function KeywordsTab({ project, sources }: { project: RankProject; source
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<RankKeyword | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const exp = useExport(project);
+  const seq = useRef(0);
   const load = useCallback(async (more?: string | null) => {
+    const mine = ++seq.current;
     const r = await apiRankKeywords(project.id, { search: filters.search || undefined, group: filters.group || undefined, status: filters.status || undefined, cursor: more ?? undefined });
+    if (mine !== seq.current) return; // filters changed while this was loading
     if (r.error || !r.data) return setError(r.error?.message ?? "Failed to load keywords.");
+    setError(null);
     setRows((prev) => (more ? [...(prev ?? []), ...r.data!] : r.data!));
     setCursor(r.meta?.nextCursor ?? null);
     setGroups(r.meta?.groups ?? []);
@@ -252,29 +268,43 @@ export function KeywordsTab({ project, sources }: { project: RankProject; source
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
     const items = text.split(/\r?\n/).map((k) => k.trim()).filter(Boolean).map((keyword) => ({ keyword, group: group.trim() || null }));
-    if (!items.length) return;
-    const r = await apiRankAddKeywords(project.id, items);
-    if (r.error || !r.data) return setMessage({ ok: false, text: r.error?.message ?? "Could not add keywords." });
-    setMessage({ ok: true, text: `Added ${r.data.added}, restored ${r.data.restored}, already tracked ${r.data.alreadyTracked}${r.data.invalid.length ? `, ${r.data.invalid.length} invalid` : ""}.${r.data.warnings.length ? ` ${r.data.warnings.join(" ")}` : ""}` });
-    setText("");
-    void load();
+    if (!items.length || busy) return;
+    await mutate(async () => {
+      const r = await apiRankAddKeywords(project.id, items);
+      if (r.error || !r.data) return setMessage({ ok: false, text: r.error?.message ?? "Could not add keywords." });
+      setMessage({ ok: true, text: `Added ${r.data.added}, restored ${r.data.restored}, already tracked ${r.data.alreadyTracked}${r.data.invalid.length ? `, ${r.data.invalid.length} invalid` : ""}.${r.data.warnings.length ? ` ${r.data.warnings.join(" ")}` : ""}` });
+      setText(""); // only cleared once the server accepted the keywords
+    });
+  };
+  // One mutation at a time; reload the list afterwards whatever the outcome.
+  const mutate = async (op: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await op();
+    } catch (cause) {
+      setMessage({ ok: false, text: (cause as Error).message });
+    } finally {
+      setBusy(false);
+      void load();
+    }
   };
   const importFile = async (f: File | undefined) => {
-    if (!f) return;
-    const r = await apiRankImportKeywords(project.id, await f.text());
-    setMessage(r.error || !r.data ? { ok: false, text: r.error?.message ?? "Import failed." } : { ok: true, text: `Imported: ${r.data.added} added, ${r.data.restored} restored, ${r.data.alreadyTracked} already tracked, ${r.data.invalid.length} invalid.` });
-    void load();
+    if (!f || busy) return;
+    await mutate(async () => {
+      const r = await apiRankImportKeywords(project.id, await f.text());
+      setMessage(r.error || !r.data ? { ok: false, text: r.error?.message ?? "Import failed." } : { ok: true, text: `Imported: ${r.data.added} added, ${r.data.restored} restored, ${r.data.alreadyTracked} already tracked, ${r.data.invalid.length} invalid.` });
+    });
   };
-  const toggle = async (k: RankKeyword) => {
+  const toggle = (k: RankKeyword) => mutate(async () => {
     const r = await apiRankUpdateKeyword(project.id, k.id, { status: k.status === "active" ? "paused" : "active" });
     if (r.error) setMessage({ ok: false, text: r.error.message });
-    void load();
-  };
-  const remove = async (k: RankKeyword) => {
+  });
+  const remove = (k: RankKeyword) => {
     setConfirm(null);
-    const r = await apiRankRemoveKeyword(project.id, k.id);
-    setMessage(r.error ? { ok: false, text: r.error.message } : { ok: true, text: `“${k.keyword}” removed; its history is kept and returns if you add it again.` });
-    void load();
+    return mutate(async () => {
+      const r = await apiRankRemoveKeyword(project.id, k.id);
+      setMessage(r.error ? { ok: false, text: r.error.message } : { ok: true, text: `“${k.keyword}” removed; its history is kept and returns if you add it again.` });
+    });
   };
 
   if (error) return <ErrorState title="Unable to load keywords" message={error} onRetry={() => void load()} />;
@@ -284,8 +314,8 @@ export function KeywordsTab({ project, sources }: { project: RankProject; source
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-xs text-slate-700">Keywords (one per line)<textarea rows={3} value={text} maxLength={40_000} onChange={(e) => setText(e.target.value)} className={`${input} w-72`} /></label>
           <label className="text-xs text-slate-700">Group<input value={group} maxLength={80} onChange={(e) => setGroup(e.target.value)} className={input} /></label>
-          <button type="submit" className={btnPrimary} disabled={!text.trim()}>Add</button>
-          <label className="text-xs text-slate-700">…or import CSV (keyword, group, landing page)<input type="file" accept=".csv,text/csv,.txt" onChange={(e) => void importFile(e.target.files?.[0])} className="mt-1 block text-xs" /></label>
+          <button type="submit" className={btnPrimary} disabled={busy || !text.trim()}>{busy ? "Saving…" : "Add"}</button>
+          <label className="text-xs text-slate-700">…or import CSV (keyword, group, landing page)<input type="file" accept=".csv,text/csv,.txt" disabled={busy} onChange={(e) => void importFile(e.target.files?.[0])} className="mt-1 block text-xs" /></label>
         </div>
         <p className="mt-2 text-[11px] text-slate-500">Up to {sources.limits.keywordsPerProject} keywords per project. Keywords are matched case- and spacing-insensitively within this project only.</p>
         {message ? <p role={message.ok ? "status" : "alert"} className={`mt-2 text-xs ${message.ok ? "text-slate-700" : "text-red-800"}`}>{message.text}</p> : null}
@@ -303,7 +333,7 @@ export function KeywordsTab({ project, sources }: { project: RankProject; source
       {confirm ? (
         <div role="alertdialog" aria-label="Confirm removal" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
           Stop tracking “{confirm.keyword}”? Its history is kept.
-          <button type="button" className={btnPrimary} onClick={() => void remove(confirm)}>Remove</button>
+          <button type="button" className={btnPrimary} disabled={busy} onClick={() => void remove(confirm)}>Remove</button>
           <button type="button" className={btn} onClick={() => setConfirm(null)}>Cancel</button>
         </div>
       ) : null}
@@ -315,7 +345,7 @@ export function KeywordsTab({ project, sources }: { project: RankProject; source
               <tr key={k.id} className="border-t border-slate-100">
                 <td className="py-1.5 pr-2 font-600">{k.keyword}</td><td className="py-1.5 pr-2">{k.group_name ?? "—"}</td><td className="max-w-[200px] break-all py-1.5 pr-2">{k.landing_page ?? "—"}</td>
                 <td className="py-1.5 pr-2">{k.source}</td><td className="py-1.5 pr-2">{k.status}</td>
-                <td className="py-1.5"><button type="button" className="underline" onClick={() => void toggle(k)}>{k.status === "active" ? "Pause" : "Resume"}</button> · <button type="button" className="underline" onClick={() => setConfirm(k)}>Remove</button></td>
+                <td className="py-1.5"><button type="button" className="underline disabled:opacity-50" disabled={busy} onClick={() => void toggle(k)}>{k.status === "active" ? "Pause" : "Resume"}</button> · <button type="button" className="underline disabled:opacity-50" disabled={busy} onClick={() => setConfirm(k)}>Remove</button></td>
               </tr>
             ))}
           </tbody>
@@ -330,19 +360,15 @@ export function KeywordsTab({ project, sources }: { project: RankProject; source
 // ─── History ─────────────────────────────────────────────────────────────────
 
 export function HistoryTab({ project }: { project: RankProject }) {
-  const [rows, setRows] = useState<RankRow[] | null>(null);
   const [keywordId, setKeywordId] = useState("");
-  const [obs, setObs] = useState<RankObservation[] | null>(null);
   const [range, setRange] = useState({ from: "", to: "" });
   const exp = useExport(project);
-  useEffect(() => {
-    apiRankRankings(project.id, { limit: 200 }).then((r) => { setRows(r.data ?? []); setKeywordId((k) => k || r.data?.[0]?.keywordId || ""); });
-  }, [project.id]);
-  useEffect(() => {
-    if (!keywordId) return;
-    setObs(null);
-    apiRankHistory(project.id, keywordId, { from: range.from || undefined, to: range.to || undefined }).then((r) => setObs(r.data?.observations ?? []));
-  }, [project.id, keywordId, range]);
+  const rowsQ = useApiQuery(() => apiRankRankings(project.id, { limit: 200 }), [project.id]);
+  const rows: RankRow[] | null = rowsQ.data;
+  useEffect(() => { setKeywordId((k) => k || rowsQ.data?.[0]?.keywordId || ""); }, [rowsQ.data]);
+  const obsQ = useApiQuery(() => apiRankHistory(project.id, keywordId, { from: range.from || undefined, to: range.to || undefined }), [project.id, keywordId, range.from, range.to], { enabled: !!keywordId });
+  const obs: RankObservation[] | null = obsQ.data ? obsQ.data.observations : null;
+  if (rowsQ.error) return <ErrorState title="Unable to load tracked keywords" message={rowsQ.error.message} onRetry={rowsQ.reload} />;
   if (!rows) return <LoadingState label="Loading keywords…" />;
   if (!rows.length) return <EmptyState title="No keywords tracked yet" />;
   const own = project.website_domain.replace(/^www\./, "");
@@ -357,7 +383,7 @@ export function HistoryTab({ project }: { project: RankProject }) {
         <button type="button" className={btn} onClick={() => void exp.run("history")}>Export all history</button>
       </div>
       {exp.notice ? <p role="status" className="mt-2 text-xs text-slate-700">{exp.notice}</p> : null}
-      {!obs ? <LoadingState label="Loading history…" /> : obs.length === 0 ? <p className="mt-4 text-sm text-slate-500">No observations in this period.</p> : (
+      {obsQ.error ? <InlineError what="the history" error={obsQ.error} onRetry={obsQ.reload} /> : !obs ? <LoadingState label="Loading history…" /> : obs.length === 0 ? <p className="mt-4 text-sm text-slate-500">No observations in this period.</p> : (
         <>
           {chart.length >= 2 ? (
             <div className="mt-3 h-48" role="img" aria-label="Position over time (lower is better)">
@@ -392,29 +418,54 @@ export function CompetitorsTab({ project, sources }: { project: RankProject; sou
   const [cmpError, setCmpError] = useState<string | null>(null);
   const [domain, setDomain] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     const [l, c] = await Promise.all([apiRankCompetitors(project.id), apiRankCompetitorComparison(project.id)]);
+    setListError(l.error ? l.error.message : null);
     setList(l.data ?? []);
     if (c.error) { setCmp(null); setCmpError(c.error.message); } else { setCmp(c.data); setCmpError(null); }
   }, [project.id]);
   useEffect(() => void load(), [load]);
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    const r = await apiRankAddCompetitor(project.id, domain);
-    setMessage(r.error ? r.error.message : r.data?.added ? `Added ${r.data.domain}.` : `${r.data?.domain} is already a competitor.`);
-    setDomain("");
-    void load();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await apiRankAddCompetitor(project.id, domain);
+      setMessage(r.error ? r.error.message : r.data?.added ? `Added ${r.data.domain}.` : `${r.data?.domain} is already a competitor.`);
+      if (!r.error) setDomain("");
+    } catch (cause) {
+      setMessage((cause as Error).message);
+    } finally {
+      setBusy(false);
+      void load();
+    }
+  };
+  const removeCompetitor = async (d: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await apiRankRemoveCompetitor(project.id, d);
+      setMessage(r.error ? r.error.message : `Removed ${d}.`);
+    } catch (cause) {
+      setMessage((cause as Error).message);
+    } finally {
+      setBusy(false);
+      void load();
+    }
   };
   if (!list) return <LoadingState label="Loading competitors…" />;
   return (
     <div>
       <form onSubmit={add} className="flex flex-wrap items-end gap-2" aria-label="Add competitor">
         <label className="text-xs text-slate-700">Competitor domain<input value={domain} maxLength={253} onChange={(e) => setDomain(e.target.value)} className={input} /></label>
-        <button type="submit" className={btnPrimary} disabled={!domain.trim()}>Add</button>
+        <button type="submit" className={btnPrimary} disabled={busy || !domain.trim()}>Add</button>
         <span className="text-[11px] text-slate-500">Up to {sources.limits.competitorsPerProject}.</span>
       </form>
       {message ? <p role="status" className="mt-2 text-xs text-slate-700">{message}</p> : null}
-      <ul className="mt-2 flex flex-wrap gap-2 text-xs">{list.map((c) => <li key={c.domain} className="rounded-full bg-slate-100 px-2 py-0.5">{c.domain} <button type="button" aria-label={`Remove ${c.domain}`} className="ml-1 text-slate-500" onClick={() => void apiRankRemoveCompetitor(project.id, c.domain).then(load)}>×</button></li>)}</ul>
+      {listError ? <InlineError what="competitors" error={{ message: listError }} onRetry={() => void load()} /> : null}
+      <ul className="mt-2 flex flex-wrap gap-2 text-xs">{list.map((c) => <li key={c.domain} className="rounded-full bg-slate-100 px-2 py-0.5">{c.domain} <button type="button" aria-label={`Remove ${c.domain}`} disabled={busy} className="ml-1 text-slate-500 disabled:opacity-50" onClick={() => void removeCompetitor(c.domain)}>×</button></li>)}</ul>
       {cmpError ? <p className="mt-4 text-sm text-slate-600">{cmpError}</p> : cmp ? (
         <div className="mt-4 space-y-6">
           <p className="text-[11px] text-slate-500">{cmp.note}</p>
@@ -489,12 +540,29 @@ export function AlertsTab({ project }: { project: RankProject }) {
   const [competitors, setCompetitors] = useState<string[]>([]);
   const [form, setForm] = useState({ type: "position_change" as RankAlertRule["rule_type"], position: 10, direction: "into", positions: 5, consecutive: 2, competitor: "" });
   const [message, setMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     const [r, e, c] = await Promise.all([apiRankAlertRules(project.id), apiRankAlerts(project.id), apiRankCompetitors(project.id)]);
+    const failed = [r.error && `rules (${r.error.message})`, e.error && `alerts (${e.error.message})`, c.error && `competitors (${c.error.message})`].filter(Boolean);
+    setLoadError(failed.length ? failed.join("; ") : null);
     setRules(r.data ?? []);
     setEvents(e.data ?? []);
     setCompetitors((c.data ?? []).map((x) => x.domain));
   }, [project.id]);
+  const run = async (op: () => Promise<{ error: { message: string } | null }>, ok?: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await op();
+      setMessage(r.error ? r.error.message : ok ?? null);
+    } catch (cause) {
+      setMessage((cause as Error).message);
+    } finally {
+      setBusy(false);
+      void load();
+    }
+  };
   useEffect(() => void load(), [load]);
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -503,9 +571,7 @@ export function AlertsTab({ project }: { project: RankProject }) {
       form.type === "position_change" ? { positions: form.positions } :
       form.type === "became_unavailable" || form.type === "collection_failures" ? { consecutive: form.consecutive } :
       form.type === "competitor_overtake" ? { competitor: form.competitor } : {};
-    const r = await apiRankCreateAlertRule(project.id, { type: form.type, params });
-    setMessage(r.error ? r.error.message : "Rule added. It is checked against stored observations after every import or collection.");
-    void load();
+    await run(() => apiRankCreateAlertRule(project.id, { type: form.type, params }), "Rule added. It is checked against stored observations after every import or collection.");
   };
   if (!rules || !events) return <LoadingState label="Loading alerts…" />;
   return (
@@ -519,15 +585,16 @@ export function AlertsTab({ project }: { project: RankProject }) {
         {form.type === "position_change" ? <label className="text-xs text-slate-700">Positions<input type="number" min={1} max={100} value={form.positions} onChange={(e) => setForm({ ...form, positions: Number(e.target.value) })} className={`${input} w-20`} /></label> : null}
         {form.type === "became_unavailable" || form.type === "collection_failures" ? <label className="text-xs text-slate-700">Consecutive checks<input type="number" min={1} max={10} value={form.consecutive} onChange={(e) => setForm({ ...form, consecutive: Number(e.target.value) })} className={`${input} w-20`} /></label> : null}
         {form.type === "competitor_overtake" ? <label className="text-xs text-slate-700">Competitor<select value={form.competitor} onChange={(e) => setForm({ ...form, competitor: e.target.value })} className={input}><option value="">Choose…</option>{competitors.map((c) => <option key={c} value={c}>{c}</option>)}</select></label> : null}
-        <button type="submit" className={btnPrimary} disabled={form.type === "competitor_overtake" && !form.competitor}>Add rule</button>
+        <button type="submit" className={btnPrimary} disabled={busy || (form.type === "competitor_overtake" && !form.competitor)}>Add rule</button>
       </form>
       {message ? <p role="status" className="mt-2 text-xs text-slate-700">{message}</p> : null}
+      {loadError ? <InlineError what={loadError} error={{ message: "showing what could be read" }} onRetry={() => void load()} /> : null}
       <p className="mt-2 text-[11px] text-slate-500">Alerts appear here (in-app). Each fires once per triggering observation; a failed collection only ever triggers the “collection fails” rule. Email delivery is not configured on this installation.</p>
       <h3 className="mt-4 text-sm font-700 text-slate-900">Rules</h3>
       {rules.length === 0 ? <p className="text-xs text-slate-600">No rules.</p> : (
         <ul className="mt-1 space-y-1 text-xs">{rules.map((r) => (
           <li key={r.id}>{RULE_LABEL[r.rule_type]} {Object.keys(r.params).length ? `(${Object.entries(r.params).map(([k, v]) => `${k} ${String(v)}`).join(", ")})` : ""} · {r.enabled ? "on" : "off"}
-            <button type="button" className="ml-2 underline" onClick={() => void apiRankUpdateAlertRule(project.id, r.id, { enabled: !r.enabled }).then(load)}>{r.enabled ? "Turn off" : "Turn on"}</button></li>
+            <button type="button" className="ml-2 underline disabled:opacity-50" disabled={busy} onClick={() => void run(() => apiRankUpdateAlertRule(project.id, r.id, { enabled: !r.enabled }))}>{r.enabled ? "Turn off" : "Turn on"}</button></li>
         ))}</ul>
       )}
       <h3 className="mt-4 text-sm font-700 text-slate-900">Alerts</h3>
@@ -535,7 +602,7 @@ export function AlertsTab({ project }: { project: RankProject }) {
         <ul className="mt-1 space-y-2 text-xs">{events.map((e) => (
           <li key={e.id} className={`rounded-lg border p-3 ${e.acknowledged_at ? "border-slate-100 text-slate-500" : "border-slate-200 bg-white"}`}>
             {e.message} <span className="text-slate-500">· {new Date(e.created_at).toLocaleString()}</span>
-            {!e.acknowledged_at ? <button type="button" className="ml-2 underline" onClick={() => void apiRankAcknowledge(project.id, e.id).then(load)}>Acknowledge</button> : null}
+            {!e.acknowledged_at ? <button type="button" className="ml-2 underline disabled:opacity-50" disabled={busy} onClick={() => void run(() => apiRankAcknowledge(project.id, e.id))}>Acknowledge</button> : null}
           </li>
         ))}</ul>
       )}
@@ -552,13 +619,15 @@ export function ImportTab({ project, sources, onImported }: { project: RankProje
   const [preview, setPreview] = useState<RankImportPreview | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<Awaited<ReturnType<typeof apiRankImports>>["data"]>(null);
-  const [jobs, setJobs] = useState<Awaited<ReturnType<typeof apiRankJobs>>["data"]>(null);
+  const historyQ = useApiQuery(() => apiRankImports(project.id), [project.id]);
+  const jobsQ = useApiQuery(() => apiRankJobs(project.id), [project.id]);
+  const history = historyQ.data;
+  const jobs = jobsQ.data;
   const loadHistory = useCallback(() => {
-    apiRankImports(project.id).then((r) => setHistory(r.data ?? []));
-    apiRankJobs(project.id).then((r) => setJobs(r.data ?? []));
-  }, [project.id]);
-  useEffect(loadHistory, [loadHistory]);
+    historyQ.reload();
+    jobsQ.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload functions are stable per render
+  }, [historyQ.reload, jobsQ.reload]);
   const onFile = async (f: File | undefined) => {
     setPreview(null);
     setMessage(null);
@@ -621,12 +690,13 @@ export function ImportTab({ project, sources, onImported }: { project: RankProje
       </section>
       <section aria-labelledby="imph-h" className="mt-6">
         <h3 id="imph-h" className="text-sm font-700 text-slate-900">Import history</h3>
-        {!history ? <LoadingState label="Loading…" /> : history.length === 0 ? <p className="text-xs text-slate-600">No imports yet.</p> : (
+        {historyQ.error ? <InlineError what="import history" error={historyQ.error} onRetry={historyQ.reload} /> : !history ? <LoadingState label="Loading…" /> : history.length === 0 ? <p className="text-xs text-slate-600">No imports yet.</p> : (
           <table className="mt-2 w-full text-left text-xs"><caption className="sr-only">Ranking imports</caption>
             <thead className="text-slate-500"><tr><th scope="col" className="py-1 pr-2">Imported</th><th scope="col" className="py-1 pr-2">Source</th><th scope="col" className="py-1 pr-2">Accepted</th><th scope="col" className="py-1">Rejected / duplicate / skipped</th></tr></thead>
             <tbody>{history.map((h) => <tr key={h.id} className="border-t border-slate-100"><td className="py-1.5 pr-2">{new Date(h.created_at).toLocaleString()}{h.filename ? <span className="block text-slate-500">{h.filename}</span> : null}</td><td className="py-1.5 pr-2">{h.source_label}</td><td className="py-1.5 pr-2 tabular-nums">{h.rows_accepted}</td><td className="py-1.5 tabular-nums">{h.rows_rejected} / {h.rows_duplicate} / {h.rows_skipped}</td></tr>)}</tbody>
           </table>
         )}
+        {jobsQ.error ? <InlineError what="provider collections" error={jobsQ.error} onRetry={jobsQ.reload} /> : null}
         {jobs && jobs.length ? <p className="mt-3 text-xs text-slate-600">Provider collections: {jobs.slice(0, 5).map((j) => `${j.observed_date} ${j.status} (${j.keywords_done}/${j.keywords_total})`).join(" · ")}</p> : null}
       </section>
     </div>

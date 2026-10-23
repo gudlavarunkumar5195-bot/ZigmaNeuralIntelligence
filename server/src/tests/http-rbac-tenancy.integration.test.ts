@@ -22,6 +22,30 @@ describe.skipIf(!INTEGRATION)("HTTP RBAC and tenancy (real database)", () => {
 
   const as = (role: "owner" | "admin" | "member" | "viewer", org: SeededOrg = A) => ({ token: org.users[role].token, orgId: org.id });
 
+  describe("/auth/me memberships", () => {
+    it("lists only the caller's own memberships with their roles", async () => {
+      const me = (await h.request("GET", "/api/v1/auth/me", { token: A.users.viewer.token })).json().data;
+      expect(me.memberships).toEqual([{ orgId: A.id, role: "viewer" }]);
+      const owner = (await h.request("GET", "/api/v1/auth/me", { token: B.users.owner.token })).json().data;
+      expect(owner.memberships).toEqual([{ orgId: B.id, role: "owner" }]);
+    });
+  });
+
+  describe("alert transitions", () => {
+    it("reject a malformed alert id with 400 instead of reaching the database", async () => {
+      for (const action of ["acknowledge", "resolve", "dismiss"]) {
+        const res = await h.request("POST", `/api/v1/monitoring/alerts/not-a-uuid/${action}`, { token: A.users.member.token, orgId: A.id });
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe("VALIDATION_ERROR");
+      }
+    });
+
+    it("are refused to viewers", async () => {
+      const res = await h.request("POST", "/api/v1/monitoring/alerts/00000000-0000-4000-8000-000000000000/resolve", { token: A.users.viewer.token, orgId: A.id });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
   describe("organization resolution", () => {
     it("non-member of the requested org -> 403", async () => {
       const res = await h.request("GET", "/api/v1/websites", { token: A.users.owner.token, orgId: B.id });
