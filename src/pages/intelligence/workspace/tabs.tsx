@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useBusy } from "../../../lib/useBusy";
 import { Link } from "react-router";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ErrorState, IntegrationRequiredState, LoadingState } from "../../../components/ui/DataState";
@@ -239,6 +240,7 @@ function AiSummary({ websiteId, range, available }: { websiteId: string; range: 
 // ─── Insights ────────────────────────────────────────────────────────────────
 
 export function InsightsTab({ websiteId, range }: { websiteId: string; range: WsRangeParams }) {
+  const { busy, guard } = useBusy();
   const [rows, setRows] = useState<WsInsight[] | null>(null);
   const [meta, setMeta] = useState<WsInsightsMeta | null>(null);
   const [filters, setFilters] = useState({ status: "", module: "", search: "", offset: 0 });
@@ -254,12 +256,12 @@ export function InsightsTab({ websiteId, range }: { websiteId: string; range: Ws
       .then((r) => { if (r.error || !r.data) return setError(r.error?.message ?? "Failed to load."); setRows(r.data); setMeta(r.meta ?? null); })
       .catch((e: Error) => setError(e.message));
   }, [websiteId, filters, reload]);
-  const refresh = async () => {
+  const refresh = guard(async () => {
     setMessage("Evaluating rules…");
     const r = await apiWsRefreshInsights(websiteId, range);
     setMessage(r.error ? errorMessage(r.error) : `${r.data!.detected} insights supported by current evidence${r.data!.skipped.length ? `; ${r.data!.skipped.length} rules skipped (missing data)` : ""}.`);
     setReload((n) => n + 1);
-  };
+  });
   if (error) return <ErrorState title="Unable to load insights" message={error} />;
   const set = (k: "status" | "module", v: string) => setFilters((f) => ({ ...f, [k]: v, offset: 0 }));
   return (
@@ -271,7 +273,7 @@ export function InsightsTab({ websiteId, range }: { websiteId: string; range: Ws
         </form>
         <label className="text-xs text-slate-700">Module<select value={filters.module} onChange={(e) => set("module", e.target.value)} className={input}><option value="">Any</option>{Object.entries(MODULE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
         <label className="text-xs text-slate-700">Status<select value={filters.status} onChange={(e) => set("status", e.target.value)} className={input}><option value="">Open and in progress</option>{["open", "in_progress", "resolved", "dismissed", "obsolete"].map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}</select></label>
-        <button type="button" className={btnPrimary} onClick={() => void refresh()}>Re-evaluate for this range</button>
+        <button disabled={busy} type="button" className={btnPrimary} onClick={() => void refresh()}>Re-evaluate for this range</button>
       </div>
       {message ? <p role="status" className="mt-2 text-xs text-slate-700">{message}</p> : null}
       {meta?.lastRun ? <p className="mt-2 text-[11px] text-slate-500">Last evaluated {fmt(meta.lastRun.evaluated_at)} for {fmtDay(meta.lastRun.window_from)} – {fmtDay(meta.lastRun.window_to)}.{meta.lastRun.skipped_rules.length ? ` Skipped: ${meta.lastRun.skipped_rules.map((s) => `${meta.rules[s.ruleId]?.title ?? s.ruleId} (${s.reason})`).join("; ")}` : ""}</p> : <p className="mt-2 text-[11px] text-slate-500">Not evaluated yet for this website.</p>}
@@ -300,6 +302,7 @@ export function InsightsTab({ websiteId, range }: { websiteId: string; range: Ws
 }
 
 function InsightDetail({ websiteId, id, onChanged }: { websiteId: string; id: string; onChanged: () => void }) {
+  const { busy, guard } = useBusy();
   const [i, setI] = useState<(WsInsight & { formula: string }) | null>(null);
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -308,11 +311,11 @@ function InsightDetail({ websiteId, id, onChanged }: { websiteId: string; id: st
     if (r.data) setI(r.data);
   }, [websiteId, id]);
   useEffect(() => void load(), [load]);
-  const update = async (status?: string) => {
+  const update = guard(async (status?: string) => {
     const r = await apiWsUpdateInsight(websiteId, id, { ...(status ? { status } : {}), ...(note.trim() ? { note: note.trim() } : {}) });
     setMessage(r.error ? errorMessage(r.error) : "Saved.");
     if (!r.error) { setNote(""); void load(); onChanged(); }
-  };
+  });
   if (!i) return <LoadingState label="Loading evidence…" />;
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800">
@@ -326,10 +329,10 @@ function InsightDetail({ websiteId, id, onChanged }: { websiteId: string; id: st
       {i.events?.length ? <p className="text-slate-600">History: {i.events.map((e) => `${e.event.replace(/_/g, " ")}${e.to_status ? ` → ${e.to_status}` : ""}${e.note ? ` (“${e.note}”)` : ""} ${fmtDay(e.created_at)}`).join(" · ")}</p> : null}
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs">Note<input value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} className={input} /></label>
-        {i.status !== "in_progress" ? <button type="button" className={btn} onClick={() => void update("in_progress")}>Start</button> : null}
-        {i.status !== "resolved" ? <button type="button" className={btn} onClick={() => void update("resolved")}>Resolved</button> : null}
-        {i.status !== "dismissed" ? <button type="button" className={btn} onClick={() => void update("dismissed")}>Dismiss</button> : null}
-        <button type="button" className={btn} disabled={!note.trim()} onClick={() => void update()}>Add note</button>
+        {i.status !== "in_progress" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("in_progress")}>Start</button> : null}
+        {i.status !== "resolved" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("resolved")}>Resolved</button> : null}
+        {i.status !== "dismissed" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("dismissed")}>Dismiss</button> : null}
+        <button type="button" className={btn} disabled={busy || (!note.trim())} onClick={() => void update()}>Add note</button>
         {message ? <span role="status">{message}</span> : null}
       </div>
     </div>
@@ -394,7 +397,16 @@ function ActionEditor({ websiteId, action, onChanged }: { websiteId: string; act
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<{ event: string; from_value: string | null; to_value: string | null; note: string | null; created_at: string }> | null>(null);
-  useEffect(() => { void apiWsActionHistory(websiteId, action.source, action.sourceRef).then((r) => setHistory(r.data ?? [])); }, [websiteId, action.source, action.sourceRef]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setHistoryError(null);
+    apiWsActionHistory(websiteId, action.source, action.sourceRef).then(
+      (r) => { if (!live) return; if (r.error) setHistoryError(errorMessage(r.error)); else setHistory(r.data ?? []); },
+      (e: Error) => { if (live) setHistoryError(e.message); },
+    );
+    return () => { live = false; };
+  }, [websiteId, action.source, action.sourceRef]);
   const save = async () => {
     const r = await apiWsUpdateAction(websiteId, { source: action.source, sourceRef: action.sourceRef, ...(status !== action.state.status ? { status } : {}), ...(due !== (action.state.dueDate ?? "") ? { dueDate: due || null } : {}), ...(note.trim() ? { note: note.trim() } : {}) });
     setMessage(r.error ? errorMessage(r.error) : "Saved.");
@@ -413,6 +425,7 @@ function ActionEditor({ websiteId, action, onChanged }: { websiteId: string; act
         <button type="button" className={btnPrimary} disabled={!changed} onClick={() => void save()}>Save</button>
         {message ? <span role="status">{message}</span> : null}
       </div>
+      {historyError ? <p role="alert" className="text-red-700">Could not load this action's history: {historyError}</p> : null}
       {history?.length ? <p className="text-slate-600">History: {history.map((h) => `${h.event.replace(/_/g, " ")}${h.to_value ? ` → ${h.to_value}` : ""}${h.note ? ` (“${h.note}”)` : ""} ${fmtDay(h.created_at)}`).join(" · ")}</p> : null}
     </div>
   );

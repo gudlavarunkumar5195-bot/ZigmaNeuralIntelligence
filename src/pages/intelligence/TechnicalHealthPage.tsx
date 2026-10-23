@@ -27,6 +27,7 @@ import { PageHeader } from "../../components/ui/Card";
 const STATUS_TABS: SiteIssueStatus[] = ["OPEN", "FIXED", "IGNORED"];
 const ACTIVE = new Set(["queued", "running"]);
 const POLL_MS = 3_000;
+const MAX_POLL_FAILURES = 8;
 const ROBOTS_LABEL: Record<CrawlSummary["robots_status"], string> = {
   parsed: "Found and applied",
   missing: "Not found (all paths crawlable)",
@@ -68,6 +69,7 @@ export function TechnicalHealthPage() {
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [rules, setRules] = useState<SeoRuleInfo[]>([]);
+  const [rulesError, setRulesError] = useState<string | null>(null);
 
   const [tab, setTab] = useState<SiteIssueStatus>("OPEN");
   const [filters, setFilters] = useState<IssueFilters>(NO_FILTERS);
@@ -108,8 +110,10 @@ export function TechnicalHealthPage() {
       }
       setSite({ id: chosen.id, domain: chosen.domain });
       await loadOverview(chosen.id);
-      const r = await apiListSeoRules(chosen.id).catch(() => null);
-      if (r?.data) setRules(r.data);
+      // The rule list only feeds the rule filter; without it the filter offers "All rules".
+      const r = await apiListSeoRules(chosen.id).catch((e: Error) => ({ data: null, error: { message: e.message } }));
+      if (r.data) setRules(r.data);
+      setRulesError(r.error ? r.error.message : null);
     } catch (cause) {
       setError(cause as Error);
     }
@@ -170,11 +174,30 @@ export function TechnicalHealthPage() {
     if (!site?.id || !latestScan || !ACTIVE.has(latestScan.status)) return;
     let stopped = false;
     let timer: number | undefined;
+    let failures = 0;
+    // Transient failures back off (up to 30 s) and give up after 8 in a row;
+    // a 4xx will not fix itself, so polling stops and says why.
+    const retryLater = (reason: string) => {
+      failures += 1;
+      if (failures >= MAX_POLL_FAILURES) {
+        setProgress(`Lost contact with the crawl status (${reason}). Reload the page to check it again.`);
+        return;
+      }
+      timer = window.setTimeout(() => void tick(), Math.min(POLL_MS * 2 ** failures, 30_000));
+    };
     const tick = async () => {
       try {
         const scan = await apiGetScan(latestScan.id);
+        if (stopped) return;
+        if (scan.error) {
+          const status = scan.error.status ?? 0;
+          if (status >= 500 || status === 429) return retryLater(scan.error.message);
+          setProgress(`Could not read the crawl status: ${scan.error.message}`);
+          return;
+        }
+        failures = 0;
         const data = scan.data as { status?: string; crawl_progress?: { pagesCrawled?: number; pagesDiscovered?: number } | null } | null;
-        if (stopped || !data) return;
+        if (!data) return;
         if (data.status && ACTIVE.has(data.status)) {
           const p = data.crawl_progress;
           setProgress(p ? `Crawling: ${p.pagesCrawled ?? 0} pages fetched, ${p.pagesDiscovered ?? 0} URLs discovered so far.` : "Crawl queued or starting…");
@@ -189,8 +212,8 @@ export function TechnicalHealthPage() {
             ? `Crawl finished${c ? `: ${c.detected} new, ${c.fixed} fixed, ${c.reopened} reopened.` : "."}`
             : `Crawl ${data.status}. Issues were left unchanged.`,
         );
-      } catch {
-        if (!stopped) timer = window.setTimeout(() => void tick(), POLL_MS * 2);
+      } catch (cause) {
+        if (!stopped) retryLater((cause as Error).message);
       }
     };
     void tick();
@@ -344,6 +367,7 @@ export function TechnicalHealthPage() {
               {rules.filter((r) => !filters.category || r.category === filters.category).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
             </select>
           </label>
+            {rulesError ? <span role="alert" className="text-[11px] text-red-700">Rule list unavailable: {rulesError}</span> : null}
           <label className="text-xs text-slate-700">
             URL contains
             <input value={urlInput} maxLength={200} onChange={(e) => setUrlInput(e.target.value)} className="mt-1 block rounded border border-slate-300 px-2 py-1 text-xs" />

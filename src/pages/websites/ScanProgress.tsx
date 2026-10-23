@@ -34,9 +34,9 @@ const RESULT_LINKS: Array<[module: string, label: string, path: string]> = [
 
 /** Only network failures and 5xx responses are worth retrying; 4xx (404/403/...) will not fix themselves. */
 function isTransient(cause: unknown): boolean {
-  if (cause instanceof IntegrationRequired) return false;
-  const code = (cause as { code?: string }).code ?? "";
-  return code === "NETWORK_ERROR" || /^5\d\d$/.test(code);
+  if (cause instanceof IntegrationRequired || !(cause instanceof ApiCallError)) return false;
+  if (cause.code === "NETWORK_ERROR" || cause.code === "TIMEOUT") return true;
+  return cause.status >= 500 || cause.status === 429;
 }
 
 export function ScanProgress() {
@@ -57,7 +57,7 @@ export function ScanProgress() {
       let next: number | null = null;
       try {
         const result = await apiGetScan(id);
-        if (result.error) throw new ApiCallError(0, result.error.code, result.error.message);
+        if (result.error) throw new ApiCallError(result.error.status ?? 0, result.error.code, result.error.message);
         if (cancelled) return;
         const record = result.data as ScanRecord;
         setScan(record);
@@ -91,7 +91,7 @@ export function ScanProgress() {
     setCancelError(null);
     try {
       const result = await apiCancelScan(id);
-      if (result.error) throw new ApiCallError(0, result.error.code, result.error.message);
+      if (result.error) throw new ApiCallError(result.error.status ?? 0, result.error.code, result.error.message);
       retry();
     } catch (cause) {
       setCancelError((cause as Error).message);

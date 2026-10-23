@@ -11,6 +11,7 @@
     "format": "oxfmt",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:integration": "playwright test -c playwright.integration.config.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { PageHeader } from "../../components/ui/Card";
 import { btn, btnDanger, buttonClass, input } from "../../components/ui/styles";
 import { useWebsites } from "../../lib/useWebsites"
+import { AlertRules } from "./AlertRules"
 import {
   EmptyState,
   ErrorState,
@@ -47,6 +48,7 @@ export function MonitoringPage() {
   const [frequency, setFrequency] = useState("daily")
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [rulesFor, setRulesFor] = useState<string | null>(null)
   const fetchPage = async (target: number) => {
     const result = await apiListMonitoring({ page: target })
     if (result.error)
@@ -63,6 +65,13 @@ export function MonitoringPage() {
     } catch (cause) {
       setError(cause as Error)
     }
+  }
+  // Re-read every page already shown, so an action does not collapse "Load more".
+  const reloadShown = async () => {
+    const shown = page
+    const rows: MonitoringConfig[] = []
+    for (let p = 1; p <= shown; p++) rows.push(...(await fetchPage(p)))
+    setItems(rows)
   }
   const loadMore = async () => {
     setBusy(true)
@@ -81,11 +90,11 @@ export function MonitoringPage() {
     setActionError(null)
     try {
       const result = (await request()) as {
-        error?: { code: string; message: string }
+        error?: { code: string; message: string; status?: number }
       }
       if (result.error)
-        throw new ApiCallError(0, result.error.code, result.error.message)
-      await load()
+        throw new ApiCallError(result.error.status ?? 0, result.error.code, result.error.message)
+      await reloadShown()
     } catch (cause) {
       setActionError(safeActionMessage(cause))
     } finally {
@@ -158,7 +167,7 @@ export function MonitoringPage() {
         </label>
         <button
           disabled={busy || !websiteId}
-          className="rounded bg-blue-700 px-4 py-2 font-700 text-white disabled:opacity-60"
+          className={buttonClass("primary", "md")}
         >
           Create monitoring
         </button>
@@ -193,7 +202,7 @@ export function MonitoringPage() {
                 >
                   Run now
                 </button>
-                {item.status === "PAUSED" ? (
+                {item.status === "PAUSED" || item.status === "DISABLED" ? (
                   <button
                     disabled={busy}
                     onClick={() =>
@@ -201,7 +210,7 @@ export function MonitoringPage() {
                     }
                     className={btn}
                   >
-                    Resume
+                    {item.status === "DISABLED" ? "Re-enable" : "Resume"}
                   </button>
                 ) : (
                   <button
@@ -214,7 +223,7 @@ export function MonitoringPage() {
                     Pause
                   </button>
                 )}
-                <button
+                {item.status !== "DISABLED" ? <button
                   disabled={busy}
                   onClick={() => {
                     if (
@@ -227,7 +236,7 @@ export function MonitoringPage() {
                   className={btnDanger}
                 >
                   Disable
-                </button>
+                </button> : null}
                 <select
                   disabled={busy}
                   aria-label={`Change frequency for ${domainOf(item.website_id)}`}
@@ -248,6 +257,10 @@ export function MonitoringPage() {
                   ))}
                 </select>
               </div>
+              <button type="button" className="mt-3 text-xs font-600 text-blue-700 underline" aria-expanded={rulesFor === item.id} onClick={() => setRulesFor(rulesFor === item.id ? null : item.id)}>
+                {rulesFor === item.id ? "Hide alert rules" : "Alert rules"}
+              </button>
+              {rulesFor === item.id ? <AlertRules monitoringId={item.id} domain={domainOf(item.website_id)} /> : null}
             </article>
           ))}
         </section>

@@ -240,51 +240,24 @@ export async function monitoringRoutes(
     })
   })
 
-  fastify.post(
-    "/alerts/:id/acknowledge",
-    { preHandler: operator },
-    async (request, reply) =>
-      reply.send({
-        data: {
-          updated: await updateAlert(
-            (request.params as { id: string }).id,
-            request.orgId,
-            request.authUser.id,
-            "ACKNOWLEDGED",
-          ),
-        },
-      }),
-  )
-  fastify.post(
-    "/alerts/:id/resolve",
-    { preHandler: operator },
-    async (request, reply) =>
-      reply.send({
-        data: {
-          updated: await updateAlert(
-            (request.params as { id: string }).id,
-            request.orgId,
-            request.authUser.id,
-            "RESOLVED",
-          ),
-        },
-      }),
-  )
-  fastify.post(
-    "/alerts/:id/dismiss",
-    { preHandler: operator },
-    async (request, reply) =>
-      reply.send({
-        data: {
-          updated: await updateAlert(
-            (request.params as { id: string }).id,
-            request.orgId,
-            request.authUser.id,
-            "DISMISSED",
-          ),
-        },
-      }),
-  )
+  // Alert transitions. `updated: false` means the alert was not in a state
+  // that allows the change (for example already resolved by someone else).
+  for (const [action, status] of [
+    ["acknowledge", "ACKNOWLEDGED"],
+    ["resolve", "RESOLVED"],
+    ["dismiss", "DISMISSED"],
+  ] as const) {
+    fastify.post(`/alerts/:id/${action}`, { preHandler: operator }, async (request, reply) => {
+      const parsed = idParam.safeParse(request.params)
+      if (!parsed.success)
+        return reply
+          .status(400)
+          .send({ error: { code: "VALIDATION_ERROR", message: "Invalid alert id" } })
+      return reply.send({
+        data: { updated: await updateAlert(parsed.data.id, request.orgId, request.authUser.id, status) },
+      })
+    })
+  }
   fastify.get("/alert/:id", { preHandler: member }, async (request, reply) => {
     const parsed = idParam.safeParse(request.params)
     if (!parsed.success)

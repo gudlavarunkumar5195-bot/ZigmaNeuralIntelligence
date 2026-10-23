@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { apiListResearchRuns, apiResearchCapabilities, apiRunResearch, IntegrationRequired, type ResearchCapabilities, type ResearchKind, type ResearchRun } from "../../services/api";
-import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
+import { EmptyState, ErrorState, InlineError, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
+import { SavedLists } from "./research/SavedLists";
 import { errorText, ProviderNotice, useWebsites } from "./research/shared";
 import { RunView } from "./research/RunView";
 import { PageHeader } from "../../components/ui/Card";
@@ -16,6 +17,8 @@ const MODES: Array<{ kind: Exclude<ResearchKind, "gap">; label: string; capabili
 /** Keyword research: real data from the enabled provider, with provenance and explicit gaps. */
 export function KeywordResearchPage() {
   const { websites, websiteId, setWebsiteId, error: siteError } = useWebsites();
+  const websiteIdRef = useRef(websiteId);
+  websiteIdRef.current = websiteId;
   const [caps, setCaps] = useState<ResearchCapabilities | null>(null);
   const [capsError, setCapsError] = useState<Error | null>(null);
   const [mode, setMode] = useState<(typeof MODES)[number]>(MODES[0]);
@@ -35,10 +38,19 @@ export function KeywordResearchPage() {
       .catch((e: Error) => setCapsError(e));
   };
   useEffect(loadCaps, []);
+  const [historyError, setHistoryError] = useState<{ message: string; status?: number } | null>(null);
   const loadHistory = async () => {
     if (!websiteId) return;
-    const r = await apiListResearchRuns({ websiteId, limit: 10 });
-    setHistory((r.data ?? []).filter((x) => x.kind !== "gap"));
+    const forSite = websiteId;
+    setHistoryError(null);
+    try {
+      const r = await apiListResearchRuns({ websiteId: forSite, limit: 10 });
+      if (forSite !== websiteIdRef.current) return; // the website changed meanwhile
+      if (r.error) return setHistoryError(r.error);
+      setHistory((r.data ?? []).filter((x) => x.kind !== "gap"));
+    } catch (e) {
+      setHistoryError({ message: (e as Error).message });
+    }
   };
   useEffect(() => {
     setActive(null);
@@ -131,7 +143,9 @@ export function KeywordResearchPage() {
 
       <section aria-labelledby="history-heading" className="mt-6">
         <h3 id="history-heading" className="text-sm font-700 text-slate-900">Recent research for this website</h3>
-        {!history ? (
+        {historyError ? (
+          <InlineError what="research history" error={historyError} onRetry={() => void loadHistory()} />
+        ) : !history ? (
           <LoadingState label="Loading history…" />
         ) : history.length === 0 ? (
           <p className="mt-2 text-xs text-slate-600">No research has been run for this website yet.</p>
@@ -148,6 +162,8 @@ export function KeywordResearchPage() {
           </ul>
         )}
       </section>
+
+      <SavedLists />
     </div>
   );
 }

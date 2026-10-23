@@ -435,6 +435,7 @@ export function ModelRouter() {
 
   const [policy, setPolicy] = useState<RoutingPolicy | null>(null);
   const [policyLoading, setPolicyLoading] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
 
   useEffect(() => {
     if (tab !== "history" || IS_DEMO || history.length > 0) return;
@@ -448,9 +449,13 @@ export function ModelRouter() {
   useEffect(() => {
     if (tab !== "policy" || IS_DEMO || policy) return;
     setPolicyLoading(true);
+    setPolicyError(null);
     apiGetRoutingPolicy()
-      .then((r) => { if (r.data) setPolicy(r.data); })
-      .catch(() => {})
+      .then((r) => {
+        if (r.data) setPolicy(r.data);
+        else if (r.error) setPolicyError(r.error.status === 403 ? "Only organization owners and admins can view the routing policy." : r.error.message);
+      })
+      .catch((e: unknown) => setPolicyError(e instanceof IntegrationRequired ? "Backend integration required" : (e as Error).message))
       .finally(() => setPolicyLoading(false));
   }, [tab, policy]);
 
@@ -687,7 +692,7 @@ export function ModelRouter() {
             </div>
           )}
           {!policyLoading && !policy && (
-            <div className="text-slate-400 text-sm py-8">Policy unavailable — backend connection required.</div>
+            <div role={policyError ? "alert" : undefined} className="text-slate-500 text-sm py-8">{policyError ? `Policy unavailable: ${policyError}` : "Policy unavailable."}</div>
           )}
           {policy && (
             <>

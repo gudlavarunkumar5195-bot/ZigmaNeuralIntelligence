@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { btn, btnPrimary, input } from "../../../components/ui/styles";
 import { Link } from "react-router";
-import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/DataState";
+import { EmptyState, ErrorState, InlineError, LoadingState } from "../../../components/ui/DataState";
+import { useApiQuery } from "../../../lib/useApiQuery";
 import {
   apiBacklinkChanges,
   apiBacklinkDatasets,
@@ -446,19 +447,18 @@ export function OpportunitiesTab({ websiteId }: { websiteId: string; summary: Ba
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 export function ImportsTab({ websiteId, summary, onImported }: { websiteId: string; summary: BacklinkSummary; onImported: () => void }) {
-  const [datasets, setDatasets] = useState<BacklinkDataset[] | null>(null);
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
   const [form, setForm] = useState({ subject: "own" as "own" | "competitor", competitorDomain: "", sourceLabel: "", coverage: "partial" as "complete" | "partial" | "unknown", exportedAt: "" });
   const [preview, setPreview] = useState<BacklinkImportPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const [limits, setLimits] = useState<{ maxRows: number; maxBytes: number } | null>(null);
 
-  const loadDatasets = useCallback(() => {
-    apiBacklinkDatasets(websiteId).then((r) => setDatasets(r.data ?? [])).catch(() => setDatasets([]));
-  }, [websiteId]);
-  useEffect(loadDatasets, [loadDatasets]);
-  useEffect(() => { apiBacklinkSources(websiteId).then((r) => setLimits(r.data?.limits ?? null)).catch(() => undefined); }, [websiteId]);
+  const datasetsQ = useApiQuery(() => apiBacklinkDatasets(websiteId), [websiteId]);
+  const datasets: BacklinkDataset[] | null = datasetsQ.data;
+  const loadDatasets = datasetsQ.reload;
+  // Without the limits the size check is left to the server, which enforces it anyway.
+  const sourcesQ = useApiQuery(() => apiBacklinkSources(websiteId), [websiteId]);
+  const limits: { maxRows: number; maxBytes: number } | null = sourcesQ.data?.limits ?? null;
 
   const onFile = async (f: File | undefined) => {
     setPreview(null);
@@ -546,7 +546,8 @@ export function ImportsTab({ websiteId, summary, onImported }: { websiteId: stri
 
       <section aria-labelledby="history-h" className="mt-6">
         <h3 id="history-h" className="text-sm font-700 text-slate-900">Import history</h3>
-        {!datasets ? <LoadingState label="Loading imports…" /> : datasets.length === 0 ? <p className="mt-2 text-xs text-slate-600">No imports yet.</p> : (
+        {sourcesQ.error ? <InlineError what="import limits (the server still checks the file)" error={sourcesQ.error} onRetry={sourcesQ.reload} /> : null}
+        {datasetsQ.error ? <InlineError what="previous imports" error={datasetsQ.error} onRetry={datasetsQ.reload} /> : !datasets ? <LoadingState label="Loading imports…" /> : datasets.length === 0 ? <p className="mt-2 text-xs text-slate-600">No imports yet.</p> : (
           <table className="mt-2 w-full text-left text-xs">
             <caption className="sr-only">Imported datasets</caption>
             <thead className="text-slate-500"><tr><th scope="col" className="py-1 pr-2">Imported</th><th scope="col" className="py-1 pr-2">Backlinks of</th><th scope="col" className="py-1 pr-2">Source</th><th scope="col" className="py-1 pr-2">Coverage</th><th scope="col" className="py-1 pr-2">Accepted</th><th scope="col" className="py-1 pr-2">Rejected / duplicate / blank</th><th scope="col" className="py-1">Freshness</th></tr></thead>

@@ -5,6 +5,8 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  // The backend-backed suite has its own config (playwright.integration.config.ts).
+  testIgnore: "integration/**",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

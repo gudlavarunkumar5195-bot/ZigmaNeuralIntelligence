@@ -164,8 +164,8 @@ function UserDetail({ userId, onChanged }: { userId: string; onChanged: () => vo
       {confirm ? (
         <div role="alertdialog" aria-label="Confirm action" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
           <span>{confirm.label}</span>
-          <button type="button" className={btnPrimary} onClick={() => void confirm.run()}>Confirm</button>
-          <button type="button" className={btn} onClick={() => setConfirm(null)}>Cancel</button>
+          <button type="button" className={btnPrimary} disabled={busy} onClick={() => void confirm.run()}>Confirm</button>
+          <button type="button" className={btn} disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
         </div>
       ) : null}
       {notice ? <p role={notice.ok ? "status" : "alert"} className={`mt-2 rounded px-3 py-2 text-xs ${notice.ok ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-900"}`}>{notice.text}</p> : null}

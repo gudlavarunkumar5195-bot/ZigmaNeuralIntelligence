@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useBusy } from "../../lib/useBusy";
 import { PageHeader } from "../../components/ui/Card";
 import {
   Bot, Shield, Search, Eye, Zap, Code, FileText, Cpu,
@@ -259,7 +260,7 @@ function RegistryTab({
   selected: (AgentView & { versions?: unknown[]; instructionProfileSummary?: string }) | null;
   detailLoading: boolean;
   onSelect: (a: AgentView) => void;
-  onToggle: (a: AgentView) => void;
+  onToggle: (a: AgentView) => Promise<void>;
   onRefresh: () => void;
 }) {
   if (loading) return <LoadingState label="Loading agent registry…" />;
@@ -335,8 +336,9 @@ function AgentDetail({
 }: {
   agent: AgentView & { versions?: unknown[]; instructionProfileSummary?: string };
   loading: boolean;
-  onToggle: () => void;
+  onToggle: () => Promise<void>;
 }) {
+  const { busy, guard } = useBusy();
   const Icon = AGENT_ICONS[agent.agentType] ?? Bot;
 
   return (
@@ -363,8 +365,9 @@ function AgentDetail({
           </div>
         </div>
         <button
-          onClick={onToggle}
-          className={`px-3 py-1.5 rounded text-xs font-600 border transition-colors ${
+          onClick={() => void guard(onToggle)()}
+          disabled={busy}
+          className={`px-3 py-1.5 rounded text-xs font-600 border transition-colors disabled:opacity-50 ${
             agent.enabled
               ? "border-red-200 text-red-700 hover:bg-red-50"
               : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"

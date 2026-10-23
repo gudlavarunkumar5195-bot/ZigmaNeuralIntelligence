@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useBusy } from "../../../lib/useBusy";
 import { ErrorState, LoadingState } from "../../../components/ui/DataState";
 import {
   apiAivAddCompetitor,
@@ -27,8 +28,7 @@ import {
   type AivQuery,
   type AivRun,
   type AivRunDetail,
-  type AivRunPreview,
-} from "../../../services/api";
+  type AivRunPreview, apiAivReprocess } from "../../../services/api";
 import { btn, btnPrimary, card, errorMessage, fmt, fmtDay, input, PROVIDER_STATUS, toList } from "./ui";
 
 // ─── Brand form ──────────────────────────────────────────────────────────────
@@ -48,13 +48,13 @@ export function BrandForm({ brand, competitorOf, submitLabel, onSaved, onCancel 
     language: brand?.language ?? "",
     country: brand?.country ?? "",
   });
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
   const competitor = !!competitorOf || brand?.kind === "competitor";
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!f.name.trim()) return setMessage("A name is required.");
+    if (!f.name.trim()) return setMessage({ ok: false, text: "A name is required." });
     setBusy(true);
     setMessage(null);
     const body: AivBrandInput & { name: string } = {
@@ -66,8 +66,8 @@ export function BrandForm({ brand, competitorOf, submitLabel, onSaved, onCancel 
       ? brand.kind === "competitor" ? await apiAivUpdateCompetitor(brand.parent_id!, brand.id, body) : await apiAivUpdateBrand(brand.id, body)
       : competitorOf ? await apiAivAddCompetitor(competitorOf, body) : await apiAivCreateBrand(body);
     setBusy(false);
-    if (r.error || !r.data) return setMessage(r.error ? errorMessage(r.error) : "Saving failed.");
-    setMessage(brand ? "Saved. Past answers with retained text were re-matched against the new terms." : null);
+    if (r.error || !r.data) return setMessage({ ok: false, text: r.error ? errorMessage(r.error) : "Saving failed." });
+    setMessage(brand ? { ok: true, text: "Saved. Past answers with retained text were re-matched against the new terms." } : null);
     onSaved(r.data);
   };
   const id = (k: string) => `aiv-${brand?.id ?? competitorOf ?? "new"}-${k}`;
@@ -91,7 +91,7 @@ export function BrandForm({ brand, competitorOf, submitLabel, onSaved, onCancel 
       <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
         <button type="submit" className={btnPrimary} disabled={busy}>{busy ? "Saving…" : submitLabel}</button>
         {onCancel ? <button type="button" className={btn} onClick={onCancel}>Cancel</button> : null}
-        {message ? <span role="status" className="text-xs text-slate-700">{message}</span> : null}
+        {message ? <span role={message.ok ? "status" : "alert"} className={`text-xs ${message.ok ? "text-slate-700" : "text-red-700"}`}>{message.text}</span> : null}
       </div>
       <p className="text-[11px] text-slate-500 sm:col-span-2">Names match whole words, case-insensitively; short all-caps names (such as “HP”) match exactly. Domains match the domain and its subdomains.</p>
     </form>
@@ -176,8 +176,34 @@ export function BrandTab({ brand, providers, onChanged }: { brand: AivBrand; pro
         )}
       </section>
 
+      <ReprocessSection brand={brand} />
+
       <ScheduleSection brand={brand} providers={providers} onChanged={onChanged} />
     </div>
+  );
+}
+
+/**
+ * Re-runs mention and citation matching over stored observations, e.g. after
+ * changing names, aliases or domains. Works in batches; repeat while some remain.
+ */
+function ReprocessSection({ brand }: { brand: AivBrand }) {
+  const { busy, guard } = useBusy();
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const run = guard(async () => {
+    const r = await apiAivReprocess(brand.id);
+    if (r.error || !r.data) return setMessage({ ok: false, text: r.error ? errorMessage(r.error) : "Matching could not be re-run." });
+    setMessage({ ok: true, text: r.data.remaining > 0
+      ? `Re-matched ${r.data.reprocessed} observation(s); ${r.data.remaining} remain. Run it again to continue.`
+      : `Re-matched ${r.data.reprocessed} observation(s). All stored observations are up to date.` });
+  });
+  return (
+    <section aria-labelledby="aiv-reprocess" className={card}>
+      <h3 id="aiv-reprocess" className="text-sm font-800 text-slate-900">Re-run matching</h3>
+      <p className="mt-1 text-xs text-slate-600">After changing names, aliases or domains, re-check stored answers for mentions and citations. Nothing is collected again; up to 2,000 observations per run.</p>
+      <button type="button" className={`${btn} mt-2`} disabled={busy} onClick={() => void run()}>{busy ? "Re-matching…" : "Re-run matching"}</button>
+      {message ? <p role={message.ok ? "status" : "alert"} className={`mt-2 text-xs ${message.ok ? "text-slate-700" : "text-red-700"}`}>{message.text}</p> : null}
+    </section>
   );
 }
 
@@ -243,6 +269,7 @@ function ScheduleSection({ brand, providers, onChanged }: { brand: AivBrand; pro
 // ─── Queries and runs ────────────────────────────────────────────────────────
 
 export function QueriesTab({ brand, providers }: { brand: AivBrand; providers: AivProviders }) {
+  const { busy, guard } = useBusy();
   const [rows, setRows] = useState<AivQuery[] | null>(null);
   const [meta, setMeta] = useState<{ total: number; topics: string[] } | null>(null);
   const [filters, setFilters] = useState({ search: "", status: "", topic: "", offset: 0 });
@@ -272,12 +299,12 @@ export function QueriesTab({ brand, providers }: { brand: AivBrand; providers: A
     setNewText("");
     setReload((n) => n + 1);
   };
-  const update = async (q: AivQuery, patch: Parameters<typeof apiAivUpdateQuery>[2]) => {
+  const update = guard(async (q: AivQuery, patch: Parameters<typeof apiAivUpdateQuery>[2]) => {
     const r = await apiAivUpdateQuery(brand.id, q.id, patch);
     setMessage(r.error ? errorMessage(r.error) : r.data?.versionCreated ? `Saved as version ${r.data.version}; earlier observations keep the version they used.` : "Saved.");
     setEditing(null);
     setReload((n) => n + 1);
-  };
+  });
   const showVersions = async (q: AivQuery) => {
     if (versions?.id === q.id) return setVersions(null);
     const r = await apiAivQueryVersions(brand.id, q.id);
@@ -335,8 +362,8 @@ export function QueriesTab({ brand, providers }: { brand: AivBrand; providers: A
                       <span className="inline-flex flex-wrap gap-1">
                         <button type="button" className={btn} onClick={() => setEditing({ id: q.id, text: q.text })}>Edit</button>
                         <button type="button" className={btn} onClick={() => void showVersions(q)} aria-expanded={versions?.id === q.id}>Versions</button>
-                        {q.status === "active" ? <button type="button" className={btn} onClick={() => void update(q, { status: "paused" })}>Pause</button> : <button type="button" className={btn} onClick={() => void update(q, { status: "active" })}>Activate</button>}
-                        {q.status !== "archived" ? <button type="button" className={btn} onClick={() => void update(q, { status: "archived" })}>Archive</button> : null}
+                        {q.status === "active" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(q, { status: "paused" })}>Pause</button> : <button disabled={busy} type="button" className={btn} onClick={() => void update(q, { status: "active" })}>Activate</button>}
+                        {q.status !== "archived" ? <button disabled={busy} type="button" className={btn} onClick={() => void update(q, { status: "archived" })}>Archive</button> : null}
                       </span>
                     </td>
                   </tr>
@@ -360,6 +387,7 @@ export function QueriesTab({ brand, providers }: { brand: AivBrand; providers: A
 const ACTIVE_RUN = new Set(["queued", "running"]);
 
 function RunPanel({ brand, providers, selected }: { brand: AivBrand; providers: AivProviders; selected: string[] }) {
+  const { busy, guard } = useBusy();
   const [provider, setProvider] = useState(providers.providers.find((p) => p.collection === "provider_api" && p.status === "available")?.id ?? providers.providers[0]?.id ?? "");
   const [repeats, setRepeats] = useState(1);
   const [onlySelected, setOnlySelected] = useState(false);
@@ -392,11 +420,11 @@ function RunPanel({ brand, providers, selected }: { brand: AivBrand; providers: 
     setMessage(r.data.deduplicated ? "A run is already queued or running for this brand." : `Run queued: ${r.data.run.items_total} requests.`);
     void loadRuns();
   };
-  const cancel = async (id: string) => {
+  const cancel = guard(async (id: string) => {
     const r = await apiAivCancelRun(brand.id, id);
     setMessage(r.error ? errorMessage(r.error) : r.data?.cancelled ? "Run cancelled. Requests already answered are kept." : "The run had already finished.");
     void loadRuns();
-  };
+  });
   const openRun = async (id: string) => {
     if (detail?.id === id) return setDetail(null);
     const r = await apiAivRun(brand.id, id);
@@ -434,7 +462,7 @@ function RunPanel({ brand, providers, selected }: { brand: AivBrand; providers: 
                 <span>{fmt(r.created_at)} · {r.provider}{r.model ? ` (${r.model})` : ""} · {r.trigger} · <span className="font-700">{r.status}</span> · {r.items_done} answered, {r.items_failed} failed of {r.items_total}{r.error ? <span className="text-slate-500"> — {r.error}</span> : null}</span>
                 <span className="inline-flex gap-1">
                   <button type="button" className={btn} onClick={() => void openRun(r.id)} aria-expanded={detail?.id === r.id}>Details</button>
-                  {ACTIVE_RUN.has(r.status) ? <button type="button" className={btn} onClick={() => void cancel(r.id)}>Cancel</button> : null}
+                  {ACTIVE_RUN.has(r.status) ? <button disabled={busy} type="button" className={btn} onClick={() => void cancel(r.id)}>Cancel</button> : null}
                 </span>
               </div>
               {detail?.id === r.id ? (

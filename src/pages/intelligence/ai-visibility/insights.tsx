@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { useBusy } from "../../../lib/useBusy";
 import { Link } from "react-router";
-import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/DataState";
+import { EmptyState, ErrorState, InlineError, LoadingState } from "../../../components/ui/DataState";
 import {
   apiAivAiSummaries,
   apiAivComparison,
@@ -197,11 +198,16 @@ export function ObservationsTab({ brand, providers }: { brand: AivBrand; provide
   const [error, setError] = useState<string | null>(null);
   const [queries, setQueries] = useState<AivQuery[]>([]);
   const [competitors, setCompetitors] = useState<AivBrand[]>([]);
+  const [filterError, setFilterError] = useState<{ message: string; status?: number } | null>(null);
   const [f, setF] = useState({ queryId: "", method: "", surface: "", mentions: "", notMentioned: false, hasCitations: "", from: "", to: "", includeExcluded: false });
   const [detail, setDetail] = useState<string | null>(null);
   useEffect(() => {
-    void apiAivQueries(brand.id, { limit: 200 }).then((r) => setQueries(r.data ?? []));
-    void apiAivCompetitors(brand.id).then((r) => setCompetitors(r.data ?? []));
+    let live = true;
+    setFilterError(null);
+    const fail = (e: { message: string; status?: number }) => { if (live) setFilterError(e); };
+    apiAivQueries(brand.id, { limit: 200 }).then((r) => { if (!live) return; if (r.error) fail(r.error); else setQueries(r.data ?? []); }, (e: Error) => fail(e));
+    apiAivCompetitors(brand.id).then((r) => { if (!live) return; if (r.error) fail(r.error); else setCompetitors(r.data ?? []); }, (e: Error) => fail(e));
+    return () => { live = false; };
   }, [brand.id]);
   const params = useCallback((after?: string) => ({
     queryId: f.queryId || undefined, method: (f.method || undefined) as "provider_api" | "manual_import" | undefined, surface: f.surface || undefined, mentions: f.mentions || undefined,
@@ -483,6 +489,7 @@ export function RecommendationsTab({ brand }: { brand: AivBrand }) {
 }
 
 function OpportunityDetail({ brand, id, onChanged }: { brand: AivBrand; id: string; onChanged: () => void }) {
+  const { busy, guard } = useBusy();
   const [o, setO] = useState<AivOpportunityDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -493,12 +500,12 @@ function OpportunityDetail({ brand, id, onChanged }: { brand: AivBrand; id: stri
     setO(r.data);
   }, [brand.id, id]);
   useEffect(() => void load(), [load]);
-  const update = async (status?: "open" | "in_progress" | "done" | "dismissed") => {
+  const update = guard(async (status?: "open" | "in_progress" | "done" | "dismissed") => {
     if (!status && !note.trim()) return;
     const r = await apiAivUpdateOpportunity(brand.id, id, { ...(status ? { status } : {}), ...(note.trim() ? { note: note.trim() } : {}) });
     setMessage(r.error ? errorMessage(r.error) : "Saved.");
     if (!r.error) { setNote(""); void load(); onChanged(); }
-  };
+  });
   if (error) return <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>;
   if (!o) return <LoadingState label="Loading recommendation…" />;
   return (
@@ -516,11 +523,11 @@ function OpportunityDetail({ brand, id, onChanged }: { brand: AivBrand; id: stri
       {o.events.length ? <p className="text-slate-600">History: {o.events.map((e) => `${e.event.replace(/_/g, " ")}${e.to_status ? ` → ${e.to_status}` : ""}${e.note ? ` (“${e.note}”)` : ""} ${fmtDay(e.created_at)}`).join(" · ")}</p> : null}
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs">Note<input value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} className={input} /></label>
-        {o.status !== "in_progress" ? <button type="button" className={btn} onClick={() => void update("in_progress")}>Start</button> : null}
-        {o.status !== "done" ? <button type="button" className={btn} onClick={() => void update("done")}>Mark done</button> : null}
-        {o.status !== "dismissed" ? <button type="button" className={btn} onClick={() => void update("dismissed")}>Dismiss</button> : null}
-        {o.status === "done" || o.status === "dismissed" ? <button type="button" className={btn} onClick={() => void update("open")}>Reopen</button> : null}
-        <button type="button" className={btn} disabled={!note.trim()} onClick={() => void update()}>Add note</button>
+        {o.status !== "in_progress" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("in_progress")}>Start</button> : null}
+        {o.status !== "done" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("done")}>Mark done</button> : null}
+        {o.status !== "dismissed" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("dismissed")}>Dismiss</button> : null}
+        {o.status === "done" || o.status === "dismissed" ? <button disabled={busy} type="button" className={btn} onClick={() => void update("open")}>Reopen</button> : null}
+        <button type="button" className={btn} disabled={busy || (!note.trim())} onClick={() => void update()}>Add note</button>
         {message ? <span role="status">{message}</span> : null}
       </div>
     </div>

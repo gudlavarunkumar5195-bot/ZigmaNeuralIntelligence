@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useBusy } from "../../lib/useBusy";
 import { Link, useSearchParams } from "react-router";
 import {
   apiDisconnectIntegration,
@@ -7,6 +8,7 @@ import {
   apiListIntegrations,
   apiListWebsites,
   apiStartGoogleConnect,
+  apiUnlinkSearchConsole,
   IntegrationRequired,
   type GoogleConfigStatus,
   type GscPropertyOption,
@@ -44,6 +46,7 @@ const LINK_ERRORS: Record<string, string> = {
 };
 
 export function SettingsIntegrations() {
+  const { busy, guard } = useBusy();
   const [params, setParams] = useSearchParams();
   const [integrations, setIntegrations] = useState<IntegrationRecord[] | null>(null);
   const [config, setConfig] = useState<GoogleConfigStatus | null>(null);
@@ -52,16 +55,28 @@ export function SettingsIntegrations() {
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [websitesError, setWebsitesError] = useState<string | null>(null);
+  const [confirmUnlink, setConfirmUnlink] = useState<string | null>(null);
+  const unlink = guard(async (websiteId: string, domain: string) => {
+    const r = await apiUnlinkSearchConsole(websiteId);
+    setConfirmUnlink(null);
+    setNotice(r.error ? { kind: "error", text: r.error.message } : { kind: "ok", text: `${domain} is no longer linked; its stored Search Console data was deleted.` });
+    if (!r.error) await load();
+  });
   const noticeRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     setError(null);
     try {
-      const [list, sites] = await Promise.all([apiListIntegrations(), apiListWebsites({ pageSize: 100 }).catch(() => null)]);
+      const [list, sites] = await Promise.all([
+        apiListIntegrations(),
+        apiListWebsites({ pageSize: 100 }).catch((e: Error) => ({ data: null, error: { code: "NETWORK_ERROR", message: e.message } })),
+      ]);
       if (list.error) throw new Error(list.error.message);
       setIntegrations(list.data ?? []);
       setConfig(list.meta?.googleSearchConsole ?? null);
-      setWebsites(sites?.data ?? []);
+      setWebsites(sites.data ?? []);
+      setWebsitesError(sites.error ? sites.error.message : null);
     } catch (cause) {
       setError(cause as Error);
     }
@@ -99,7 +114,7 @@ export function SettingsIntegrations() {
     }
   };
 
-  const disconnect = async (integration: IntegrationRecord) => {
+  const disconnect = guard(async (integration: IntegrationRecord) => {
     const r = await apiDisconnectIntegration(integration.id);
     setConfirmDisconnect(null);
     if (r.error) {
@@ -111,7 +126,7 @@ export function SettingsIntegrations() {
       text: `Disconnected ${integration.account_email ?? "the Google account"}. Stored Search Console data for its properties was deleted${r.data?.revokedAtGoogle ? " and access was revoked at Google" : "; revoking at Google failed, so also remove access at myaccount.google.com"}.`,
     });
     await load();
-  };
+  });
 
   if (error instanceof IntegrationRequired) return <IntegrationRequiredState feature="Integrations" />;
 
@@ -122,6 +137,7 @@ export function SettingsIntegrations() {
           <p className={`mb-4 rounded-lg border px-3 py-2 text-sm ${notice.kind === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-red-200 bg-red-50 text-red-800"}`}>{notice.text}</p>
         ) : null}
       </div>
+      {websitesError ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">Could not load your websites, so none can be linked right now: {websitesError}</p> : null}
       {error ? (
         <ErrorState title="Unable to load integrations" message={error.message} onRetry={load} />
       ) : !integrations || !config ? (
@@ -180,9 +196,18 @@ export function SettingsIntegrations() {
                   {integration.properties.length ? (
                     <ul className="mt-3 space-y-1 text-xs text-slate-700">
                       {integration.properties.map((p) => (
-                        <li key={p.websiteId}>
-                          <span className="font-600">{p.domain}</span> → <span className="font-mono">{p.siteUrl}</span>
-                          {p.status !== "active" ? <span className="ml-1 text-red-700">(access lost)</span> : null}
+                        <li key={p.websiteId} className="flex flex-wrap items-center gap-2">
+                          <span><span className="font-600">{p.domain}</span> → <span className="font-mono">{p.siteUrl}</span></span>
+                          {p.status !== "active" ? <span className="text-red-700">(access lost)</span> : null}
+                          {confirmUnlink === p.websiteId ? (
+                            <span role="group" aria-label={`Confirm unlinking ${p.domain}`} className="flex flex-wrap items-center gap-2">
+                              <span>Unlink and delete this website's stored Search Console data?</span>
+                              <button type="button" disabled={busy} onClick={() => void unlink(p.websiteId, p.domain)} className="rounded border border-red-300 px-2 py-0.5 font-600 text-red-700 disabled:opacity-50">Unlink and delete</button>
+                              <button type="button" disabled={busy} onClick={() => setConfirmUnlink(null)} className="underline">Cancel</button>
+                            </span>
+                          ) : (
+                            <button type="button" disabled={busy} onClick={() => setConfirmUnlink(p.websiteId)} className="underline">Unlink</button>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -192,7 +217,7 @@ export function SettingsIntegrations() {
                     {confirmDisconnect === integration.id ? (
                       <div className="flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="Confirm disconnect">
                         <span>Disconnect and delete this account's stored Search Console data?</span>
-                        <button type="button" onClick={() => void disconnect(integration)} className="rounded bg-red-700 px-2 py-1 font-700 text-white">Disconnect and delete</button>
+                        <button disabled={busy} type="button" onClick={() => void disconnect(integration)} className="rounded bg-red-700 px-2 py-1 font-700 text-white">Disconnect and delete</button>
                         <button type="button" onClick={() => setConfirmDisconnect(null)} className="text-slate-600">Cancel</button>
                       </div>
                     ) : (

@@ -3,6 +3,7 @@ import { createHashRouter as createBrowserRouter, redirect } from "react-router"
 import { Shell } from "./components/layout/Shell";
 import { RouteError } from "./components/ui/RouteError";
 import { resolveAuthRedirect } from "./services/auth";
+import { rememberReturnPath } from "./services/api";
 
 const LoginPage = lazy(() => import("./pages/auth/LoginPage").then(({ LoginPage }) => ({ default: LoginPage })));
 const Overview = lazy(() => import("./pages/Overview").then(({ Overview }) => ({ default: Overview })));
@@ -91,9 +92,16 @@ export const router = createBrowserRouter([
     path: "/",
     Component: Shell,
     errorElement: <RouteError />,
-    loader: () => {
+    loader: (args?: { request?: Request }) => {
       const target = resolveAuthRedirect("/", readToken());
-      if (target !== "/") return redirect(target);
+      if (target !== "/") {
+        // Signed out on a deep link: come back here after signing in.
+        if (args?.request) {
+          const url = new URL(args.request.url);
+          rememberReturnPath(url.pathname + url.search);
+        }
+        return redirect(target);
+      }
       return null;
     },
     children: [

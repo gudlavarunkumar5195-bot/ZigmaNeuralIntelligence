@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { AlertTriangle, ArrowRight, Bot, CircleDashed, Globe2, Play, Sparkles } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { apiCreateScan, apiGetDashboard, ApiCallError, DashboardData, IntegrationRequired, isAuthenticated } from "../services/api";
-import { useSelectedWebsiteId } from "../lib/selectedWebsite";
+import { setSelectedWebsiteId, useSelectedWebsiteId } from "../lib/selectedWebsite";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../components/ui/DataState";
 import { PageHeader } from "../components/ui/Card";
 import { KpiCard } from "../components/ui/Kpi";
@@ -39,7 +39,24 @@ export function Overview() {
       setStarting(false);
     }
   };
-  const load = async () => { setLoading(true); setError(null); try { if (!isAuthenticated()) { navigate("/login", { replace: true }); return; } const result = await apiGetDashboard(websiteId); if (result.error) throw new ApiCallError(0, result.error.code, result.error.message); setData(result.data); } catch (cause) { setError(cause as Error); } finally { setLoading(false); } };
+  // The API answers an unknown website id with the newest site; say so instead of silently switching.
+  const [replaced, setReplaced] = useState<{ to: string } | null>(null);
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    if (websiteId !== replaced?.to) setReplaced(null);
+    try {
+      if (!isAuthenticated()) { navigate("/login", { replace: true }); return; }
+      const result = await apiGetDashboard(websiteId);
+      if (result.error) throw new ApiCallError(result.error.status ?? 0, result.error.code, result.error.message);
+      const shown = result.data?.selectedWebsite?.id;
+      if (websiteId && shown && shown !== websiteId) {
+        setReplaced({ to: shown });
+        if (!searchParams.get("websiteId")) setSelectedWebsiteId(shown);
+      }
+      setData(result.data);
+    } catch (cause) { setError(cause as Error); } finally { setLoading(false); }
+  };
   useEffect(() => { void load(); }, [navigate, websiteId]);
   const trend = useMemo(() => data?.history.map((point) => ({ date: new Date(point.captured_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }), score: point.overall_score })) ?? [], [data]);
   if (loading) return <LoadingState label="Loading website intelligence…" />;
@@ -63,6 +80,7 @@ export function Overview() {
         {site.latest_scan_id && <button onClick={() => navigate(`/websites/scan/${site.latest_scan_id}`)} className={buttonClass("secondary", "md")}>Open latest scan</button>}
         <button disabled={!site.verified || starting} onClick={() => void startScan(site.id)} className={buttonClass("primary", "md")}><Play size={14} aria-hidden="true" />{starting ? "Starting…" : "New scan"}</button>
       </>} />
+    {replaced?.to === site.id ? <div className="mb-4"><Notice tone="warning">The website you had selected is no longer available, so this shows {site.domain}.</Notice></div> : null}
     {!site.verified && <div className="mb-4"><Notice tone="warning" action={<button onClick={() => navigate("/websites")} className={buttonClass("secondary", "sm")}>Go to websites</button>}>Verify ownership of this website before scanning.</Notice></div>}
     {scanError && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{scanError}</p>}
 

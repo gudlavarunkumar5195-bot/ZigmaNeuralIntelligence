@@ -136,3 +136,13 @@ describe("Overview KPIs", () => {
     expect(screen.getByText("up 5, better")).toBeTruthy();
   });
 });
+
+describe("Overview with a selection that no longer exists", () => {
+  it("says it is showing another website and replaces the shared selection", async () => {
+    sessionStorage.setItem("zn_selected_website", "deleted-site");
+    vi.mocked(api.apiGetDashboard).mockResolvedValue(dashboard([site()]) as never);
+    renderAt(<Overview />);
+    expect(await screen.findByText(/no longer available, so this shows one\.example/)).toBeTruthy();
+    expect(sessionStorage.getItem("zn_selected_website")).toBe("s1");
+  });
+});

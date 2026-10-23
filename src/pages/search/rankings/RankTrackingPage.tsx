@@ -3,7 +3,9 @@ import { useParams } from "react-router";
 import { PageHeader } from "../../../components/ui/Card";
 import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../../components/ui/DataState";
 import { RouteTabs } from "../../../components/ui/Primitives";
-import { apiRankCreateProject, apiRankProjects, apiRankSources, IntegrationRequired, type RankProject, type RankSources } from "../../../services/api";
+import { apiRankCreateProject, apiRankProjects, apiRankSources, apiRankUpdateProject, IntegrationRequired, type RankProject, type RankSources } from "../../../services/api";
+import { ConfirmDialog } from "../../../components/ui/Dialog";
+import { useBusy } from "../../../lib/useBusy";
 import { useWebsites } from "../research/shared";
 import { AlertsTab, CompetitorsTab, FeaturesTab, HistoryTab, ImportTab, KeywordsTab, OverviewTab, SourcesTab } from "./tabs";
 import { btn, btnPrimary, configLabel, input } from "./ui";
@@ -33,6 +35,9 @@ export function RankTrackingPage() {
   const [error, setError] = useState<Error | null>(null);
   const [projectId, setProjectId] = useState<string>("");
   const [creating, setCreating] = useState(false);
+  const { busy, guard } = useBusy();
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [projectMessage, setProjectMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -48,6 +53,15 @@ export function RankTrackingPage() {
     }
   }, []);
   useEffect(() => void load(), [load]);
+  const setStatus = guard(async (status: "active" | "paused" | "archived") => {
+    if (!projectId) return;
+    setProjectMessage(null);
+    const r = await apiRankUpdateProject(projectId, { status });
+    setConfirmArchive(false);
+    if (r.error) return setProjectMessage(r.error.message);
+    if (status === "archived") setProjectId("");
+    await load();
+  });
 
   if (error instanceof IntegrationRequired) return <IntegrationRequiredState feature="Rank tracking" />;
   if (error) return <ErrorState title="Unable to load rank tracking" message={error.message} onRetry={load} />;
@@ -78,7 +92,15 @@ export function RankTrackingPage() {
       ) : null}
       {projects.length === 0 ? null : !project ? <EmptyState title="Choose a project" /> : (
         <>
-          <p className="mb-3 text-xs text-slate-600">{configLabel(project)} · {project.frequency === "manual" ? "updated by imports" : `${project.frequency} tracking`} · time zone {project.timezone}</p>
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span>{configLabel(project)} · {project.frequency === "manual" ? "updated by imports" : `${project.frequency} tracking`} · time zone {project.timezone}{project.status === "paused" ? " · paused" : ""}</span>
+            <button type="button" className={btn} disabled={busy} onClick={() => void setStatus(project.status === "paused" ? "active" : "paused")}>{project.status === "paused" ? "Resume project" : "Pause project"}</button>
+            <button type="button" className={btn} disabled={busy} onClick={() => setConfirmArchive(true)}>Archive…</button>
+            {projectMessage ? <span role="alert" className="text-red-700">{projectMessage}</span> : null}
+          </div>
+          <ConfirmDialog open={confirmArchive} title={`Archive “${project.name}”?`} confirmLabel="Archive project" busy={busy}
+            description="The project leaves this list and any running collection stops. Its keywords and ranking history stay stored, but the app cannot reopen an archived project."
+            onCancel={() => setConfirmArchive(false)} onConfirm={() => void setStatus("archived")} />
           <RouteTabs label="Rank tracking sections" current={tab} tabs={RANK_TABS.map((t) => ({ id: t.id, label: t.label, to: t.id === "overview" ? "/search/rankings" : `/search/rankings/${t.id}` }))} />
           <div className="mt-5" key={project.id}>
             {tab === "overview" && <OverviewTab project={project} providerAvailable={providerAvailable} onChanged={load} />}

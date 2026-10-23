@@ -1,7 +1,7 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Network, AlertCircle, Loader, Eye, EyeOff } from "lucide-react";
-import { apiLogin, apiRegister, setToken } from "../../services/api";
+import { apiLogin, apiRegister, setToken, takeReturnPath } from "../../services/api";
 import { buttonClass } from "../../components/ui/styles";
 import { AuthLayout, authInput, authLabel } from "./AuthLayout";
 
@@ -18,15 +18,12 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const abortRef = useRef<AbortController | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
 
     try {
       if (mode === "login") {
@@ -40,7 +37,7 @@ export function LoginPage() {
           return;
         }
         setToken(result.data.token);
-        navigate("/", { replace: true });
+        navigate(takeReturnPath() ?? "/", { replace: true });
       } else {
         if (!orgName.trim()) {
           setError("Organization name is required.");
@@ -56,7 +53,7 @@ export function LoginPage() {
           return;
         }
         setToken(result.data.token);
-        navigate("/", { replace: true });
+        navigate(takeReturnPath() ?? "/", { replace: true });
       }
     } catch (err: unknown) {
       if ((err as Error).name !== "AbortError") {

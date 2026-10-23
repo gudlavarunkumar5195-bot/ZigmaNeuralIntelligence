@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiListResearchRuns, apiResearchCapabilities, apiRunResearch, IntegrationRequired, type ResearchCapabilities, type ResearchRun } from "../../services/api";
-import { EmptyState, ErrorState, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
+import { EmptyState, ErrorState, InlineError, IntegrationRequiredState, LoadingState } from "../../components/ui/DataState";
 import { errorText, ProviderNotice, useWebsites } from "./research/shared";
 import { RunView } from "./research/RunView";
 import { PageHeader } from "../../components/ui/Card";
@@ -15,6 +15,8 @@ export function CompetitorGapPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [active, setActive] = useState<{ id: string; reused: string | null } | null>(null);
   const [history, setHistory] = useState<ResearchRun[] | null>(null);
+  const [historyError, setHistoryError] = useState<{ message: string; status?: number } | null>(null);
+  const [historyTick, setHistoryTick] = useState(0);
 
   const loadCaps = () => {
     setCapsError(null);
@@ -29,8 +31,14 @@ export function CompetitorGapPage() {
   useEffect(() => {
     setActive(null);
     if (!websiteId) return;
-    apiListResearchRuns({ websiteId, kind: "gap", limit: 10 }).then((r) => setHistory(r.data ?? [])).catch(() => setHistory([]));
-  }, [websiteId]);
+    let live = true;
+    setHistory(null);
+    setHistoryError(null);
+    apiListResearchRuns({ websiteId, kind: "gap", limit: 10 })
+      .then((r) => { if (!live) return; if (r.error) setHistoryError(r.error); else setHistory(r.data ?? []); })
+      .catch((e: Error) => { if (live) setHistoryError({ message: e.message }); });
+    return () => { live = false; };
+  }, [websiteId, historyTick]);
 
   const provider = caps?.providers.find((p) => p.capabilities.includes("keyword_gap")) ?? null;
   const discovery = !!caps?.providers.some((p) => p.capabilities.includes("competitor_domains"));
@@ -106,7 +114,7 @@ export function CompetitorGapPage() {
 
       <section aria-labelledby="gap-history" className="mt-6">
         <h3 id="gap-history" className="text-sm font-700 text-slate-900">Previous comparisons</h3>
-        {!history ? <LoadingState label="Loading history…" /> : history.length === 0 ? <p className="mt-2 text-xs text-slate-600">None yet.</p> : (
+        {historyError ? <InlineError what="previous comparisons" error={historyError} onRetry={() => setHistoryTick((t) => t + 1)} /> : !history ? <LoadingState label="Loading history…" /> : history.length === 0 ? <p className="mt-2 text-xs text-slate-600">None yet.</p> : (
           <ul className="mt-2 space-y-1 text-xs">
             {history.map((h) => (
               <li key={h.id}>

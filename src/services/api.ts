@@ -9,6 +9,7 @@
  */
 
 import { config, IS_DEMO } from "../config/env"
+import { setSelectedWebsiteId } from "../lib/selectedWebsite"
 import type { ApiResponse, PageMeta } from "../types"
 
 // ─── Error Types ──────────────────────────────────────────────────────────────
@@ -114,6 +115,38 @@ export function clearToken(): void {
   storage?.removeItem("zn_active_org_id")
 }
 
+const RETURN_TO_KEY = "zn_return_to"
+
+/**
+ * Ends the session in this tab: the access token, the active organization and
+ * the selected website, so nothing scoped to the previous user or tenant is
+ * reused by the next sign-in. (The refresh cookie is cleared by /auth/logout.)
+ */
+export function clearSession(): void {
+  clearToken()
+  getSessionStorage()?.removeItem(RETURN_TO_KEY)
+  setSelectedWebsiteId(null)
+}
+
+/** A same-app path to return to after signing in (not a secret; never an absolute URL). */
+function safeReturnPath(path: string | null | undefined): string | null {
+  if (!path || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/login") || path.startsWith("/reset-password")) return null
+  return path
+}
+
+export function rememberReturnPath(path: string): void {
+  const safe = safeReturnPath(path)
+  if (safe && safe !== "/") getSessionStorage()?.setItem(RETURN_TO_KEY, safe)
+}
+
+/** Reads and forgets the remembered path. */
+export function takeReturnPath(): string | null {
+  const storage = getSessionStorage()
+  const path = safeReturnPath(storage?.getItem(RETURN_TO_KEY))
+  storage?.removeItem(RETURN_TO_KEY)
+  return path
+}
+
 export function isAuthenticated(): boolean {
   return !!getToken()
 }
@@ -129,55 +162,120 @@ export function buildRequestHeaders(baseHeaders: HeadersInit = {}): Headers {
 
 // ─── Base Fetch ───────────────────────────────────────────────────────────────
 
-async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<ApiResponse<T>> {
+const REQUEST_TIMEOUT_MS = 30_000
+const DOWNLOAD_TIMEOUT_MS = 120_000
+
+type FetchOptions = RequestInit & { timeoutMs?: number }
+
+let ambientSignal: AbortSignal | undefined
+
+/**
+ * Runs `start` so that the requests it starts synchronously (every API
+ * function issues its request before its first await) are cancelled when
+ * `signal` aborts. Pages use it through useApiQuery, so a superseded request
+ * is aborted on the network, not just ignored.
+ */
+export function withSignal<T>(signal: AbortSignal, start: () => Promise<T>): Promise<T> {
+  const previous = ambientSignal
+  ambientSignal = signal
+  try {
+    return start()
+  } finally {
+    ambientSignal = previous
+  }
+}
+
+const isAuthPath = (path: string) =>
+  path.startsWith("/auth/login") || path.startsWith("/auth/register") || path.startsWith("/auth/refresh")
+
+/**
+ * Every API request goes through here: bearer token and organization header,
+ * a timeout, caller cancellation, and one shared token refresh on 401. A 401
+ * that survives the refresh ends the session (remembering where the user was).
+ * Mutations are never retried except that single replay after a successful
+ * refresh: a 401 is returned before any handler runs, so nothing was applied.
+ */
+async function authorizedFetch(path: string, options: FetchOptions = {}): Promise<Response> {
   if (IS_DEMO || !config.apiBaseUrl) {
     throw new IntegrationRequired(path)
   }
-
   const url = `${config.apiBaseUrl}${path}`
+  const { timeoutMs = REQUEST_TIMEOUT_MS, signal: explicitSignal, ...init } = options
+  const callerSignal = explicitSignal ?? ambientSignal
+  const method = (init.method ?? "GET").toUpperCase()
 
   const send = async (): Promise<Response> => {
     const token = getToken()
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    const onAbort = () => controller.abort()
+    if (callerSignal?.aborted) controller.abort()
+    else callerSignal?.addEventListener("abort", onAbort, { once: true })
     try {
-      return await fetch(url, {
-        ...options,
-        credentials: "include",
-        headers: buildRequestHeaders({
-          ...(options.body ? { "Content-Type": "application/json" } : {}),
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...options.headers,
-        }),
+      const headers = buildRequestHeaders({
+        ...(init.body && !(typeof FormData !== "undefined" && init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       })
-    } catch (err: unknown) {
-      throw new ApiCallError(0, "NETWORK_ERROR", (err as Error).message)
+      // Caller headers may be a plain object, an array or a Headers instance.
+      new Headers(init.headers).forEach((value, key) => headers.set(key, value))
+      return await fetch(url, { ...init, signal: controller.signal, credentials: "include", headers })
+    } catch {
+      if (callerSignal?.aborted) throw new ApiCallError(0, "ABORTED", "The request was cancelled.")
+      if (timedOut) {
+        throw new ApiCallError(0, "TIMEOUT", method === "GET"
+          ? "The server did not respond in time. Try again."
+          : "The server did not respond in time. The change may still have been saved: refresh before trying again.")
+      }
+      throw new ApiCallError(0, "NETWORK_ERROR", "Could not reach the server. Check your connection and try again.")
+    } finally {
+      clearTimeout(timer)
+      callerSignal?.removeEventListener("abort", onAbort)
     }
   }
 
   let res = await send()
-
-  // Auto-refresh on 401 (single-flight; the retried response is handled by the
-  // normal path so a 403/404/500 after refresh is NOT treated as a logout).
-  const isAuthRequest =
-    path.startsWith("/auth/login") ||
-    path.startsWith("/auth/register") ||
-    path.startsWith("/auth/refresh")
-  if (res.status === 401 && !isAuthRequest) {
-    if (await tryRefreshToken()) {
-      res = await send()
+  if (res.status === 401 && !isAuthPath(path)) {
+    const outcome = await tryRefreshToken()
+    if (outcome === "unreachable") {
+      throw new ApiCallError(0, "NETWORK_ERROR", "Could not renew your session because the server is unreachable. Check your connection and try again.")
     }
-    if (res.status === 401) {
-      clearToken()
-      window.location.hash = "/login"
-      return {
-        data: null,
-        error: {
-          code: "UNAUTHORIZED",
-          message: "Session expired. Please sign in.",
-        },
-      }
+    if (outcome === "renewed") res = await send()
+    if (res.status === 401) endSession()
+  }
+  return res
+}
+
+/** The session cannot be renewed: clear tenant-scoped state and go to sign-in, remembering the page. */
+function endSession(): void {
+  const here = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : ""
+  // Several requests can fail at once: only the first one, made from the page
+  // the user was on, decides where to return; later ones keep that choice.
+  const alreadyEnded = here.startsWith("/login")
+  const keep = alreadyEnded ? getSessionStorage()?.getItem(RETURN_TO_KEY) ?? null : null
+  clearSession()
+  if (keep) getSessionStorage()?.setItem(RETURN_TO_KEY, keep)
+  else rememberReturnPath(here)
+  if (typeof window !== "undefined" && !alreadyEnded) window.location.hash = "/login"
+}
+
+const isAbort = (e: unknown) => e instanceof ApiCallError && e.code === "ABORTED"
+export { isAbort as isAbortedRequest }
+
+async function apiFetch<T>(
+  path: string,
+  options: FetchOptions = {},
+): Promise<ApiResponse<T>> {
+  const res = await authorizedFetch(path, options)
+  const requestId = res.headers.get("x-request-id") ?? undefined
+
+  if (res.status === 401 && !isAuthPath(path)) {
+    return {
+      data: null,
+      error: { code: "UNAUTHORIZED", message: "Session expired. Please sign in.", status: 401, requestId },
     }
   }
 
@@ -188,6 +286,10 @@ async function apiFetch<T>(
     } catch {
       // Non-JSON error body (proxy/gateway page): fall back to the HTTP status.
     }
+    const fallback =
+      res.status === 429 ? "Too many requests. Wait a moment and try again."
+      : res.status >= 500 ? `The server could not complete the request (HTTP ${res.status}). Try again later.`
+      : res.statusText || `Request failed (HTTP ${res.status})`
     return {
       data: null,
       error: {
@@ -195,7 +297,9 @@ async function apiFetch<T>(
         message:
           errorBody.error?.code === "PLATFORM_ADMIN_REQUIRED"
             ? "This changes platform-wide settings (shared by all organizations) and needs a platform administrator. Organization owners and admins cannot do this."
-            : errorBody.error?.message ?? res.statusText,
+            : errorBody.error?.message ?? fallback,
+        status: res.status,
+        requestId,
         ...(errorBody.error?.details && typeof errorBody.error.details === "object" && !Array.isArray(errorBody.error.details)
           ? { details: errorBody.error.details as Record<string, unknown> }
           : {}),
@@ -211,7 +315,7 @@ async function apiFetch<T>(
   } catch {
     return {
       data: null,
-      error: { code: "PARSE_ERROR", message: "Failed to parse response" },
+      error: { code: "PARSE_ERROR", message: "The server returned an unreadable response.", status: res.status, requestId },
     }
   }
   if (body && typeof body === "object" && "data" in body) {
@@ -222,9 +326,26 @@ async function apiFetch<T>(
   return { data: body as unknown as T, error: null }
 }
 
-let refreshInFlight: Promise<boolean> | null = null
+/**
+ * Authenticated file download (a bearer token cannot ride on a plain link).
+ * Same refresh and session handling as apiFetch; a transport failure becomes a
+ * readable error response so every download reports it instead of throwing.
+ */
+async function downloadResponse(path: string): Promise<Response> {
+  try {
+    return await authorizedFetch(path, { timeoutMs: DOWNLOAD_TIMEOUT_MS })
+  } catch (e) {
+    if (e instanceof IntegrationRequired) throw e
+    const message = e instanceof Error ? e.message : "The download failed."
+    return new Response(JSON.stringify({ error: { message } }), { status: 503, statusText: message, headers: { "content-type": "application/json" } })
+  }
+}
 
-function tryRefreshToken(): Promise<boolean> {
+type RefreshOutcome = "renewed" | "rejected" | "unreachable"
+const REFRESH_TIMEOUT_MS = 15_000
+let refreshInFlight: Promise<RefreshOutcome> | null = null
+
+function tryRefreshToken(): Promise<RefreshOutcome> {
   // Refresh tokens are single-use: concurrent 401s must share one refresh call.
   if (!refreshInFlight) {
     refreshInFlight = doRefreshToken().finally(() => {
@@ -234,22 +355,33 @@ function tryRefreshToken(): Promise<boolean> {
   return refreshInFlight
 }
 
-async function doRefreshToken(): Promise<boolean> {
-  if (!config.apiBaseUrl) return false
+/**
+ * "rejected": the server refused the refresh cookie, so the session is over.
+ * "unreachable": network failure, timeout or a 5xx; the session may still be
+ * valid, so the caller reports a connection error instead of signing out.
+ */
+async function doRefreshToken(): Promise<RefreshOutcome> {
+  if (!config.apiBaseUrl) return "rejected"
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS)
   try {
     const res = await fetch(`${config.apiBaseUrl}/auth/refresh`, {
       method: "POST",
       credentials: "include",
+      signal: controller.signal,
     })
-    if (!res.ok) return false
+    if (res.status >= 500) return "unreachable"
+    if (!res.ok) return "rejected"
     const body: { data?: { token?: string } } = await res.json()
     if (body.data?.token) {
       setToken(body.data.token)
-      return true
+      return "renewed"
     }
-    return false
+    return "rejected"
   } catch {
-    return false
+    return "unreachable"
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -291,9 +423,10 @@ export async function apiRegister(
 
 export async function apiLogout(): Promise<void> {
   if (!IS_DEMO && config.apiBaseUrl) {
+    // Best effort: the server clears the refresh cookie; the tab is signed out either way.
     await apiFetch("/auth/logout", { method: "POST" }).catch(() => {})
   }
-  clearToken()
+  clearSession()
 }
 
 export async function apiGetMe(): Promise<ApiResponse<{
@@ -301,6 +434,8 @@ export async function apiGetMe(): Promise<ApiResponse<{
   email: string
   orgIds: string[]
   isPlatformAdmin?: boolean
+  /** The caller's roles; the server enforces them on every write. */
+  memberships?: Array<{ orgId: string; role: "owner" | "admin" | "member" | "viewer" }>
 }>> {
   if (IS_DEMO) throw new IntegrationRequired("auth.me")
   return apiFetch("/auth/me")
@@ -496,23 +631,35 @@ export async function apiUpdateMonitoringRule(
     body: JSON.stringify(input),
   })
 }
+
+export interface MonitoringAlertRule {
+  id: string
+  monitoring_id: string
+  rule_type: string
+  enabled: boolean
+  threshold: number | null
+}
+
+export async function apiListMonitoringRules(id: string) {
+  return apiFetch<MonitoringAlertRule[]>(`/monitoring/${encodeURIComponent(id)}/rules`)
+}
 export async function apiGetAlert(id: string) {
   return apiFetch<MonitoringAlert>(
     `/monitoring/alert/${encodeURIComponent(id)}`,
   )
 }
 export async function apiAcknowledgeAlert(id: string) {
-  return apiFetch(`/monitoring/alerts/${encodeURIComponent(id)}/acknowledge`, {
+  return apiFetch<{ updated: boolean }>(`/monitoring/alerts/${encodeURIComponent(id)}/acknowledge`, {
     method: "POST",
   })
 }
 export async function apiResolveAlert(id: string) {
-  return apiFetch(`/monitoring/alerts/${encodeURIComponent(id)}/resolve`, {
+  return apiFetch<{ updated: boolean }>(`/monitoring/alerts/${encodeURIComponent(id)}/resolve`, {
     method: "POST",
   })
 }
 export async function apiDismissAlert(id: string) {
-  return apiFetch(`/monitoring/alerts/${encodeURIComponent(id)}/dismiss`, {
+  return apiFetch<{ updated: boolean }>(`/monitoring/alerts/${encodeURIComponent(id)}/dismiss`, {
     method: "POST",
   })
 }
@@ -538,12 +685,11 @@ export async function apiListWebsites(
 export async function apiAddWebsite(
   url: string,
   verificationMethod: string,
-  orgId?: string,
 ) {
   if (IS_DEMO) throw new IntegrationRequired("websites.add")
   return apiFetch("/websites", {
     method: "POST",
-    body: JSON.stringify({ url, verificationMethod, orgId }),
+    body: JSON.stringify({ url, verificationMethod }),
   })
 }
 
@@ -1108,7 +1254,7 @@ export async function apiResearchInsights(runId: string) {
 /** CSV export: an authenticated download (the bearer token cannot ride on a plain link). */
 export async function apiExportResearchCsv(runId: string): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("research.export")
-  const res = await fetch(`${config.apiBaseUrl}/keyword-research/runs/${encodeURIComponent(runId)}/export`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`/keyword-research/runs/${encodeURIComponent(runId)}/export`)
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -1135,6 +1281,28 @@ export async function apiCreateKeywordList(name: string) {
 export async function apiAddToKeywordList(listId: string, runId: string, keywords: string[]) {
   if (IS_DEMO) throw new IntegrationRequired("research.lists.add")
   return apiFetch<{ added: number }>(`/keyword-research/lists/${encodeURIComponent(listId)}/items`, { method: "POST", body: JSON.stringify({ runId, keywords }) })
+}
+
+export interface KeywordListDetail {
+  id: string
+  name: string
+  created_at: string
+  items: Array<{ keyword_key: string; keyword: string; source_run_id: string | null; added_at: string }>
+}
+
+export async function apiGetKeywordList(listId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("research.lists.get")
+  return apiFetch<KeywordListDetail>(`/keyword-research/lists/${encodeURIComponent(listId)}`)
+}
+
+export async function apiRemoveKeywordListItem(listId: string, keyword: string) {
+  if (IS_DEMO) throw new IntegrationRequired("research.lists.remove")
+  return apiFetch<null>(`/keyword-research/lists/${encodeURIComponent(listId)}/items${queryString({ keyword })}`, { method: "DELETE" })
+}
+
+export async function apiDeleteKeywordList(listId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("research.lists.delete")
+  return apiFetch<null>(`/keyword-research/lists/${encodeURIComponent(listId)}`, { method: "DELETE" })
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -1825,7 +1993,7 @@ export async function apiAdminRetryJob(kind: "gsc_sync" | "analytics_outbox", id
 /** Redacted diagnostic report as a file (authenticated download). */
 export async function apiAdminExportDiagnostics(): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("admin.diagnostics.export")
-  const res = await fetch(`${config.apiBaseUrl}/admin/diagnostics/export`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`/admin/diagnostics/export`)
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -2085,7 +2253,7 @@ export async function apiBacklinkVerification(websiteId: string, jobId: string) 
 /** CSV export: an authenticated download. */
 export async function apiBacklinkExport(websiteId: string, kind: "links" | "referring_domains" | "opportunities" | "changes", params: { subject?: string; competitors?: string } = {}): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("backlinks.export")
-  const res = await fetch(`${config.apiBaseUrl}${blPath(websiteId, `/export${queryString({ kind, ...params })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`${blPath(websiteId, `/export${queryString({ kind, ...params })}`)}`)
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -2358,7 +2526,7 @@ export async function apiRankAcknowledge(projectId: string, eventId: string) {
 }
 export async function apiRankExport(projectId: string, kind: "rankings" | "history" | "keywords"): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("rank.export")
-  const res = await fetch(`${config.apiBaseUrl}${rp(projectId, `/export${queryString({ kind })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`${rp(projectId, `/export${queryString({ kind })}`)}`)
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -2570,6 +2738,11 @@ export async function apiContentTopics(websiteId: string) {
   if (IS_DEMO) throw new IntegrationRequired("content.topics")
   return apiFetch<ContentTopic[]>(ct(websiteId, "/topics"))
 }
+
+export async function apiContentCreateTopic(websiteId: string, name: string) {
+  if (IS_DEMO) throw new IntegrationRequired("content.topics.create")
+  return apiFetch<ContentTopic>(ct(websiteId, "/topics"), jsonBody("POST", { name }))
+}
 export async function apiContentTopic(websiteId: string, topicId: string) {
   if (IS_DEMO) throw new IntegrationRequired("content.topic")
   return apiFetch<{ topic: { id: string; name: string; name_locked: boolean; terms: string[] }; coverage: null | { queryImpressions: number; queries: Array<{ query: string; impressions: number; clicks: number }>; pages: Array<{ pageId: string; url: string; title: string | null; covers: boolean }>; competitorGaps: Array<{ keyword: string; competitor: string; position: number; date: string }> }; members: Array<{ member_type: string; member_key: string; assignment: string; excluded: boolean }>; overlap: null | { pages: string[]; note: string } }>(ct(websiteId, `/topics/${encodeURIComponent(topicId)}`))
@@ -2608,7 +2781,7 @@ export async function apiContentBriefAi(websiteId: string, briefId: string, base
 }
 export async function apiContentExport(websiteId: string, kind: "pages" | "findings" | "opportunities", params: { status?: string; severity?: string } = {}): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("content.export")
-  const res = await fetch(`${config.apiBaseUrl}${ct(websiteId, `/export${queryString({ kind, ...params })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`${ct(websiteId, `/export${queryString({ kind, ...params })}`)}`)
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -2962,6 +3135,12 @@ export type AivWindow = { from?: string; to?: string; provider?: string; surface
 
 const aiv = (path = "") => `/ai-visibility${path}`
 const ab = (brandId: string, path = "") => aiv(`/brands/${encodeURIComponent(brandId)}${path}`)
+
+/** Re-runs brand and competitor matching over stored observations (after names or aliases change). */
+export async function apiAivReprocess(brandId: string) {
+  if (IS_DEMO) throw new IntegrationRequired("aiv.reprocess")
+  return apiFetch<{ reprocessed: number; remaining: number }>(ab(brandId, "/reprocess"), jsonBody("POST"))
+}
 const aj = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
 
 export async function apiAivProviders() {
@@ -3102,7 +3281,7 @@ export async function apiAivCreateAiSummary(brandId: string) {
 }
 export async function apiAivExport(brandId: string, kind: "observations" | "sources" | "metrics"): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("aiv.export")
-  const res = await fetch(`${config.apiBaseUrl}${ab(brandId, `/export${queryString({ kind })}`)}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`${ab(brandId, `/export${queryString({ kind })}`)}`)
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -3294,7 +3473,7 @@ export async function apiWsAiSummary(websiteId: string, range: WsRangeParams) {
 export async function apiWsDownload(websiteId: string, kind: { dataset: string } | { report: string[] }, range: WsRangeParams): Promise<{ blob: Blob; filename: string } | { error: string }> {
   if (IS_DEMO || !config.apiBaseUrl) throw new IntegrationRequired("workspace.export")
   const path = "dataset" in kind ? ws(websiteId, `/export${queryString({ ...wsRange(range), dataset: kind.dataset })}`) : ws(websiteId, `/report.md${queryString({ ...wsRange(range), sections: kind.report.join(",") })}`)
-  const res = await fetch(`${config.apiBaseUrl}${path}`, { credentials: "include", headers: buildRequestHeaders(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) })
+  const res = await downloadResponse(`${path}`)
   if (!res.ok) {
     let message = res.statusText
     try {

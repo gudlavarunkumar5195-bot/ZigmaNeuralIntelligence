@@ -8,7 +8,8 @@ import {
   apiListModels, apiGetModel, apiRefreshCatalog,
   type RegistryModel, type RegistryModelDetail,
 } from "../../services/api";
-import { IntegrationRequired } from "../../services/api";
+import { apiDisableModel, apiEnableModel, apiGetMe, IntegrationRequired } from "../../services/api";
+import { useBusy } from "../../lib/useBusy";
 
 // ─── Capability cell ──────────────────────────────────────────────────────────
 
@@ -48,18 +49,32 @@ function FreeChip({ status }: { status: string }) {
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 
-function ModelDetail({ id, onClose }: { id: string; onClose: () => void }) {
+function ModelDetail({ id, onClose, canManage, onChanged }: { id: string; onClose: () => void; canManage: boolean; onChanged: () => void }) {
+  const { busy, guard } = useBusy();
+  const [reason, setReason] = useState("");
+  const [toggleError, setToggleError] = useState("");
   const [detail, setDetail] = useState<RegistryModelDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const loadDetail = () => {
     setLoading(true);
     apiGetModel(id)
       .then((r) => { if (r.data) setDetail(r.data); else setError(r.error?.message ?? "Failed to load"); })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [id]);
+  };
+  useEffect(loadDetail, [id]);
+  // Platform-wide change (all organizations); the API also enforces platform admin.
+  const toggle = guard(async () => {
+    if (!detail) return;
+    setToggleError("");
+    const r = detail.enabled ? await apiDisableModel(id, reason.trim()) : await apiEnableModel(id);
+    if (r.error) return setToggleError(r.error.message);
+    setReason("");
+    loadDetail();
+    onChanged();
+  });
 
   if (loading) return (
     <div className="p-6 text-center text-sm text-slate-400">Loading model details…</div>
@@ -85,6 +100,21 @@ function ModelDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <button onClick={onClose} className="text-xs text-slate-400 hover:text-slate-600">Close ✕</button>
       </div>
 
+      {canManage ? (
+        <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-3 text-xs">
+          <span className="text-slate-600">{detail.enabled ? "Enabled for routing (all organizations)." : "Disabled for routing (all organizations)."}</span>
+          {detail.enabled ? (
+            <label className="text-slate-700">Reason (recorded in the audit log)
+              <input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+            </label>
+          ) : null}
+          <button type="button" disabled={busy || (detail.enabled && !reason.trim())} onClick={() => void toggle()}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-600 text-slate-800 hover:bg-slate-50 disabled:opacity-50">
+            {detail.enabled ? "Disable model" : "Enable model"}
+          </button>
+          {toggleError ? <span role="alert" className="text-red-700">{toggleError}</span> : null}
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
         <div>
           <div className="text-xs text-slate-500 mb-1">Eligibility</div>
@@ -208,6 +238,12 @@ export function ModelRegistry() {
   const [filter, setFilter] = useState<"all" | "eligible" | "free">("all");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState("");
+  // Only platform administrators may enable or disable models (shown only to them).
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  useEffect(() => {
+    if (IS_DEMO) return;
+    apiGetMe().then((r) => setIsPlatformAdmin(r.data?.isPlatformAdmin === true), () => setIsPlatformAdmin(false));
+  }, []);
 
   const load = () => {
     setLoading(true);
@@ -393,7 +429,7 @@ export function ModelRegistry() {
               </div>
 
               {expandedId === model.id && (
-                <ModelDetail id={model.id} onClose={() => setExpandedId(null)} />
+                <ModelDetail id={model.id} onClose={() => setExpandedId(null)} canManage={isPlatformAdmin} onChanged={load} />
               )}
             </Card>
           ))}
