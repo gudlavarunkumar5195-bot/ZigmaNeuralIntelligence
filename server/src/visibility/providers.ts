@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { getOxAlphaExecutor } from "../ai/ox-alpha.js";
-import { isModelCallable } from "../ai/budget.js";
+import { checkCallableModel, getExecutionSettings, paidModelsAllowed } from "../ai/governance.js";
 import type { ProviderCitation } from "../ai/provider.js";
 
 /**
@@ -93,7 +93,10 @@ export function buildMessages(req: Pick<AnswerRequest, "queryText" | "language" 
   ];
 }
 
-const answerModel = () => config.AIV_ANSWER_MODEL || config.OX_ALPHA_MODEL;
+// An explicitly configured model keeps measurements comparable over time; without one the
+// Phase 11 router picks an eligible free model per request (each observation records the model used).
+const pinnedAnswerModel = (): string | null => config.AIV_ANSWER_MODEL || config.OX_ALPHA_MODEL || null;
+const answerModel = (): string => pinnedAnswerModel() ?? "auto";
 
 function openRouterProvider(web: boolean): AnswerProvider {
   const info: ProviderInfo = {
@@ -129,20 +132,27 @@ function openRouterProvider(web: boolean): AnswerProvider {
     async readiness() {
       if (!getOxAlphaExecutor()) return { status: "not_configured", detail: "No OpenRouter API key is configured. An administrator can add it in Admin → Integrations & API Keys." };
       if (web && !config.AIV_WEB_SEARCH_ENABLED) return { status: "requires_approval", detail: "Web search is billed per request. An operator must approve the cost and set AIV_WEB_SEARCH_ENABLED=true." };
-      let callable = false;
+      if (web && !paidModelsAllowed()) return { status: "requires_approval", detail: "Web search is billed per request, and the AI router runs in free-only mode (AI_ALLOW_PAID_MODELS=false)." };
+      // Same call-time gate the executor applies (pricing class, trial, freshness, review status).
+      const pinned = pinnedAnswerModel();
+      if (!pinned) return { status: "available", detail: `Model chosen automatically among eligible free models${web ? ", with web search" : ""}.` };
+      let check: Awaited<ReturnType<typeof checkCallableModel>>;
       try {
-        callable = await isModelCallable(answerModel());
+        check = await checkCallableModel(pinned, await getExecutionSettings());
+        // (The organization's policy is applied again at call time by the executor.)
       } catch {
         return { status: "not_configured", detail: "The model registry could not be read." };
       }
-      if (!callable) return { status: "model_not_allowed", detail: `The model ${answerModel()} is not a verified free model and paid models are disabled.` };
+      if (!check.ok) return { status: "model_not_allowed", detail: `The model ${answerModel()} cannot be used: ${check.reason}.` };
       return { status: "available", detail: `Model ${answerModel()}${web ? " with web search" : ""}.` };
     },
     async answer(req) {
       const executor = getOxAlphaExecutor();
       if (!executor) throw new AnswerProviderError("PROVIDER_NOT_CONFIGURED", "No OpenRouter API key is configured.", false);
+      // Free requests never carry billed web search, so a web-grounded run needs paid usage enabled.
+      if (web && !paidModelsAllowed()) throw new AnswerProviderError("PROVIDER_NOT_AVAILABLE", "Web search is unavailable in free-only mode.", false);
       const r = await executor.execute({
-        model: answerModel(),
+        model: pinnedAnswerModel() ?? undefined,
         messages: buildMessages(req),
         temperature: 0.7,
         maxTokens: 1_500,
@@ -152,6 +162,7 @@ function openRouterProvider(web: boolean): AnswerProvider {
         signal: req.signal,
         webSearch: web ? { maxResults: config.AIV_WEB_SEARCH_MAX_RESULTS } : undefined,
         agentType: "ai_visibility_collection",
+        feature: "aiv_answer",
         taskDescription: "AI visibility query",
         orgId: req.orgId,
         aivBrandId: req.brandId,

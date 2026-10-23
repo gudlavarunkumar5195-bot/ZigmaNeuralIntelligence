@@ -133,7 +133,9 @@ const envSchema = z.object({
   // throw MODEL_UNAVAILABLE at execution time if it is absent.
   OPENROUTER_API_KEY: z.string().optional(),
   // Default model used by OX Alpha when no explicit model is specified.
-  OX_ALPHA_MODEL: z.string().default("meta-llama/llama-3.1-8b-instruct:free"),
+  // Optional pin. Empty (default): the Phase 11 router chooses an eligible free model per task.
+  // A pinned model is still re-validated (free/trial, fresh pricing) before every call.
+  OX_ALPHA_MODEL: z.string().trim().max(255).default(""),
   OX_ALPHA_TIMEOUT_MS: z.coerce.number().default(60_000),
   OX_ALPHA_MAX_RETRIES: z.coerce.number().default(3),
   OX_ALPHA_MAX_OUTPUT_TOKENS: z.coerce.number().default(4_096),

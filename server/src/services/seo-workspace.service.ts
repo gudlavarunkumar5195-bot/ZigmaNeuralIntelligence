@@ -1033,7 +1033,7 @@ export async function aiSummary(site: Site, range: DateRange, actorId: string) {
       { role: "user", content: `<data>${JSON.stringify(data)}</data>` },
     ],
     requireJson: true, maxTokens: 1_200, temperature: 0.2, maxRetries: 2,
-    agentType: "seo_workspace_summary", taskDescription: "SEO workspace summary", orgId: site.orgId, scanId: scan[0].id, userId: actorId,
+    agentType: "seo_workspace_summary", feature: "seo_workspace_summary", taskDescription: "SEO workspace summary", orgId: site.orgId, scanId: scan[0].id, userId: actorId,
   });
   if (!r.success || !r.response) throw new WorkspaceError(502, "AI_FAILED", "The AI summary did not complete. The deterministic summary is unaffected.");
   const v = validateWorkspaceSummary(r.parsedJson, new Set(Object.keys(sources)));

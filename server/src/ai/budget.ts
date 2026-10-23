@@ -46,8 +46,10 @@ export async function assertOrgAiBudget(organizationId: string): Promise<void> {
 export async function reserveOrgAiAttempt(
   organizationId: string,
   insertAttempt: (tx: Queryable) => Promise<string>,
+  /** Router settings may lower (never raise) the deployment's daily limit. */
+  settingsLimit?: number,
 ): Promise<string> {
-  const limit = aiDailyLimit();
+  const limit = settingsLimit !== undefined && Number.isFinite(settingsLimit) && settingsLimit >= 0 ? Math.min(aiDailyLimit(), Math.floor(settingsLimit)) : aiDailyLimit();
   return withTransaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`ai-budget:${organizationId}`]);
     const { rows } = await tx.query<{ count: string | number }>(
@@ -64,6 +66,8 @@ export async function reserveOrgAiAttempt(
 }
 
 /**
+ * Legacy check kept for compatibility; the executor uses the full Phase 11
+ * gate in governance.checkCallableModel (pricing class, trial, freshness).
  * Paid models stay disabled until pricing and spend limits are verified
  * (AI_ALLOW_PAID_MODELS=true). A model is callable only when the registry
  * records it as FREE; unknown models fail closed.

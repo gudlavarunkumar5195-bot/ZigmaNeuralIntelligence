@@ -89,11 +89,14 @@ describe.skipIf(!INTEGRATION)("AI search visibility (PostgreSQL + HTTP)", () => 
     db = await import("../db/client.js");
     svc = await import("../services/ai-visibility.service.js");
     A = await seedOrg(h, "aiv-a");
+    // Model health is global; start this model from a clean state.
+    await db.query("DELETE FROM ai_model_health WHERE openrouter_id = 'test/aiv-free-model'");
     B = await seedOrg(h, "aiv-b");
-    await db.query("INSERT INTO models (openrouter_id, display_name, provider, free_status) VALUES ('test/aiv-free-model', 'AIV test model', 'test', 'FREE') ON CONFLICT (openrouter_id) DO UPDATE SET free_status = 'FREE'");
+    await db.query("INSERT INTO models (openrouter_id, display_name, provider, free_status, status, eligibility_status, pricing_class, pricing_checked_at, supports_structured_output, context_length) VALUES ('test/aiv-free-model', 'AIV test model', 'test', 'FREE', 'AVAILABLE', 'ELIGIBLE', 'FREE', NOW(), TRUE, 32000) ON CONFLICT (openrouter_id) DO UPDATE SET free_status = 'FREE', status = 'AVAILABLE', eligibility_status = 'ELIGIBLE', pricing_class = 'FREE', pricing_checked_at = NOW(), supports_structured_output = TRUE, context_length = 32000");
     // The AI summary uses the platform default model; register it as free only if the registry lacks it.
     const { config } = await import("../config.js");
-    defaultModelInserted = ((await db.query("INSERT INTO models (openrouter_id, display_name, provider, free_status) VALUES ($1, 'default', 'test', 'FREE') ON CONFLICT (openrouter_id) DO NOTHING", [config.OX_ALPHA_MODEL])).rowCount ?? 0) > 0 ? config.OX_ALPHA_MODEL : null;
+    // OX_ALPHA_MODEL is an optional pin (empty by default: the router chooses).
+    if (config.OX_ALPHA_MODEL) defaultModelInserted = ((await db.query("INSERT INTO models (openrouter_id, display_name, provider, free_status, status, eligibility_status, pricing_class, pricing_checked_at) VALUES ($1, 'default', 'test', 'FREE', 'AVAILABLE', 'ELIGIBLE', 'FREE', NOW()) ON CONFLICT (openrouter_id) DO NOTHING", [config.OX_ALPHA_MODEL])).rowCount ?? 0) > 0 ? config.OX_ALPHA_MODEL : null;
   });
   afterAll(async () => {
     await cleanupOrgs([A?.id, B?.id].filter(Boolean) as string[]);

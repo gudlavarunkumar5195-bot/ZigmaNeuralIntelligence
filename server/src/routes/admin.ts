@@ -23,6 +23,7 @@ import { AdminError, listIntegrations, removeCredential, saveCredential, setCred
 import { EmailNotConfiguredError, emailDeliveryConfigured, sendPasswordResetEmail } from "../platform/mailer.js";
 import { changeRole, generateAccountCredentials, getUser, listUsers, revokeSessions, setUserActive } from "../platform/users.js";
 import { createPasswordResetToken } from "../services/auth.service.js";
+import { SentryTestError, isSentryEnabled, tagCurrentScope } from "../observability/sentry.js";
 
 /** The admin's own account must still be active (the token alone is not enough). */
 async function requireActiveAdmin(request: FastifyRequest, reply: FastifyReply) {
@@ -66,6 +67,17 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       .header("cache-control", "no-store")
       .header("content-disposition", `attachment; filename="zigmaneural-diagnostics-${data.generatedAt.slice(0, 19).replace(/[:T]/g, "-")}.json"`)
       .send(data);
+  });
+
+  // End-to-end Sentry check: throws a tagged error through the normal error
+  // handler so it is reported exactly like a real 5xx. Platform admins only.
+  fastify.get("/diagnostics/sentry-test", { preHandler, config: sensitive(2) }, async (request, reply) => {
+    if (!isSentryEnabled()) {
+      return reply.status(409).send({ error: { code: "SENTRY_DISABLED", message: "SENTRY_DSN is not configured on this instance." } });
+    }
+    await act(request, "admin_sentry_test_triggered", "success");
+    tagCurrentScope({ sentry_test: "true" });
+    throw new SentryTestError(request.id);
   });
 
   fastify.post("/diagnostics/jobs/:kind/:id/retry", { preHandler, config: sensitive(20) }, async (request, reply) => {

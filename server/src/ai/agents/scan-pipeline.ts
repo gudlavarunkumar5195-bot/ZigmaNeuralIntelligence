@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import { getRouterSettings } from "../router/settings.js";
 import { query } from "../../db/client.js";
 import { assessQuality } from "../quality/evaluator.js";
 import { loadEvidenceCheck } from "../quality/evidence-check.js";
-import { AI_SCAN_DEADLINE_MS, AI_STAGE_HEARTBEAT_MS, AI_STAGE_LEASE_MS, AiAbortedError, raceAbort, withDeadline } from "../limits.js";
+import { AI_SCAN_DEADLINE_MS, mapLimited, AI_STAGE_HEARTBEAT_MS, AI_STAGE_LEASE_MS, AiAbortedError, raceAbort, withDeadline } from "../limits.js";
 import { AiBudgetError, assertOrgAiBudget } from "../budget.js";
 import { runDiscovery } from "./discovery.js";
 import { agentExecutor } from "./executor.js";
@@ -135,7 +136,9 @@ async function runScanIntelligenceInner(input: {
   const allEvidence = [...new Map([...discovery.evidence, ...deterministicEvidence].map((record) => [record.evidenceId, record])).values()];
   const allEvidenceReferences = allEvidence.map((record) => record.evidenceId);
   const sharedContext = { discoveryPages: discovery.pages, deterministicFindings: input.deterministicFindings, deterministicEvidence, discoveryWarnings: discovery.warnings, evidenceState: "Canonical discovery and deterministic scanner evidence; external visibility and unavailable measurements are NOT_MEASURED." };
-  const settled = await Promise.all(SPECIALISTS.map(async (spec) => {
+  // Phase 11: specialists run with bounded parallelism (router settings), not all at once.
+  const { settings: routerSettings } = await getRouterSettings();
+  const settled = await mapLimited(SPECIALISTS, routerSettings.perTask.maxConcurrency, async (spec) => {
     const definition = getAgentDefinition(spec.agentType)!;
     const stageOwner = randomUUID();
     let stopHeartbeat: (() => void) | undefined;
@@ -160,7 +163,7 @@ async function runScanIntelligenceInner(input: {
     } finally {
       stopHeartbeat?.();
     }
-  }));
+  });
   if (signal.aborted) return abortedResult(discovery.pages.length, Object.fromEntries(settled) as Partial<Record<AgentType, AgentResult>>);
   const agentResults = Object.fromEntries(settled) as Partial<Record<AgentType, AgentResult>>;
   const successfulResults = settled.filter(([, result]) => result.status !== "FAILED");

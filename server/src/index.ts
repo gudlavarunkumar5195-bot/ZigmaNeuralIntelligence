@@ -6,6 +6,9 @@ import { startEventPipeline, stopEventPipeline } from "./analytics/events.js";
 import { closeAllScanStreams } from "./routes/scans.js";
 import { maybeRefreshPlatformCredentials, storedSecret } from "./platform/credential-store.js";
 import { testIntegration } from "./platform/integrations.js";
+import { startCatalogScheduler, stopCatalogScheduler } from "./ai/catalog.service.js";
+import { startAiRetention } from "./ai/retention.js";
+import { flushSentry } from "./observability/sentry.js";
 
 const CREDENTIAL_RELOAD_MS = 60_000;
 const CREDENTIAL_REVALIDATE_MS = 6 * 60 * 60_000;
@@ -42,6 +45,9 @@ async function start() {
   const workerTimer = startScanWorker(config.WORKER_POLL_INTERVAL_MS);
   // Durable analytics outbox dispatcher (independent of the scan worker loop).
   startEventPipeline();
+  // Phase 11: keep the free-model catalog (pricing, limits) fresh, and prune old AI governance records.
+  startCatalogScheduler();
+  startAiRetention();
 
   // Graceful shutdown
   let shuttingDown = false;
@@ -62,9 +68,11 @@ async function start() {
     // (or fail, if attempts are exhausted) anything still owned by this process.
     const summary = await stopScanWorker(config.SHUTDOWN_GRACE_MS);
     console.log(JSON.stringify({ event: "worker_shutdown", ...summary }));
+    stopCatalogScheduler();
     await app.close();
     await stopEventPipeline();
     await closePool();
+    await flushSentry(2_000);
     process.exit(0);
   };
 

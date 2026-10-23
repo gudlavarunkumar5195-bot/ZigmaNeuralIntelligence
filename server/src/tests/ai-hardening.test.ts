@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../config.js", () => ({ config: { OX_ALPHA_MODEL: "primary", OX_ALPHA_TIMEOUT_MS: 5_000, OX_ALPHA_MAX_RETRIES: 3, OX_ALPHA_MAX_OUTPUT_TOKENS: 4_096, OPENROUTER_API_KEY: "k", SCANNER_MAX_PAGES: 200, SCANNER_MAX_SCAN_DURATION_MS: 300_000, AI_MAX_EXECUTIONS_PER_ORG_PER_DAY: 3 } }));
 const queryMock = vi.hoisted(() => vi.fn());
-vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }) }));
+// Requests without an explicit model are routed (Phase 11); the router itself is covered by router tests.
+vi.mock("../ai/router/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ai/router/index.js")>()),
+  resolveRouting: async () => ({ id: "decision-1", status: "RESOLVED", selectedModel: { openrouterId: "primary" }, fallbackModels: [], excludedCandidates: [], decisionReason: "test routing" }),
+}));
+vi.mock("../db/client.js", async () => {
+  // Phase 11 governance tables get neutral answers; the model gate follows this file's "FROM models" answer.
+  const { governanceDb } = await import("./helpers/ai-governance-db.js");
+  const q = governanceDb((sql: string, params?: unknown[]) => (queryMock as unknown as (s: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>)(sql, params));
+  return { query: q, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: q }) };
+});
 vi.mock("../services/audit.service.js", () => ({ audit: vi.fn(async () => {}) }));
 const safeFetchMock = vi.hoisted(() => vi.fn());
 vi.mock("../scanner/fetch.js", () => ({ safeFetch: safeFetchMock }));

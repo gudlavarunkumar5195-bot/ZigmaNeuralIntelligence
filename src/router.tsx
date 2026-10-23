@@ -32,6 +32,7 @@ const ControlCenter = lazy(() => import("./pages/agents/ControlCenter").then(({ 
 const AgentRegistry = lazy(() => import("./pages/agents/AgentRegistry").then(({ AgentRegistry }) => ({ default: AgentRegistry })));
 const ModelRouter = lazy(() => import("./pages/agents/ModelRouter").then(({ ModelRouter }) => ({ default: ModelRouter })));
 const ModelRegistry = lazy(() => import("./pages/agents/ModelRegistry").then(({ ModelRegistry }) => ({ default: ModelRegistry })));
+const ModelIntelligence = lazy(() => import("./pages/agents/ModelIntelligence").then(({ ModelIntelligence }) => ({ default: ModelIntelligence })));
 const ModelBenchmarks = lazy(() => import("./pages/agents/ModelBenchmarks").then(({ ModelBenchmarks }) => ({ default: ModelBenchmarks })));
 const Instructions = lazy(() => import("./pages/agents/Instructions").then(({ Instructions }) => ({ default: Instructions })));
 const QualityControl = lazy(() => import("./pages/agents/QualityControl").then(({ QualityControl }) => ({ default: QualityControl })));
@@ -138,6 +139,8 @@ export const router = createBrowserRouter([
       { path: "agents/agent-registry", Component: AgentRegistry },
       { path: "agents/model-router", Component: ModelRouter },
       { path: "agents/model-registry", Component: ModelRegistry },
+      { path: "agents/model-intelligence", Component: ModelIntelligence },
+      { path: "agents/model-intelligence/:tab", Component: ModelIntelligence },
       { path: "agents/model-benchmarks", Component: ModelBenchmarks },
       { path: "agents/instructions", Component: Instructions },
       { path: "agents/evidence", Component: Evidence },

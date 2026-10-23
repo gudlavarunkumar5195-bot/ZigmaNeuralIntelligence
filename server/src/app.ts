@@ -27,6 +27,7 @@ import { seoWorkspaceRoutes } from "./routes/seo-workspace.js";
 import { scanRoutes } from "./routes/scans.js";
 import { modelRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
+import { aiRouterRoutes } from "./routes/ai-router.js";
 import { agentRoutes } from "./routes/agents.js";
 import { instructionRoutes } from "./routes/instructions.js";
 import { evidenceRoutes } from "./routes/evidence.js";
@@ -37,6 +38,8 @@ import { reportRoutes } from "./routes/reports.js";
 import { crossDomainRoutes } from "./routes/cross-domain.js";
 import { monitoringRoutes } from "./routes/monitoring.js";
 import { sanitizeLoggedUrl } from "./http/log-redaction.js";
+import { registerSentry } from "./observability/fastify.js";
+import { sentryCspConnectSource } from "./observability/csp.js";
 
 // server/src (tsx) or server/dist (built) -> ../../dist is the Vite artifact.
 const FRONTEND_DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist");
@@ -45,7 +48,11 @@ export async function buildApp() {
   const fastify = Fastify({
     logger: {
       level: config.NODE_ENV === "production" ? "info" : "debug",
-      redact: ["req.headers.authorization", "req.headers.cookie", "res.headers[\"set-cookie\"]"],
+      redact: [
+        "req.headers.authorization", "req.headers.cookie", "req.headers[\"x-api-key\"]", "res.headers[\"set-cookie\"]",
+        "body.password", "body.token", "body.apiKey", "body.secret",
+        "req.body.password", "req.body.token", "req.body.apiKey", "req.body.secret",
+      ],
       // OAuth callbacks carry a one-time code and state in the query string.
       serializers: {
         req: (req: { method?: string; url?: string; hostname?: string; ip?: string; id?: string }) => ({
@@ -61,6 +68,9 @@ export async function buildApp() {
     // request.ip is the socket address and X-Forwarded-For is ignored.
     trustProxy: toFastifyTrustProxy(config.TRUST_PROXY),
   });
+
+  // Sentry error reporting + per-request tags (no-op without SENTRY_DSN).
+  registerSentry(fastify);
 
   // ─── Plugins ─────────────────────────────────────────────────────────────────
 
@@ -93,6 +103,8 @@ export async function buildApp() {
     keyGenerator: (request) => request.ip,
   });
 
+  const cspConnectExtra = sentryCspConnectSource();
+
   // Attach requestId to every response
   fastify.addHook("onSend", async (request, reply) => {
     reply.header("x-request-id", request.id);
@@ -102,7 +114,7 @@ export async function buildApp() {
     reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     reply.header(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:${cspConnectExtra}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
     );
     if (config.NODE_ENV === "production") {
       reply.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
@@ -132,6 +144,7 @@ export async function buildApp() {
   await fastify.register(scanRoutes, { prefix: "/api/v1/scans" });
   await fastify.register(modelRoutes, { prefix: "/api/v1/models" });
   await fastify.register(routingRoutes, { prefix: "/api/v1/routing" });
+  await fastify.register(aiRouterRoutes, { prefix: "/api/v1/ai" });
   await fastify.register(agentRoutes, { prefix: "/api/v1/agents" });
   await fastify.register(instructionRoutes, { prefix: "/api/v1" });
   await fastify.register(evidenceRoutes, { prefix: "/api/v1" });

@@ -43,7 +43,8 @@ async function login(app: Awaited<ReturnType<typeof appWith>>, xff: string | und
   });
 }
 
-describe("rate limiting behind a proxy (F-012)", () => {
+// Each test builds the whole app (a cold import now includes the Sentry SDK), which can exceed the default 5s under a parallel suite.
+describe("rate limiting behind a proxy (F-012)", { timeout: 30_000 }, () => {
   afterEach(() => {
     delete process.env.TRUST_PROXY;
     vi.resetModules();

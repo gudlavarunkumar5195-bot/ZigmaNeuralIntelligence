@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../config.js", () => ({ config: { OX_ALPHA_MODEL: "primary", OX_ALPHA_TIMEOUT_MS: 5_000, OX_ALPHA_MAX_RETRIES: 50, OX_ALPHA_MAX_OUTPUT_TOKENS: 4_096, OPENROUTER_API_KEY: "k" } }));
 const queryMock = vi.hoisted(() => vi.fn());
-vi.mock("../db/client.js", () => ({ query: queryMock, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: queryMock }) }));
+// Requests without an explicit model are routed (Phase 11); the router itself is covered by router tests.
+vi.mock("../ai/router/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ai/router/index.js")>()),
+  resolveRouting: async () => ({ id: "decision-1", status: "RESOLVED", selectedModel: { openrouterId: "primary" }, fallbackModels: [], excludedCandidates: [], decisionReason: "test routing" }),
+}));
+vi.mock("../db/client.js", async () => {
+  // Phase 11 governance tables get neutral answers; the model gate follows this file's "FROM models" answer.
+  const { governanceDb } = await import("./helpers/ai-governance-db.js");
+  const q = governanceDb((sql: string, params?: unknown[]) => (queryMock as unknown as (s: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>)(sql, params));
+  return { query: q, withTransaction: async (fn: (tx: unknown) => unknown) => fn({ query: q }) };
+});
 vi.mock("../services/audit.service.js", () => ({ audit: vi.fn(async () => {}) }));
 const executeMock = vi.hoisted(() => vi.fn());
 vi.mock("../ai/agents/executor.js", () => ({ agentExecutor: { execute: executeMock } }));
@@ -15,6 +25,7 @@ import { ProviderError } from "../ai/provider.js";
 import type { ModelProvider, ModelResponse } from "../ai/provider.js";
 import { AI_AGENT_DEADLINE_MS, AI_MAX_ATTEMPTS_PER_MODEL, AI_MAX_TOTAL_ATTEMPTS, AiDeadlineError, effectiveMaxTotalAttempts, withDeadline } from "../ai/limits.js";
 import { runScanIntelligence, startStageHeartbeat } from "../ai/agents/scan-pipeline.js";
+import { DEFAULT_ROUTER_SETTINGS } from "../ai/router/settings.js";
 
 const ok = (content = "{}"): ModelResponse => ({ executionId: "x", model: "m", provider: "mock", content, finishReason: "stop", usage: null, durationMs: 1 });
 const provider = (impl: (model: string) => Promise<ModelResponse>): ModelProvider & { calls: string[] } => {
@@ -42,7 +53,8 @@ describe("bounded AI attempts (F-010)", () => {
     const promise = new OxAlphaExecutor(p).execute({ ...req, maxRetries: 1000, maxTotalAttempts: 100 });
     await vi.runAllTimersAsync();
     await promise;
-    expect(p.calls.length).toBe(AI_MAX_ATTEMPTS_PER_MODEL);
+    // Phase 11: the router settings lower the per-model ceiling (default 2) to save the free daily allowance.
+    expect(p.calls.length).toBe(Math.min(AI_MAX_ATTEMPTS_PER_MODEL, DEFAULT_ROUTER_SETTINGS.perTask.maxRetriesPerModel));
   });
   it("honours a lower policy max_attempts but clamps a higher one", () => {
     expect(effectiveMaxTotalAttempts(2)).toBe(2);

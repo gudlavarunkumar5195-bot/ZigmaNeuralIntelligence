@@ -94,7 +94,7 @@ export async function generateInsights(orgId: string, runId: string, userId: str
     orgId,
     researchRunId: runId,
     userId,
-    agentType: "KEYWORD_PRIORITIZATION",
+    agentType: "KEYWORD_PRIORITIZATION", feature: "research_insights",
     taskDescription: "Prioritize keyword research results",
   });
   const keyMap = new Map(rows.map((r) => [r.keyword_key, r.keyword]));

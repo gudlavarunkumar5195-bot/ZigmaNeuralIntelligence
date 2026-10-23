@@ -20,6 +20,16 @@ export const TASK_TYPES = [
   "REPORT_SYNTHESIS",
   "EVIDENCE_SUMMARIZATION",
   "STRUCTURED_EXTRACTION",
+  // Phase 11 router categories (see task-profiles.ts)
+  "CLASSIFICATION",
+  "SUMMARIZATION",
+  "CONTENT_GENERATION",
+  "TECHNICAL_REASONING",
+  "RESEARCH_SYNTHESIS",
+  "PLANNING",
+  "AGENT_COORDINATION",
+  "TOOL_USE",
+  "VERIFICATION",
 ] as const;
 
 export type TaskType = (typeof TASK_TYPES)[number];
@@ -65,6 +75,9 @@ export interface TaskRequirements {
   preferredModelId?: string;       // openrouter_id; preference only, not enforced
   maximumLatencyMs?: number;
   orgId?: string;                  // for org-level preferences lookup
+  // Phase 11: size of the request, so models that cannot hold it are excluded before ranking.
+  estimatedInputTokens?: number;
+  desiredOutputTokens?: number;
 }
 
 // ─── Scoring weights ──────────────────────────────────────────────────────────
@@ -108,7 +121,18 @@ export type ExclusionReason =
   | "PROVIDER_EXCLUDED"
   | "EXPLICITLY_EXCLUDED"
   | "BELOW_MIN_RELIABILITY"
-  | "BELOW_MIN_QUALITY";
+  | "BELOW_MIN_QUALITY"
+  // Phase 11 gates
+  | "ROUTER_ALIAS"
+  | "NON_TEXT_OUTPUT"
+  | "PRICING_PAID"
+  | "PRICING_UNKNOWN"
+  | "TRIAL_DISABLED"
+  | "TRIAL_EXPIRED"
+  | "QUOTA_EXHAUSTED"
+  | "COOLING_DOWN"
+  | "CATALOG_STALE"
+  | "OUTPUT_LIMIT_TOO_LOW";
 
 export interface ExcludedCandidate {
   openrouterId: string;
@@ -139,12 +163,20 @@ export interface ScoredCandidate {
     latency: ScoreComponent;
     context: ScoreComponent;
     preference: ScoreComponent;
+    // Phase 11 components
+    availability?: ScoreComponent;
+    resourceFit?: ScoreComponent;
+    security?: ScoreComponent;
   };
+  /** Phase 11: pricing class at decision time. */
+  pricingClass?: "FREE" | "TRIAL" | "PAID" | "UNKNOWN";
+  /** Phase 11: chosen as a bounded exploration of a low-confidence candidate. */
+  exploration?: boolean;
 }
 
 // ─── Routing decision ─────────────────────────────────────────────────────────
 
-export type DecisionSource = "DETERMINISTIC" | "OX_ALPHA" | "FALLBACK";
+export type DecisionSource = "DETERMINISTIC" | "OX_ALPHA" | "FALLBACK" | "PINNED" | "EXPLORATION";
 export type RoutingStatus = "RESOLVED" | "NO_CANDIDATES" | "ERROR";
 
 export interface RoutingDecision {
@@ -173,6 +205,9 @@ export interface RoutingDecision {
   // Timestamps
   createdAt: string;
   errorMessage?: string;
+  /** Phase 11 */
+  taskRunId?: string;
+  feature?: string;
 }
 
 // ─── Routing policy (DB shape) ────────────────────────────────────────────────

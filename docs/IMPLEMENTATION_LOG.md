@@ -316,3 +316,15 @@ Branch `feat/p10-production-readiness`, from `main` after PR #14. Not deployed; 
   - 1136 server (new: production-hardening and session-hardening integration, crypto tag, pooler detection);
   - 24 real-API E2E (new accessibility spec);
   - 5 smoke.
+
+# Phase 11: Autonomous free-model router, Sentry and DigitalOcean hardening
+
+- Branch `feat/p11-ai-router`. Design, rules and verification: `docs/production-readiness/PHASE-11-AI-ROUTER.md`.
+- **Catalog:** full pricing classification (FREE, TRIAL, PAID, UNKNOWN), scheduled refresh, and auto-approval of verified free text models. Free requests carry `provider.max_price = 0`.
+- **Execution:** the executor is now a fallback state machine with call-time gates, approximate token planning (context fit and reduction), and atomic reservation of org requests, account free/trial quota with pace, and org and task tokens. Settlement uses provider usage, or a labelled estimate.
+- **Fallback:** failures are classified, with cooldowns and `Retry-After` honoured. Safety refusals stop the task.
+- **Learning:** deterministic evaluations and user feedback feed a decayed Bayesian quality estimate with minimum-sample rules.
+- **Security:** a prompt-injection detector, an output guard with a canary, a tool registry with argument-bound approvals, and a bounded agent supervisor.
+- **Database:** migration 041 (additive).
+- **API:** `/api/v1/ai/*`.
+- **Observability:** Sentry for errors, traces and logs (server and browser; does nothing without a DSN); DigitalOcean alerts and env in `app.yaml`. Setup: `docs/production-readiness/OBSERVABILITY-SENTRY.md`.

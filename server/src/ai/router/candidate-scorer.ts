@@ -294,7 +294,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export function getDataStatus(candidates: ScoredCandidate[], component: keyof ScoredCandidate["components"]): DataStatus {
-  const statuses = candidates.map((c) => c.components[component].status);
+  const statuses = candidates.map((c) => c.components[component]?.status ?? "UNKNOWN");
   if (statuses.every((s) => s === "KNOWN")) return "KNOWN";
   if (statuses.every((s) => s === "UNKNOWN")) return "UNKNOWN";
   return "INSUFFICIENT";

@@ -82,3 +82,19 @@ Names only, never values. Source of truth: `server/src/config.ts` (validated at 
 - **Instances:** 1 × `basic-xxs`. Workers run inside the web process and claim jobs with `FOR UPDATE SKIP LOCKED` and leases, so a second instance is safe, but every instance runs the full worker loop (open finding DB-06).
 - **Monitoring:** none configured. There is no metrics or alerting pipeline: logs are JSON on stdout, with a request id per request. Configure a log drain and alerts on 5xx rate, `/ready` failures, `job dead`/`DEAD` outbox rows and `shutdown_forced_exit`.
 - **Email delivery:** not configured. Password-reset links cannot be sent until a provider is added (`server/src/platform/mailer.ts`).
+
+## 6. Phase 11: AI router (migration 041)
+
+1. **Back up first** (step 1.1). Migration 041 is additive: new `ai_*` tables, new nullable columns, and two partial indexes on `agent_executions`. On a large production `agent_executions` table, create those two indexes `CONCURRENTLY` by hand first, as in step 1.3:
+   ```sql
+   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_executions_attempt_time ON agent_executions (started_at) WHERE execution_kind = 'MODEL_ATTEMPT';
+   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_executions_model_time ON agent_executions (model_id, started_at DESC) WHERE execution_kind = 'MODEL_ATTEMPT';
+   ```
+2. **Existing model rows** have `pricing_class = 'UNKNOWN'` until the first catalog refresh. Until then the router refuses them: it fails closed and makes no AI calls. The web process refreshes the catalog at start. To force a refresh, use Admin → Model Registry → Refresh catalog. Then check Admin → Model Intelligence → Overview, which should show a FREE count above 0 and "fresh".
+3. Keep `AI_ALLOW_PAID_MODELS=false` and `AI_ROUTER_LLM_ENABLED=false` (both are in `app.yaml`).
+4. `OX_ALPHA_MODEL` is now an optional pin. Leave it empty so the router chooses. Any pinned model is still re-validated as free before each call.
+5. **Quota:** with fewer than 10 credits ever purchased, OpenRouter allows 50 free requests per day per account. The setting defaults to 50 and is lowered automatically to the provider's own figure, synced from `GET /api/v1/key`.
+6. **Post-deploy:**
+   - Run Admin → Model Intelligence → Feasibility check for "content_brief"; it should report FEASIBLE once the catalog is fresh.
+   - Run one content-brief suggestion and confirm the task appears under Routing & tasks with provider-reported usage and cost 0.
+7. **Rollback:** the previous build runs with 041 applied, because the new columns are nullable and the new tables are unused by old code.

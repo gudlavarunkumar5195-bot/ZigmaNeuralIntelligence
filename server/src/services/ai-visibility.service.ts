@@ -1420,7 +1420,7 @@ export async function createAiSummary(orgId: string, brand: BrandRow, actorId: s
       { role: "user", content: `<data>${input}</data>` },
     ],
     requireJson: true, maxTokens: 1_500, temperature: 0.2, maxRetries: 2,
-    agentType: "ai_visibility_analysis", taskDescription: "AI visibility summary", orgId, aivBrandId: brand.id, userId: actorId,
+    agentType: "ai_visibility_analysis", feature: "aiv_summary", taskDescription: "AI visibility summary", orgId, aivBrandId: brand.id, userId: actorId,
   });
   if (!r.success || !r.response) throw new VisibilityError(502, "AI_FAILED", "The AI analysis did not complete. Measured metrics are unaffected.");
   const v = validateAiSummary(r.parsedJson, new Set(sample.map((s) => s.id)), new Set(hosts));

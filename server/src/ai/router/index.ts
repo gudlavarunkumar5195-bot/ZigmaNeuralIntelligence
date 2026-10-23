@@ -14,9 +14,14 @@ import { query } from "../../db/client.js";
 import { getEligibleModels } from "../registry.service.js";
 import type { ModelRow, BenchmarkRow, ReliabilityRow } from "../registry.service.js";
 import { getOxAlphaExecutor } from "../ox-alpha.js";
-import { filterCandidates } from "./candidate-filter.js";
-import { scoreCandidates, calculateRoutingConfidence } from "./candidate-scorer.js";
+import { filterCandidates, type GateContext } from "./candidate-filter.js";
+import { calculateRoutingConfidence } from "./candidate-scorer.js";
 import { getActivePolicy } from "./routing-policy.js";
+import { getRouterSettings } from "./settings.js";
+import { classifyTask, riskForCategory } from "./task-profiles.js";
+import { loadModelStats, type ModelStats } from "./learning.js";
+import { pickExploration, scoreCandidatesV2 } from "./scoring-v2.js";
+import { getModelHealth, getPoolStatus, isCoolingDown, type ModelHealth } from "../quota.js";
 import type {
   TaskRequirements,
   RoutingDecision,
@@ -36,13 +41,16 @@ export interface ResolveRoutingOptions {
   scanId?: string;
   /** When true: run filter + score but do NOT call OX Alpha and do NOT persist. */
   simulate?: boolean;
+  /** Phase 11: product feature making the call, and the task run it belongs to. */
+  feature?: string;
+  taskRunId?: string;
 }
 
 export async function resolveRouting(
   opts: ResolveRoutingOptions
 ): Promise<RoutingDecision> {
   const startMs = Date.now();
-  const { requirements, correlationId, taskId, agentId, orgId, scanId, simulate = false } = opts;
+  const { requirements, correlationId, orgId, scanId, simulate = false } = opts;
 
   // Merge org-level requirements (freeOnly etc.) from policy
   const policy = await getActivePolicy(orgId ?? requirements.orgId);
@@ -63,17 +71,68 @@ export async function resolveRouting(
     allowedProviders: requirements.allowedProviders ?? policy.allowedProviders ?? undefined,
   };
 
+  // Phase 11: router settings, task profile and live gates (pricing, quota, health, size).
+  const { settings } = await getRouterSettings();
+  const profile = classifyTask({ taskType: effectiveReq.taskType, feature: opts.feature });
+  effectiveReq.excludedModels = [...(effectiveReq.excludedModels ?? []), ...settings.models.excluded];
+  effectiveReq.desiredOutputTokens = effectiveReq.desiredOutputTokens ?? profile.desiredOutputTokens;
+
   // ── Load candidate pool ───────────────────────────────────────────────────
   // getEligibleModels applies basic eligibility; filterCandidates applies hard constraints.
   const allModels = await getEligibleModels({
     freeOnly: effectiveReq.freeOnly,
   });
 
-  // Load reliability and benchmark data for scoring
-  const [reliabilityMap, benchmarkMap] = await loadScoringData(allModels.map((m) => m.id));
+  // Load reliability data (minimum-reliability gate) and live health/quota state
+  const [reliabilityMap] = await loadScoringData(allModels.map((m) => m.id));
+  const now = new Date();
+  const health: Map<string, ModelHealth> = await getModelHealth(allModels.map((m) => m.openrouter_id)).catch((err: unknown) => {
+    logRouterError("router.health_load_failed", err);
+    return new Map<string, ModelHealth>();
+  });
+  const pools = await getPoolStatus(settings, now).catch((err: unknown) => {
+    // Unknown quota state: treat the pools as empty rather than risk a refused or charged call.
+    logRouterError("router.quota_load_failed", err);
+    return null;
+  });
+  const freePool = pools?.find((p) => p.pool === "FREE");
+  const trialPool = pools?.find((p) => p.pool === "TRIAL");
+  const gates: GateContext = {
+    paidAllowed,
+    trialsEnabled: settings.trials.enabled,
+    freePoolRemaining: freePool?.remaining ?? 0,
+    trialPoolRemaining: trialPool?.remaining ?? 0,
+    maxStaleHours: settings.catalog.maxStaleHours,
+    coolingDown: new Set([...health.values()].filter((h) => isCoolingDown(h, now)).map((h) => h.openrouterId)),
+    now,
+    minOutputTokens: profile.minOutputTokens,
+  };
 
   // ── Hard-constraint filter (deterministic) ────────────────────────────────
-  const { eligible, excluded } = filterCandidates(allModels, effectiveReq, reliabilityMap);
+  const filtered = filterCandidates(allModels, effectiveReq, reliabilityMap, gates);
+  const excluded = filtered.excluded;
+  let eligible = filtered.eligible;
+
+  // ── Learned statistics; a minimum quality only excludes on sufficient evidence ──
+  const num = (v: unknown) => { const n = Number(v); return v === null || v === undefined || !Number.isFinite(n) ? null : n; };
+  const stats: Map<string, ModelStats> = await loadModelStats({
+    models: eligible.map((m) => ({ openrouterId: m.openrouter_id, benchmarks: { intelligence: num(m.benchmark_intelligence), coding: num(m.benchmark_coding), agentic: num(m.benchmark_agentic) } })),
+    category: profile.category,
+    focus: profile.benchmark,
+    halfLifeDays: settings.quality.halfLifeDays,
+    minSamples: settings.quality.minSamples,
+  }).catch((err: unknown) => {
+    logRouterError("router.stats_load_failed", err);
+    return new Map<string, ModelStats>();
+  });
+  eligible = eligible.filter((m) => {
+    const q = stats.get(m.openrouter_id)?.quality;
+    if (q && q.status === "KNOWN" && q.value < settings.quality.minQualityScore) {
+      excluded.push({ openrouterId: m.openrouter_id, displayName: m.display_name, reason: "BELOW_MIN_QUALITY", detail: `Measured quality ${q.value} < ${settings.quality.minQualityScore} (${q.samples} evaluations)` });
+      return false;
+    }
+    return true;
+  });
 
   if (eligible.length === 0) {
     const decision = buildDecision({
@@ -92,6 +151,8 @@ export async function resolveRouting(
       policyId: policy.id,
       policyVersion: policy.version,
       error: "No candidates passed eligibility filters",
+      taskRunId: opts.taskRunId,
+      feature: opts.feature,
     });
     decision.maxAttempts = policy.maxAttempts;
     if (!simulate) await persistDecision(decision);
@@ -99,18 +160,38 @@ export async function resolveRouting(
   }
 
   // ── Candidate scoring ─────────────────────────────────────────────────────
-  const scored = scoreCandidates(eligible, effectiveReq, benchmarkMap, reliabilityMap, policy.weights);
+  const scored = scoreCandidatesV2({
+    models: eligible,
+    requirements: effectiveReq,
+    profile,
+    stats,
+    health,
+    settings,
+    trialPool: { remaining: trialPool?.remaining ?? 0, limit: trialPool?.limit ?? 0 },
+  });
   const { confidence: baseConfidence } = calculateRoutingConfidence(scored);
+  const fallbackCount = settings.perTask.maxFallbackModels;
 
-  // ── OX Alpha decision ─────────────────────────────────────────────────────
+  // ── Decision ──────────────────────────────────────────────────────────────
   let selected: ScoredCandidate = scored[0];
-  let fallbacks: ScoredCandidate[] = scored.slice(1, 4);
+  let fallbacks: ScoredCandidate[] = scored.slice(1, 1 + fallbackCount);
   let reason = buildDeterministicReason(scored[0], scored);
   let confidence = baseConfidence;
-  let source: DecisionSource = "DETERMINISTIC";
+  let source: DecisionSource = settings.models.pins[profile.category] === scored[0].openrouterId ? "PINNED" : "DETERMINISTIC";
+
+  // Bounded exploration of low-confidence candidates (low-risk tasks only).
+  const explore = source === "DETERMINISTIC"
+    ? pickExploration(scored, settings.quality.explorationRate, correlationId ?? `${profile.category}:${now.getTime()}`, riskForCategory(profile.category, effectiveReq.riskLevel))
+    : null;
+  if (explore) {
+    selected = { ...explore, exploration: true };
+    fallbacks = scored.filter((c) => c.openrouterId !== explore.openrouterId).slice(0, fallbackCount);
+    reason = `Exploring ${explore.displayName} (low-confidence candidate) for this low-risk task; ${scored[0].displayName} remains the first fallback.`;
+    source = "EXPLORATION";
+  }
 
   if (!simulate && (config as { AI_ROUTER_LLM_ENABLED?: boolean }).AI_ROUTER_LLM_ENABLED === true) {
-    const oxResult = orgId && scanId ? await tryOxAlphaRouting(scored, effectiveReq, baseConfidence, { orgId, scanId }) : null;
+    const oxResult = orgId && scanId && source === "DETERMINISTIC" ? await tryOxAlphaRouting(scored, effectiveReq, baseConfidence, { orgId, scanId }) : null;
     if (oxResult) {
       selected = oxResult.selected;
       fallbacks = oxResult.fallbacks;
@@ -135,6 +216,8 @@ export async function resolveRouting(
     durationMs: Date.now() - startMs,
     policyId: policy.id,
     policyVersion: policy.version,
+    taskRunId: opts.taskRunId,
+    feature: opts.feature,
   });
 
   decision.maxAttempts = policy.maxAttempts;
@@ -282,6 +365,8 @@ interface BuildDecisionInput {
   policyId?: string;
   policyVersion?: number;
   error?: string;
+  taskRunId?: string;
+  feature?: string;
 }
 
 function buildDecision(input: BuildDecisionInput): RoutingDecision {
@@ -305,6 +390,8 @@ function buildDecision(input: BuildDecisionInput): RoutingDecision {
     policyVersion: input.policyVersion,
     createdAt: new Date().toISOString(),
     errorMessage: input.error,
+    taskRunId: input.taskRunId,
+    feature: input.feature,
   };
 }
 
@@ -338,9 +425,9 @@ async function persistDecision(decision: RoutingDecision): Promise<void> {
          decision_reason, decision_confidence, decision_source,
          candidate_count, excluded_count,
          policy_id, policy_version,
-         decision_duration_ms, status, error_message
+         decision_duration_ms, status, error_message, task_run_id, feature
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22
        ) RETURNING id`,
       [
         decision.id,
@@ -363,6 +450,8 @@ async function persistDecision(decision: RoutingDecision): Promise<void> {
         decision.decisionDurationMs,
         decision.status,
         decision.errorMessage ?? null,
+        decision.taskRunId ?? null,
+        decision.feature ?? null,
       ]
     );
 
@@ -397,11 +486,11 @@ async function persistCandidates(
            score_benchmark, score_reliability, score_capability, score_historical,
            score_structured_out, score_latency, score_context, score_preference,
            benchmark_data_status, reliability_data_status,
-           is_selected, fallback_order
+           is_selected, fallback_order, score_components
          ) VALUES (
            $1,$2,$3,$4,TRUE,
            $5,$6,$7,$8,$9,$10,$11,$12,$13,
-           $14,$15,$16,$17
+           $14,$15,$16,$17,$18
          )`,
         [
           decisionId,
@@ -421,6 +510,7 @@ async function persistCandidates(
           c.components.reliability.status,
           c.openrouterId === selected?.openrouterId,
           fallbackOrder.get(c.openrouterId) ?? null,
+          JSON.stringify({ ...c.components, pricingClass: c.pricingClass ?? null, exploration: c.openrouterId === selected?.openrouterId && selected?.exploration === true }),
         ]
       );
     } catch (err: unknown) { logRouterError("router.candidate_persist_failed", err, { decisionId, openrouterId: c.openrouterId }); }

@@ -268,6 +268,8 @@ export { isAbort as isAbortedRequest }
 async function apiFetch<T>(
   path: string,
   options: FetchOptions = {},
+  /** Return the whole JSON body as `data` (for endpoints with fields beside `data`). */
+  envelope = false,
 ): Promise<ApiResponse<T>> {
   const res = await authorizedFetch(path, options)
   const requestId = res.headers.get("x-request-id") ?? undefined
@@ -280,7 +282,7 @@ async function apiFetch<T>(
   }
 
   if (!res.ok) {
-    let errorBody: { error?: { code?: string; message?: string; details?: unknown } } = {}
+    let errorBody: { error?: { code?: string; message?: string; details?: unknown; issues?: unknown } } = {}
     try {
       errorBody = await res.json()
     } catch {
@@ -303,6 +305,9 @@ async function apiFetch<T>(
         ...(errorBody.error?.details && typeof errorBody.error.details === "object" && !Array.isArray(errorBody.error.details)
           ? { details: errorBody.error.details as Record<string, unknown> }
           : {}),
+        ...(Array.isArray(errorBody.error?.issues)
+          ? { issues: errorBody.error.issues.filter((i): i is string => typeof i === "string").slice(0, 50) }
+          : {}),
       },
     }
   }
@@ -318,6 +323,7 @@ async function apiFetch<T>(
       error: { code: "PARSE_ERROR", message: "The server returned an unreadable response.", status: res.status, requestId },
     }
   }
+  if (envelope) return { data: body as unknown as T, error: null }
   if (body && typeof body === "object" && "data" in body) {
     return body.meta
       ? { data: body.data as T, error: null, meta: body.meta }
@@ -3501,4 +3507,288 @@ export async function apiWsDownload(websiteId: string, kind: { dataset: string }
   }
   const disposition = res.headers.get("content-disposition") ?? ""
   return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? "seo-export" }
+}
+
+// ─── Model intelligence (Phase 11 AI router; server/src/routes/ai-router.ts, /api/v1/ai) ──
+//
+// Counts and token sums come from PostgreSQL COUNT/SUM/BIGINT columns and may
+// arrive as strings; pages convert them with Number(). No endpoint returns a secret.
+
+/** A PostgreSQL count, sum or BIGINT: a number or its decimal string. */
+export type AiNum = number | string
+
+export type AiPricingClass = "FREE" | "TRIAL" | "PAID" | "UNKNOWN"
+/** ROUTER_TASK_TYPES in server/src/ai/router/settings.ts. */
+export const AI_ROUTER_TASK_TYPES = [
+  "CLASSIFICATION", "STRUCTURED_EXTRACTION", "SUMMARIZATION", "CONTENT_GENERATION", "SEO_ANALYSIS", "TECHNICAL_REASONING",
+  "CODE_GENERATION", "RESEARCH_SYNTHESIS", "PLANNING", "AGENT_COORDINATION", "TOOL_USE", "VERIFICATION",
+] as const
+export type AiRouterTaskType = (typeof AI_ROUTER_TASK_TYPES)[number]
+/** Features the feasibility endpoint accepts (FEATURE_CATEGORY in server/src/ai/router/task-profiles.ts). */
+export const AI_FEATURES = ["content_brief", "research_insights", "seo_workspace_summary", "aiv_summary", "aiv_answer", "agent"] as const
+export type AiFeature = (typeof AI_FEATURES)[number]
+
+export interface AiQuotaPool {
+  pool: "FREE" | "TRIAL"
+  day: string
+  used: number
+  limit: number
+  remaining: number
+  exhaustedUntil: string | null
+  providerLimit: number | null
+  providerUsed: number | null
+  providerSyncedAt: string | null
+}
+
+export interface AiRouterStatus {
+  providerConfigured: boolean
+  paidModelsAllowed: boolean
+  catalog: { lastRefreshAt: string | null; lastRefreshStatus: string | null; stale: boolean; modelsByPricingClass: Partial<Record<AiPricingClass, number>> }
+  quotas: AiQuotaPool[]
+  settings: { version: number; updatedAt: string | null; trialsEnabled: boolean }
+  tokenEstimate: string
+}
+
+export interface AiModel {
+  id: string
+  openrouter_id: string
+  display_name: string
+  provider: string
+  pricing_class: AiPricingClass
+  free_status: string | null
+  status: string
+  eligibility_status: string
+  enabled: boolean
+  context_length: number | null
+  max_completion_tokens: number | null
+  reasoning_mandatory: boolean | null
+  supports_tool_calling: boolean | null
+  supports_structured_output: boolean | null
+  supports_json_schema: boolean | null
+  is_router: boolean | null
+  expires_at: string | null
+  pricing_checked_at: string | null
+  output_modalities: string[] | null
+  evaluations: number
+  pricingFresh: boolean
+  excludedByAdmin: boolean
+  health: { coolingDown: boolean; cooldownUntil: string | null; consecutiveFailures: number; lastFailureCategory: string | null } | null
+  qualityConfidence: "measured" | "insufficient_data"
+}
+
+export interface AiRouterSettings {
+  trials: { enabled: boolean; dailyRequestCap: number }
+  autoApproveFreeModels: boolean
+  quota: { freeDailyRequests: number; freeRequestsPerMinute: number; syncFromProvider: boolean }
+  perOrg: { dailyRequests: number; dailyTokens: number }
+  perTask: {
+    maxInputTokens: number; maxOutputTokens: number; maxTotalTokens: number; maxCalls: number; maxAgents: number; maxDepth: number
+    maxConcurrency: number; maxRetriesPerModel: number; maxFallbackModels: number; maxWallClockMs: number
+    maxReductionIterations: number; maxEvaluationAttempts: number; maxRepairAttempts: number
+  }
+  catalog: { refreshIntervalMinutes: number; maxStaleHours: number }
+  quality: { minQualityScore: number; minSamples: number; halfLifeDays: number; explorationRate: number }
+  models: { excluded: string[]; pins: Partial<Record<AiRouterTaskType, string>> }
+  weights: { quality: number; reliability: number; structured: number; latency: number; context: number; availability: number; security: number; resourceFit: number }
+  retentionDays: number
+}
+
+export interface AiStoredSettings {
+  settings: AiRouterSettings
+  version: number
+  updatedAt: string | null
+  updatedBy: string | null
+  source: "default" | "stored"
+}
+
+export interface AiQuotaSync { status: "synced" | "not_configured" | "unavailable" | "unexpected"; limit: number | null; used: number | null; remaining: number | null }
+
+export type AiFeasibility = "FEASIBLE" | "FEASIBLE_WITH_REDUCTION" | "SPLIT_REQUIRED" | "INSUFFICIENT_BUDGET" | "NO_ELIGIBLE_MODEL" | "BLOCKED_BY_POLICY"
+export interface AiFeasibilityResult {
+  feasibility: AiFeasibility
+  message: string
+  taskCategory: string
+  estimatedInputTokens: number
+  reservedOutputTokens: number
+  estimate: string
+  selectedModel: string | null
+  fallbacks: string[]
+  reason: string | null
+  exclusions: Record<string, number>
+  budget: { orgTokensUsed24h: number; orgTokenLimit24h: number; freeRequestsRemaining: number }
+}
+
+export interface AiUsageRow {
+  model: string | null
+  attempts: AiNum
+  completed: AiNum
+  failed: AiNum
+  estimated_input: AiNum
+  reserved_output: AiNum
+  provider_input: AiNum
+  provider_output: AiNum
+  estimated_only: AiNum
+  reported_cost_usd: string
+  pricing_class: string | null
+}
+export interface AiUsage {
+  days: number
+  byModel: AiUsageRow[]
+  reservations: Array<{ status: string; usage_source: string | null; n: AiNum; reserved: AiNum; settled: AiNum }>
+  orgTokensUsed24h: number
+  orgTokenLimit24h: number
+  note: string
+}
+
+export type AiTaskStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "REJECTED"
+export interface AiTaskRun {
+  id: string
+  task_type: string
+  feature: string | null
+  status: string
+  feasibility: string | null
+  selected_model: string | null
+  error_code: string | null
+  tokens_used: AiNum
+  tokens_reserved: AiNum
+  calls_used: AiNum
+  agents_used: AiNum
+  started_at: string
+  completed_at: string | null
+}
+export interface AiTaskAttempt {
+  model: string | null
+  attempt_number: number | null
+  status: string
+  failure_category: string | null
+  fallback_reason: string | null
+  pricing_class: string | null
+  latency_ms: number | null
+  estimated_input_tokens: AiNum | null
+  estimated_output_tokens: AiNum | null
+  prompt_tokens: AiNum | null
+  completion_tokens: AiNum | null
+  usage_estimated: boolean | null
+  cost_usd: AiNum | null
+  started_at: string
+}
+export interface AiTaskDetail extends AiTaskRun {
+  attempts: AiTaskAttempt[]
+  agents: Array<{ id: string; parent_id: string | null; role: string; depth: number; status: string; model: string | null; error_code: string | null; started_at: string; completed_at: string | null }>
+  evaluations: Array<{ model: string; task_type: string; outcome: string; quality_score: number | null; method: string; confidence: AiNum | null; validators: unknown; security_violation: boolean; created_at: string }>
+  routing: Array<{ id: string; selected_openrouter_id: string | null; fallback_openrouter_ids: string[] | null; decision_reason: string | null; decision_source: string | null; decision_confidence: AiNum | null; candidate_count: number | null; excluded_count: number | null }>
+  feedback: Array<{ rating: number; reason: string | null; created_at: string }>
+}
+export type AiFeedbackReason = "incorrect" | "incomplete" | "off_topic" | "unsafe" | "format" | "helpful" | "accurate" | "other"
+
+export interface AiQualityRow {
+  model: string
+  taskType: string
+  evaluations: number
+  orgEvaluations: number
+  averageScore: number | null
+  passRate: number | null
+  securityViolations: number
+  userRatings: number
+  lastEvaluatedAt: string | null
+  confidence: "measured" | "insufficient_data"
+}
+/** GET /ai/quality returns `minSamples` beside `data`. */
+export interface AiQuality { data: AiQualityRow[]; minSamples: number }
+
+/** SecurityEventKind in server/src/ai/security/events.ts. */
+export const AI_SECURITY_EVENT_KINDS = [
+  "PROMPT_INJECTION_SUSPECTED", "OUTPUT_GUARD_VIOLATION", "TOOL_CALL_REJECTED", "TOOL_APPROVAL_REQUIRED",
+  "PAID_MODEL_BLOCKED", "POLICY_BLOCKED", "AGENT_LIMIT_REACHED", "CROSS_TENANT_BLOCKED",
+] as const
+export interface AiSecurityEvent {
+  id: string
+  kind: string
+  severity: string
+  source: string | null
+  categories: string[] | null
+  model: string | null
+  detail: Record<string, unknown> | null
+  task_run_id: string | null
+  created_at: string
+}
+
+export const AI_APPROVAL_STATUSES = ["PENDING", "APPROVED", "DENIED", "EXPIRED", "USED"] as const
+export type AiApprovalStatus = (typeof AI_APPROVAL_STATUSES)[number]
+export interface AiToolApproval {
+  id: string
+  tool_id: string
+  risk: string
+  status: string
+  args_preview: unknown
+  requested_by: string | null
+  decided_by: string | null
+  decided_at: string | null
+  expires_at: string | null
+  used_at: string | null
+  created_at: string
+}
+
+export async function apiAiStatus() {
+  if (IS_DEMO) throw new IntegrationRequired("ai.status")
+  return apiFetch<AiRouterStatus>("/ai/status")
+}
+export async function apiAiModels(params: { pricingClass?: AiPricingClass; limit?: number; offset?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.models")
+  return apiFetch<AiModel[]>(`/ai/models${queryString(params)}`)
+}
+export async function apiAiSettings() {
+  if (IS_DEMO) throw new IntegrationRequired("ai.settings")
+  return apiFetch<AiStoredSettings & { paidModelsAllowed: boolean; taskTypes: AiRouterTaskType[] }>("/ai/settings")
+}
+/** Platform administrators only; a 400 carries `issues`, a 409 means someone else saved first. */
+export async function apiAiUpdateSettings(settings: AiRouterSettings, expectedVersion: number) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.settings.update")
+  return apiFetch<AiStoredSettings>("/ai/settings", { method: "PUT", body: JSON.stringify({ settings, expectedVersion }) })
+}
+/** Platform administrators only: reads the provider's free allowance (an account lookup, no inference). */
+export async function apiAiQuotaSync() {
+  if (IS_DEMO) throw new IntegrationRequired("ai.quota.sync")
+  return apiFetch<AiQuotaSync>("/ai/quota/sync", { method: "POST" })
+}
+export async function apiAiFeasibility(body: { taskType?: AiRouterTaskType; feature?: AiFeature; inputChars?: number; requireJson?: boolean }) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.feasibility")
+  return apiFetch<AiFeasibilityResult>("/ai/feasibility", { method: "POST", body: JSON.stringify(body) })
+}
+export async function apiAiUsage(days: number) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.usage")
+  return apiFetch<AiUsage>(`/ai/usage${queryString({ days })}`)
+}
+export async function apiAiTasks(params: { status?: string; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.tasks")
+  return apiFetch<AiTaskRun[]>(`/ai/tasks${queryString(params)}`)
+}
+export async function apiAiTask(id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.tasks.get")
+  return apiFetch<AiTaskDetail>(`/ai/tasks/${encodeURIComponent(id)}`)
+}
+export async function apiAiCancelTask(id: string) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.tasks.cancel")
+  return apiFetch<{ cancelRequested: boolean }>(`/ai/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" })
+}
+/** One vote per user and task; a second vote returns 409 ALREADY_RATED. */
+export async function apiAiTaskFeedback(id: string, rating: 1 | -1, reason?: AiFeedbackReason) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.tasks.feedback")
+  return apiFetch<{ recorded: boolean }>(`/ai/tasks/${encodeURIComponent(id)}/feedback`, { method: "POST", body: JSON.stringify(reason ? { rating, reason } : { rating }) })
+}
+export async function apiAiQuality() {
+  if (IS_DEMO) throw new IntegrationRequired("ai.quality")
+  return apiFetch<AiQuality>("/ai/quality", {}, true)
+}
+export async function apiAiSecurityEvents(params: { kind?: string; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.security")
+  return apiFetch<AiSecurityEvent[]>(`/ai/security-events${queryString(params)}`)
+}
+export async function apiAiApprovals(params: { status?: AiApprovalStatus; limit?: number } = {}) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.approvals")
+  return apiFetch<AiToolApproval[]>(`/ai/approvals${queryString(params)}`)
+}
+export async function apiAiDecideApproval(id: string, approve: boolean) {
+  if (IS_DEMO) throw new IntegrationRequired("ai.approvals.decide")
+  return apiFetch<{ status: string }>(`/ai/approvals/${encodeURIComponent(id)}/decision`, { method: "POST", body: JSON.stringify({ approve }) })
 }
